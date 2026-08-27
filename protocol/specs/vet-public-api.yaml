@@ -1,0 +1,1042 @@
+openapi: 3.1.0
+info:
+  title: DogTag Vet Public API
+  version: "2.0.0"
+  description: |-
+    The standardized public surface every self-deployable dogtag-vet platform exposes.
+    This is the protocol contract between a vet deployment and the two consumers that never
+    hold vet staff credentials: the pet-owner mobile apps and third-party relayers.
+    Vet staff surfaces (CRM, CRM auth, contract-signing wallet flows) are deployment-internal
+    and out of scope for this spec.
+    Wire shapes marked "v1-compatible" are byte-compatible with the fields the v1 mono-repo
+    shipped, per `docs/architecture-v2.md`.
+    Every response uses the error envelope in `#/components/schemas/Error` on failure, and
+    every route is subject to the rate-limit headers documented in `#/components/headers`.
+  license:
+    name: Apache-2.0
+    identifier: Apache-2.0
+# No header/cookie/query API-key scheme: every route in this spec is access-controlled by
+# possession of an opaque, high-entropy token carried as a path or query parameter (documented
+# per-parameter below) rather than a conventional auth header, and OpenAPI has no security-scheme
+# shape for a path-embedded bearer credential. `security: []` records this deliberately, so the
+# absence reads as "considered, not applicable" rather than "forgotten".
+security: []
+servers:
+  - url: "https://{vetHost}"
+    description: A single vet deployment's own base URL (discovered from `adminApiUrl` -> the entity's `platformBaseUrl`; never bundled by mobile apps).
+    variables:
+      vetHost:
+        default: vet.example.com
+tags:
+  - name: mint
+    description: Mint-session flow (vet mints a dogtag; owner's app resolves and posts the custodial bind).
+  - name: verify
+    description: Verify-session flow (a relayer requests consent; owner's app resolves and submits a proof).
+  - name: booking
+    description: Calendly-style appointment booking against the vet's own availability.
+  - name: payments
+    description: Payment status and receipt retrieval for invoices raised by the vet.
+  - name: entity
+    description: The vet's own public entity card, served for in-app display once discovered via the admin directory.
+x-common-headers:
+  rateLimit: &rateLimitHeaders
+    X-RateLimit-Limit: {$ref: '#/components/headers/RateLimitLimit'}
+    X-RateLimit-Remaining: {$ref: '#/components/headers/RateLimitRemaining'}
+    X-RateLimit-Reset: {$ref: '#/components/headers/RateLimitReset'}
+paths:
+  /p/{token}:
+    get:
+      operationId: resolveMintSession
+      tags: [mint]
+      summary: Resolve a mint session
+      description: |-
+        Mobile-facing, v1-compatible shape. The owner's app scans the vet's mint QR
+        (`https://<vet>/p/<32hex>`, see `specs/qr-formats.md`) and calls this to fetch the
+        vet-attested pet/owner attributes it will fold into the on-device profile tree.
+
+        **Non-consuming**: calling this does not burn the token - the owner may resolve the
+        same session repeatedly (e.g. app restart, slow network) up to `POST
+        /profiles/issue/custodial-bind`, which IS the consuming action. The first successful
+        resolve extends the session's TTL once, so a slow owner does not lose the session
+        to the counter clerk's original short-lived QR window.
+      parameters:
+        - $ref: '#/components/parameters/MintToken'
+      responses:
+        "200":
+          description: Session resolved.
+          headers: *rateLimitHeaders
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MintSessionResolveResponse'
+        "404":
+          description: Token unknown or malformed.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
+        "410":
+          description: Token already consumed by a completed `custodial-bind` (past the status grace period) or naturally expired.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
+        "429":
+          $ref: '#/components/responses/RateLimited'
+        "5XX":
+          $ref: '#/components/responses/ServerError'
+
+  /profiles/issue/custodial-bind:
+    post:
+      operationId: postCustodialBind
+      tags: [mint]
+      summary: Post the device-built profile tree for a mint session (consumes the token)
+      description: |-
+        The owner's app has built the profile tree locally (3 reserved owner-control leaves +
+        vet-attested attribute leaves + `owner.identity.*` leaves), computed the root `R`, and
+        now posts the opened leaves for the vet to independently recompute and bind-check
+        (`verifyLeafCommitment` in `packages/dogtag-standard-ts` - fail closed: every opened
+        leaf hash is recomputed server-side, never trusted from the wire).
+
+        On success the platform indexes the bind and a staff wallet later confirms `issueTag`
+        on the vet's `VetIssuer` clone; `status` in the response reflects that this is
+        asynchronous - a `200` here means "bind accepted", not "sealed on chain" (poll
+        `GET /p/{token}/status` for that).
+
+        **Consumes the token.** A second call against the same token after a successful bind
+        returns `409`; a call against a token that was never valid, or whose mint session
+        already expired, returns `410`.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CustodialBindRequest'
+      responses:
+        "200":
+          description: Bind accepted; issuance is now in progress (or already sealed, for a re-read within the grace period - see `status`).
+          headers: *rateLimitHeaders
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CustodialBindResponse'
+        "400":
+          description: |-
+            The posted tree failed the fail-closed bind-commitment check: a malformed opening,
+            a wrong leaf count, a reserved-hash count other than 3, or a recomputed root that
+            does not equal `root`. `error.code` is one of `leaf_commitment_invalid`,
+            `identity_leaves_mismatch`, `malformed_leaf`.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
+        "404":
+          description: Token unknown or malformed.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
+        "409":
+          description: This token was already successfully bound. `error.details.dogTagId` names the existing tag.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
+        "410":
+          description: Token expired, or was never valid.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
+        "429":
+          $ref: '#/components/responses/RateLimited'
+        "5XX":
+          $ref: '#/components/responses/ServerError'
+
+  /p/{token}/status:
+    get:
+      operationId: getMintSessionStatus
+      tags: [mint]
+      summary: Poll a mint session's issuance status
+      description: |-
+        Device-safe sentences only in `reason` - never a raw error, stack trace, or internal
+        identifier. This endpoint keeps answering for a grace period after the token is
+        consumed by `custodial-bind` (so the owner's app can keep polling the same token
+        through on-chain confirmation instead of needing the bind response cached), then
+        starts returning `410` once the grace period elapses.
+      parameters:
+        - $ref: '#/components/parameters/MintToken'
+      responses:
+        "200":
+          description: Current status.
+          headers: *rateLimitHeaders
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MintSessionStatusResponse'
+        "404":
+          description: Token unknown or malformed.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
+        "410":
+          description: Token never bound and expired, or past the post-bind grace period.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
+        "429":
+          $ref: '#/components/responses/RateLimited'
+        "5XX":
+          $ref: '#/components/responses/ServerError'
+
+  /x/{token}:
+    get:
+      operationId: resolveVerifySession
+      tags: [verify]
+      summary: Resolve a verify (consent) session
+      description: |-
+        Mobile-facing, v1-compatible shape. The owner's app scans a relayer's verify QR
+        (`https://<vet>/x/<32hex>?a=<relayer>`, see `specs/qr-formats.md`) and calls this to
+        fetch the parameters it needs to build the consent proof on device - `dogtag-prover-rs`
+        assembles the witness from `challenge` plus the owner's locally-held secrets; no owner
+        secret material ever crosses this endpoint in either direction.
+        Non-consuming: proof submission (`POST /v1/verify/consent`) is the action that
+        eventually spends the session's nullifier on chain, not this resolve call.
+      parameters:
+        - $ref: '#/components/parameters/VerifyToken'
+      responses:
+        "200":
+          description: Session resolved.
+          headers: *rateLimitHeaders
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VerifySessionResolveResponse'
+        "404":
+          description: Token unknown or malformed.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
+        "410":
+          description: Session expired (past its `deadline`).
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
+        "429":
+          $ref: '#/components/responses/RateLimited'
+        "5XX":
+          $ref: '#/components/responses/ServerError'
+
+  /v1/verify/consent:
+    post:
+      operationId: postVerifyConsent
+      tags: [verify]
+      summary: Submit a device-generated consent proof to the verification registry
+      description: |-
+        The relayer-facing standardized endpoint (kept from v1). Submits a Groth16 proof over
+        the frozen `DogTagConsent(6)` circuit to `VerificationRegistryConsent` on ROAX. No
+        server-side proving path exists in v2 (C2) - this endpoint only ever forwards a
+        proof the device already produced; it never accepts an `ownerSecret` or any owner
+        secret material.
+
+        `profileDisclosure`, when present, is verified independently
+        (`verifyProfileDisclosure` in `packages/dogtag-standard-ts`) and is bound to this
+        submission by requiring `profileDisclosure.R == pubSignals[4]` and
+        `profileDisclosure.dogTagId == pubSignals[0]` - a disclosure envelope presented without
+        an accompanying valid consent proof for the same `R` is a replayable bearer credential
+        and MUST be rejected on its own.
+
+        **Consumes** `exportToken` on a successful on-chain submission (the nullifier is spent);
+        a replayed proof or token returns `409`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VerifyConsentRequest'
+      responses:
+        "200":
+          description: Proof accepted and submitted; `Verified` fired on chain.
+          headers: *rateLimitHeaders
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VerifyConsentResponse'
+        "400":
+          description: Malformed proof shape, public-signal count/order mismatch, or a `profileDisclosure` that fails pure verification or does not bind to `pubSignals`.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
+        "404":
+          description: "`exportToken`/`sessionId` unknown."
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
+        "409":
+          description: Nullifier already spent (replay), or the tag's on-chain `status` is not `Active`.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
+        "410":
+          description: Session/token expired (past `deadline`).
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
+        "429":
+          $ref: '#/components/responses/RateLimited'
+        "5XX":
+          $ref: '#/components/responses/ServerError'
+
+  /v1/booking/services:
+    get:
+      operationId: listBookingServices
+      tags: [booking]
+      summary: List public bookable services
+      responses:
+        "200":
+          description: The vet's public service list.
+          headers: *rateLimitHeaders
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: '#/components/schemas/BookingService'}
+        "429":
+          $ref: '#/components/responses/RateLimited'
+        "5XX":
+          $ref: '#/components/responses/ServerError'
+
+  /v1/booking/availability:
+    get:
+      operationId: getBookingAvailability
+      tags: [booking]
+      summary: List open slots for a service in a date range
+      description: |-
+        Honors the vet's weekly availability rules, one-off exceptions, per-service buffers,
+        per-slot capacity, and already-booked appointments - every slot returned is bookable
+        at the instant it was computed (a concurrent booking can still race it; `POST
+        /v1/booking/book` is the authority and returns `409` on a lost race).
+      parameters:
+        - name: serviceId
+          in: query
+          required: true
+          schema: {type: string}
+        - name: from
+          in: query
+          required: true
+          description: Inclusive range start, ISO 8601 instant.
+          schema: {type: string, format: date-time}
+        - name: to
+          in: query
+          required: true
+          description: Exclusive range end, ISO 8601 instant. MUST NOT span more than 31 days.
+          schema: {type: string, format: date-time}
+      responses:
+        "200":
+          description: Open slots in the range.
+          headers: *rateLimitHeaders
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [slots]
+                properties:
+                  slots:
+                    type: array
+                    items: {$ref: '#/components/schemas/BookingSlot'}
+        "400":
+          description: "`serviceId` unknown, or `to` <= `from`, or the range exceeds 31 days."
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
+        "429":
+          $ref: '#/components/responses/RateLimited'
+        "5XX":
+          $ref: '#/components/responses/ServerError'
+
+  /v1/booking/book:
+    post:
+      operationId: bookAppointment
+      tags: [booking]
+      summary: Book an open slot
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BookAppointmentRequest'
+      responses:
+        "201":
+          description: Appointment created.
+          headers: *rateLimitHeaders
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BookAppointmentResponse'
+        "400":
+          description: Malformed request (missing client contact, invalid `startAt`, unknown `serviceId`).
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
+        "409":
+          description: The slot was taken by a concurrent booking, or capacity is exhausted for that slot.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
+        "429":
+          $ref: '#/components/responses/RateLimited'
+        "5XX":
+          $ref: '#/components/responses/ServerError'
+
+  /v1/booking/appointments/{id}:
+    get:
+      operationId: getAppointmentStatus
+      tags: [booking]
+      summary: Client-facing appointment status
+      description: Requires the per-appointment `token` issued at booking time (returned as part of `BookAppointmentResponse.appointmentId`'s companion link) - this endpoint carries no staff auth.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string}
+        - $ref: '#/components/parameters/AppointmentToken'
+      responses:
+        "200":
+          description: Appointment status.
+          headers: *rateLimitHeaders
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AppointmentStatusResponse'
+        "401":
+          description: "`token` missing or does not match `id`."
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
+        "404":
+          description: Appointment unknown.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
+        "429":
+          $ref: '#/components/responses/RateLimited'
+        "5XX":
+          $ref: '#/components/responses/ServerError'
+
+  /v1/booking/appointments/{id}/cancel:
+    post:
+      operationId: cancelAppointment
+      tags: [booking]
+      summary: Cancel a booked appointment
+      description: |-
+        The cancel action implied by the client-facing status surface: `GET
+        .../appointments/{id}` is read-only, so cancellation is this companion action, gated
+        by the same per-appointment `token`.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string}
+        - $ref: '#/components/parameters/AppointmentToken'
+      responses:
+        "200":
+          description: Cancelled.
+          headers: *rateLimitHeaders
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AppointmentStatusResponse'
+        "401":
+          description: "`token` missing or does not match `id`."
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
+        "404":
+          description: Appointment unknown.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
+        "409":
+          description: Already cancelled, or too close to `startAt` per the vet's cancellation policy.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
+        "429":
+          $ref: '#/components/responses/RateLimited'
+        "5XX":
+          $ref: '#/components/responses/ServerError'
+
+  /v1/payments/{id}/public:
+    get:
+      operationId: getPaymentPublicStatus
+      tags: [payments]
+      summary: Public payment status and receipt availability
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string}
+        - name: token
+          in: query
+          required: true
+          description: The one-time payment-view token stamped on the invoice's QR.
+          schema: {type: string}
+      responses:
+        "200":
+          description: Payment status.
+          headers: *rateLimitHeaders
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaymentPublicStatusResponse'
+        "401":
+          description: "`token` missing or does not match `id`."
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
+        "404":
+          description: Payment unknown.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
+        "429":
+          $ref: '#/components/responses/RateLimited'
+        "5XX":
+          $ref: '#/components/responses/ServerError'
+
+  /r/pay/{receiptToken}:
+    get:
+      operationId: downloadReceipt
+      tags: [payments]
+      summary: Download a payment receipt
+      description: |-
+        `receiptToken` is a standalone one-time-ish bearer token scoped to one paid invoice
+        (distinct from the payment-view `token` above): possession is the only credential, so
+        it is high-entropy (>= 128 bits) and carried only in the receipt QR printed on the
+        invoice, never logged. It remains valid for the lifetime of the receipt (it is not
+        burned on first download, so the owner can re-download), but a payment that is not yet
+        `paid` has no receipt to serve.
+      parameters:
+        - name: receiptToken
+          in: path
+          required: true
+          schema: {type: string, minLength: 22}
+      responses:
+        "200":
+          description: The receipt.
+          headers: *rateLimitHeaders
+          content:
+            application/pdf:
+              schema: {type: string, contentEncoding: base64, contentMediaType: application/pdf}
+        "404":
+          description: "`receiptToken` unknown, or the payment has no receipt yet (not `paid`)."
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
+        "429":
+          $ref: '#/components/responses/RateLimited'
+        "5XX":
+          $ref: '#/components/responses/ServerError'
+
+  /v1/entity:
+    get:
+      operationId: getEntityCard
+      tags: [entity]
+      summary: This vet's public entity card
+      description: |-
+        Served by the vet platform itself so an app already holding the vet's `platformBaseUrl`
+        (resolved from the admin directory, `specs/admin-public-api.yaml`) can render an
+        up-to-the-minute card without a second admin-API round trip.
+      responses:
+        "200":
+          description: The entity card.
+          headers: *rateLimitHeaders
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EntityCard'
+        "429":
+          $ref: '#/components/responses/RateLimited'
+        "5XX":
+          $ref: '#/components/responses/ServerError'
+
+components:
+  parameters:
+    MintToken:
+      name: token
+      in: path
+      required: true
+      description: The 32-lowercase-hex mint-session token (see `specs/qr-formats.md`).
+      schema: {$ref: '#/components/schemas/Hex32Token'}
+    VerifyToken:
+      name: token
+      in: path
+      required: true
+      description: The 32-lowercase-hex verify-session token (see `specs/qr-formats.md`).
+      schema: {$ref: '#/components/schemas/Hex32Token'}
+    AppointmentToken:
+      name: token
+      in: query
+      required: true
+      description: The per-appointment client access token issued at booking time.
+      schema: {type: string}
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: false
+      description: |-
+        Optional client-generated key; a retried POST with the same key against the same
+        token returns the original response rather than re-processing (guards a mobile
+        client's retry-on-timeout from double-submitting a bind).
+      schema: {type: string, maxLength: 128}
+
+  headers:
+    RateLimitLimit:
+      description: Requests allowed in the current window for this route + client.
+      schema: {type: integer, minimum: 1}
+    RateLimitRemaining:
+      description: Requests remaining in the current window.
+      schema: {type: integer, minimum: 0}
+    RateLimitReset:
+      description: Unix seconds until the window resets.
+      schema: {type: integer, minimum: 0}
+
+  responses:
+    RateLimited:
+      description: Rate limit exceeded for this route + client.
+      headers:
+        <<: *rateLimitHeaders
+        Retry-After: {schema: {type: integer, minimum: 0}}
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Error'}
+    ServerError:
+      description: Transient failure (chain read timeout, database unavailable). Retry with backoff.
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Error'}
+
+  schemas:
+    Hex32Token:
+      type: string
+      pattern: "^[0-9a-f]{32}$"
+      description: 32 lowercase hex characters (128 bits of entropy) - the v1-compatible token grammar. See `specs/qr-formats.md`.
+
+    Hex32:
+      type: string
+      pattern: "^0x[0-9a-fA-F]{64}$"
+      description: A 0x-prefixed, 32-byte big-endian field element or hash.
+
+    Hex16:
+      type: string
+      pattern: "^0x[0-9a-fA-F]{32}$"
+      description: A 0x-prefixed 16-byte salt.
+
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              description: A stable machine-readable code, e.g. `token_not_found`, `token_expired`, `leaf_commitment_invalid`, `nullifier_replayed`, `slot_conflict`, `rate_limited`.
+            message:
+              type: string
+              description: A short, device-safe sentence. Never a stack trace, SQL fragment, or internal identifier.
+            requestId:
+              type: string
+              description: Correlates this response with server-side logs for support.
+            details:
+              type: object
+              additionalProperties: true
+              description: Optional machine-readable context specific to `code` (e.g. `{dogTagId}` on a `409` bind conflict).
+
+    TypeTag:
+      type: integer
+      enum: [0, 1, 2, 3, 4, 5]
+      description: "Mandatory type discriminant for a canonical value (impl §1.1): 0=Null, 1=Bool, 2=String, 3=Integer (decimal-string bigint), 4=Decimal (fixed-point decimal string), 5=Bytes (hex-encoded in `value`)."
+
+    OpenedLeaf:
+      type: object
+      required: [keyPath, saltHex, tag, value]
+      properties:
+        keyPath:
+          type: string
+          description: Dotted/bracketed path into the profile tree, e.g. `credentialSubject.name` or `owner.identity.fullName`.
+        saltHex:
+          $ref: '#/components/schemas/Hex16'
+        tag:
+          $ref: '#/components/schemas/TypeTag'
+        value:
+          type: string
+          description: Canonical string form of the value for this `tag` (e.g. `"true"`/`"false"` for Bool, a canonical decimal-integer string for Integer, hex for Bytes).
+
+    PetProfile:
+      type: object
+      description: Vet-attested pet attributes, folded by the owner's device into ordinary (disclosable) profile-tree leaves under `credentialSubject.*`.
+      properties:
+        species: {type: string}
+        breedVbo:
+          type: string
+          description: Breed code from the vet's controlled vocabulary (VeNom/VBO-style breed code).
+        breedLabel: {type: string}
+        sex: {type: string, enum: [male, female, unknown]}
+        neuterStatus: {type: string, enum: [intact, neutered, spayed, unknown]}
+        dateOfBirth: {type: string, format: date}
+        weightHistory:
+          type: array
+          items: {$ref: '#/components/schemas/WeightEntry'}
+
+    WeightEntry:
+      type: object
+      required: [recordedAt, weightKg]
+      properties:
+        recordedAt: {type: string, format: date}
+        weightKg:
+          type: string
+          description: Canonical decimal string (never a native float - protocol values are string-encoded to stay bit-exact through the Merkle fold).
+
+    Microchip:
+      type: object
+      properties:
+        code: {type: string, description: "The chip's 15-digit ISO code (or manufacturer format)."}
+        standard: {type: string, enum: [ISO11784, ISO11785, FDX-B, other]}
+        implantDate: {type: string, format: date}
+        bodyLocation: {type: string}
+
+    OwnerIdentity:
+      type: object
+      description: Vet-attested owner-identity attributes, as attested at KYC time and destined for `owner.identity.*` leaves (D1), pre-salted server-side into `identityLeaves` below.
+      properties:
+        countryOfIdentification: {type: string, description: ISO 3166-1 alpha-2.}
+        identification: {type: string, description: "The identifying document's number/reference (passport, national id)."}
+        name: {type: string}
+
+    MintSessionResolveResponse:
+      type: object
+      required: [sessionId, dogTagId, status, pet, ownerIdentity, identityLeaves, unverifiedClaims, ttlSecs]
+      properties:
+        sessionId: {type: string}
+        dogTagId:
+          type: string
+          description: The raw decimal handle the vet operator entered on the mint form (an off-chain convenience only - NOT the canonical on-chain id; see `onchainDogTagId` in `CustodialBindResponse`).
+        status:
+          type: string
+          enum: [pending, ready, issuing, bound, error]
+        pet:
+          type: object
+          required: [name, profile, microchip]
+          properties:
+            name: {type: string}
+            profile: {$ref: '#/components/schemas/PetProfile'}
+            microchip: {$ref: '#/components/schemas/Microchip'}
+        ownerIdentity: {$ref: '#/components/schemas/OwnerIdentity'}
+        identityLeaves:
+          type: array
+          description: Pre-salted `owner.identity.*` openings the device must fold into the tree verbatim (salts are vet-chosen at KYC time so they need not be re-derived).
+          items: {$ref: '#/components/schemas/OpenedLeaf'}
+        unverifiedClaims:
+          type: object
+          additionalProperties: true
+          description: Owner-supplied claims the vet has NOT attested (e.g. a self-reported microchip code pending confirmation) - rendered to the owner distinctly from attested fields, never folded into the tree as vet-attested.
+        ttlSecs:
+          type: integer
+          minimum: 0
+          description: Seconds remaining before this session expires. Extended once on first successful resolve.
+
+    CustodialBindRequest:
+      type: object
+      required: [token, root, leaves, reservedLeafHashes]
+      properties:
+        token: {$ref: '#/components/schemas/Hex32Token'}
+        root: {$ref: '#/components/schemas/Hex32'}
+        leaves:
+          type: array
+          maxItems: 61
+          items: {$ref: '#/components/schemas/OpenedLeaf'}
+        reservedLeafHashes:
+          type: array
+          minItems: 3
+          maxItems: 3
+          items: {$ref: '#/components/schemas/Hex32'}
+
+    CustodialBindResponse:
+      type: object
+      required: [dogTagId, onchainDogTagId, root, protocolVersion, status]
+      properties:
+        dogTagId:
+          type: string
+          description: The raw decimal handle (echoes the mint session's off-chain convenience id).
+        onchainDogTagId:
+          type: string
+          description: |-
+            The canonical on-chain dogTagId as a decimal uint256 string -
+            `dogTagIdField(dogTagId)` from `packages/dogtag-standard-ts`. This is what the SBT
+            is minted with and what the consent circuit's `pub[0]` carries; NEVER the raw
+            decimal handle.
+        root: {$ref: '#/components/schemas/Hex32'}
+        protocolVersion:
+          type: string
+          description: "Internal protocol version key, e.g. `dogtag-levelb/1`."
+        status:
+          type: string
+          enum: [pending, ready, issuing, bound, error]
+
+    MintSessionStatusResponse:
+      type: object
+      required: [status, dogTagId]
+      properties:
+        status:
+          type: string
+          enum: [pending, ready, issuing, bound, error]
+        dogTagId:
+          type: string
+          description: The raw decimal handle, once known.
+        reason:
+          type: string
+          description: A device-safe sentence explaining `error` status. Absent for every other status.
+
+    VerifySessionResolveResponse:
+      type: object
+      required: [sessionId, relayer, purpose, recordType, challenge, unverifiedClaims]
+      properties:
+        sessionId: {type: string}
+        relayer:
+          type: string
+          description: The relayer's on-chain address (`< 2^160`), as it will appear in `pubSignals[2]`.
+        purpose:
+          type: string
+          description: The consent purpose identifier this session is requesting proof for.
+        recordType:
+          type: string
+          description: "The record type the relayer wants proven possession of (e.g. `DOG_PROFILE`, `VACCINATION`)."
+        challenge:
+          $ref: '#/components/schemas/ConsentChallenge'
+        unverifiedClaims:
+          type: object
+          additionalProperties: true
+          description: Any relayer-supplied context rendered to the owner ahead of consenting (never authoritative).
+
+    ConsentChallenge:
+      type: object
+      required: [dogTagId, deadline, consentNonce]
+      properties:
+        dogTagId:
+          type: string
+          description: The canonical on-chain dogTagId (decimal), matching `pubSignals[0]`.
+        deadline:
+          type: integer
+          description: Unix seconds after which this challenge's proof is no longer acceptable - matches `pubSignals[6]`.
+        consentNonce:
+          type: string
+          description: One-time nonce folded into the consent message `M` and the nullifier; prevents proof replay across sessions for the same purpose/relayer pair.
+
+    GrothProof:
+      type: object
+      required: [a, b, c, pubSignals]
+      description: |-
+        A Groth16 proof over the frozen `DogTagConsent(6)` circuit. `pubSignals` MUST be
+        exactly 7 entries in the pinned order `[dogTagId, purpose, relayer, nullifier, R,
+        recordType, deadline]` (`docs/crypto-improvements-v2.md`) - never re-ordered or
+        re-labelled by a client.
+      properties:
+        a:
+          type: array
+          items: {type: string}
+          minItems: 2
+          maxItems: 2
+        b:
+          type: array
+          items:
+            type: array
+            items: {type: string}
+            minItems: 2
+            maxItems: 2
+          minItems: 2
+          maxItems: 2
+        c:
+          type: array
+          items: {type: string}
+          minItems: 2
+          maxItems: 2
+        pubSignals:
+          type: array
+          items: {type: string}
+          minItems: 7
+          maxItems: 7
+
+    VerifyConsentRequest:
+      type: object
+      required: [exportToken, proof]
+      properties:
+        exportToken:
+          type: string
+          description: The relayer-facing export/session token this proof is submitted against.
+        sessionId:
+          type: string
+          description: Optional cross-check against the `/x/{token}` session this proof was built for.
+        proof: {$ref: '#/components/schemas/GrothProof'}
+        profileDisclosure:
+          $ref: '#/components/schemas/ProfileDisclosure'
+
+    ProfileDisclosureEntry:
+      type: object
+      required: [keyPath, saltHex, tag, value, proof]
+      properties:
+        keyPath: {type: string}
+        saltHex: {$ref: '#/components/schemas/Hex16'}
+        tag: {$ref: '#/components/schemas/TypeTag'}
+        value: {type: string}
+        proof:
+          type: array
+          description: 'Root-ward `Sibling|Promote` steps: each entry is either the literal string `"promote"` or a `0x..` 32-byte sibling hash.'
+          items: {type: string}
+
+    ProfileDisclosure:
+      type: object
+      required: [dogTagId, R, disclosures]
+      properties:
+        dogTagId:
+          type: string
+          description: The canonical on-chain dogTagId field, as `0x..` 32-byte hex.
+        R: {$ref: '#/components/schemas/Hex32'}
+        disclosures:
+          type: array
+          minItems: 1
+          items: {$ref: '#/components/schemas/ProfileDisclosureEntry'}
+
+    VerifyConsentResponse:
+      type: object
+      required: [verified, status]
+      properties:
+        verified: {type: boolean}
+        status:
+          type: string
+          enum: [verified, pending_confirmation]
+          description: "`pending_confirmation` while the submission tx is not yet at the configured confirmation depth."
+        nullifier:
+          type: string
+          description: The spent nullifier (matches `pubSignals[3]`), once known.
+        txHash: {type: string}
+
+    BookingService:
+      type: object
+      required: [id, name, durationMinutes]
+      properties:
+        id: {type: string}
+        name: {type: string}
+        description: {type: string}
+        durationMinutes: {type: integer, minimum: 1}
+        price:
+          $ref: '#/components/schemas/Money'
+
+    Money:
+      type: object
+      required: [amount, currency]
+      properties:
+        amount:
+          type: string
+          description: Canonical decimal string, minor-unit-free (e.g. `"45.00"`).
+        currency:
+          type: string
+          description: ISO 4217 currency code.
+
+    BookingSlot:
+      type: object
+      required: [startAt, endAt]
+      properties:
+        startAt: {type: string, format: date-time}
+        endAt: {type: string, format: date-time}
+
+    BookingClient:
+      type: object
+      required: [name, email]
+      properties:
+        name: {type: string}
+        email: {type: string, format: email}
+        phone: {type: string}
+
+    BookAppointmentRequest:
+      type: object
+      required: [serviceId, startAt, client]
+      properties:
+        serviceId: {type: string}
+        startAt: {type: string, format: date-time}
+        client: {$ref: '#/components/schemas/BookingClient'}
+        petName: {type: string}
+        notes: {type: string, maxLength: 2000}
+
+    BookAppointmentResponse:
+      type: object
+      required: [appointmentId, status]
+      properties:
+        appointmentId: {type: string}
+        status:
+          type: string
+          enum: [pending, confirmed, cancelled]
+        ics:
+          type: string
+          description: Base64-encoded `.ics` calendar attachment, when the vet auto-confirms on booking.
+
+    AppointmentStatusResponse:
+      type: object
+      required: [appointmentId, status, startAt, serviceName]
+      properties:
+        appointmentId: {type: string}
+        status:
+          type: string
+          enum: [pending, confirmed, cancelled]
+        startAt: {type: string, format: date-time}
+        serviceName: {type: string}
+        cancellable:
+          type: boolean
+          description: Whether `POST .../cancel` will currently succeed (false once past the vet's cancellation cutoff, or already cancelled).
+
+    PaymentPublicStatusResponse:
+      type: object
+      required: [status, receiptAvailable]
+      properties:
+        status:
+          type: string
+          enum: [pending, paid, cancelled, expired]
+        amount: {$ref: '#/components/schemas/Money'}
+        receiptAvailable: {type: boolean}
+        receiptUrl:
+          type: string
+          description: "Present iff `receiptAvailable`; the `GET /r/pay/{receiptToken}` URL."
+        chain:
+          type: string
+          description: "Chain the matching transfer was observed on, e.g. `base-sepolia`. Absent while `status == pending`."
+        txHash: {type: string}
+
+    EntityCard:
+      type: object
+      required: [name, kind, branding, contact, address, coordinates, bookingEnabled]
+      properties:
+        name: {type: string}
+        kind: {type: string, enum: [VET, GOVERNMENT, GROOMER]}
+        branding:
+          type: object
+          properties:
+            logoUrl: {type: string}
+            primaryColor: {type: string}
+        contact:
+          type: object
+          properties:
+            email: {type: string, format: email}
+            phone: {type: string}
+        address:
+          type: object
+          properties:
+            line1: {type: string}
+            line2: {type: string}
+            city: {type: string}
+            region: {type: string}
+            postalCode: {type: string}
+            country: {type: string, description: ISO 3166-1 alpha-2.}
+        coordinates:
+          type: object
+          required: [lat, lng]
+          properties:
+            lat: {type: number, minimum: -90, maximum: 90}
+            lng: {type: number, minimum: -180, maximum: 180}
+        bookingEnabled: {type: boolean}

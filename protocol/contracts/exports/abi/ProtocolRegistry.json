@@ -1,0 +1,1631 @@
+[
+  {
+    "type": "constructor",
+    "inputs": [
+      {
+        "name": "admin",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "publisher",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "publishTimelock",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "ADMIN_TRANSFER_DELAY",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint48",
+        "internalType": "uint48"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "DEFAULT_ADMIN_ROLE",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "DEFAULT_PUBLISH_TIMELOCK",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "MIN_PUBLISH_TIMELOCK",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "PUBLISHER_ROLE",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "PUBLISH_TIMELOCK",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "acceptDefaultAdminTransfer",
+    "inputs": [],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "activeArtifactSetOf",
+    "inputs": [
+      {
+        "name": "",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "artifactSetCount",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "artifactSetEta",
+    "inputs": [
+      {
+        "name": "",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "artifactSetList",
+    "inputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "artifactSets",
+    "inputs": [
+      {
+        "name": "",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "artifactSetId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "zkeySha256",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "witnessMobileSha256",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "witnessServerR1csSha256",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "witnessServerWasmSha256",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "artifactBaseUrl",
+        "type": "string",
+        "internalType": "string"
+      },
+      {
+        "name": "minAppVersion",
+        "type": "string",
+        "internalType": "string"
+      },
+      {
+        "name": "publishedAt",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "active",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "beginDefaultAdminTransfer",
+    "inputs": [
+      {
+        "name": "newAdmin",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "bindingEta",
+    "inputs": [
+      {
+        "name": "",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "cancelDefaultAdminTransfer",
+    "inputs": [],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "changeDefaultAdminDelay",
+    "inputs": [
+      {
+        "name": "newDelay",
+        "type": "uint48",
+        "internalType": "uint48"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "defaultAdmin",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "defaultAdminDelay",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint48",
+        "internalType": "uint48"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "defaultAdminDelayIncreaseWait",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint48",
+        "internalType": "uint48"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "deprecateArtifactSet",
+    "inputs": [
+      {
+        "name": "id",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "deprecateDiscoverySet",
+    "inputs": [
+      {
+        "name": "id",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "discoverySetCount",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "discoverySetEta",
+    "inputs": [
+      {
+        "name": "",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "discoverySetList",
+    "inputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "discoverySets",
+    "inputs": [
+      {
+        "name": "",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "discoverySetId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "factory",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "verificationRegistry",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "sbt",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "verifier",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "entityRegistry",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "circuitId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "publishedAt",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "active",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "executeArtifactBinding",
+    "inputs": [
+      {
+        "name": "discoverySetId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "executeArtifactSet",
+    "inputs": [
+      {
+        "name": "id",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "executeDiscoverySet",
+    "inputs": [
+      {
+        "name": "id",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "getActiveArtifactSet",
+    "inputs": [
+      {
+        "name": "discoverySetId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "tuple",
+        "internalType": "struct ProtocolRegistry.ArtifactSet",
+        "components": [
+          {
+            "name": "artifactSetId",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "zkeySha256",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "witnessMobileSha256",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "witnessServerR1csSha256",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "witnessServerWasmSha256",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "artifactBaseUrl",
+            "type": "string",
+            "internalType": "string"
+          },
+          {
+            "name": "minAppVersion",
+            "type": "string",
+            "internalType": "string"
+          },
+          {
+            "name": "publishedAt",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "active",
+            "type": "bool",
+            "internalType": "bool"
+          }
+        ]
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getArtifactSet",
+    "inputs": [
+      {
+        "name": "id",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "tuple",
+        "internalType": "struct ProtocolRegistry.ArtifactSet",
+        "components": [
+          {
+            "name": "artifactSetId",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "zkeySha256",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "witnessMobileSha256",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "witnessServerR1csSha256",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "witnessServerWasmSha256",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "artifactBaseUrl",
+            "type": "string",
+            "internalType": "string"
+          },
+          {
+            "name": "minAppVersion",
+            "type": "string",
+            "internalType": "string"
+          },
+          {
+            "name": "publishedAt",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "active",
+            "type": "bool",
+            "internalType": "bool"
+          }
+        ]
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getDiscoverySet",
+    "inputs": [
+      {
+        "name": "id",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "tuple",
+        "internalType": "struct ProtocolRegistry.DiscoverySet",
+        "components": [
+          {
+            "name": "discoverySetId",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "factory",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "verificationRegistry",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "sbt",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "verifier",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "entityRegistry",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "circuitId",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "publishedAt",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "active",
+            "type": "bool",
+            "internalType": "bool"
+          }
+        ]
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getPendingArtifactSet",
+    "inputs": [
+      {
+        "name": "id",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "tuple",
+        "internalType": "struct ProtocolRegistry.ArtifactSet",
+        "components": [
+          {
+            "name": "artifactSetId",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "zkeySha256",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "witnessMobileSha256",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "witnessServerR1csSha256",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "witnessServerWasmSha256",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "artifactBaseUrl",
+            "type": "string",
+            "internalType": "string"
+          },
+          {
+            "name": "minAppVersion",
+            "type": "string",
+            "internalType": "string"
+          },
+          {
+            "name": "publishedAt",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "active",
+            "type": "bool",
+            "internalType": "bool"
+          }
+        ]
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getPendingBinding",
+    "inputs": [
+      {
+        "name": "discoverySetId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getPendingDiscoverySet",
+    "inputs": [
+      {
+        "name": "id",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "tuple",
+        "internalType": "struct ProtocolRegistry.DiscoverySet",
+        "components": [
+          {
+            "name": "discoverySetId",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "factory",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "verificationRegistry",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "sbt",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "verifier",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "entityRegistry",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "circuitId",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "publishedAt",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "active",
+            "type": "bool",
+            "internalType": "bool"
+          }
+        ]
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getRoleAdmin",
+    "inputs": [
+      {
+        "name": "role",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "grantRole",
+    "inputs": [
+      {
+        "name": "role",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "account",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "hasRole",
+    "inputs": [
+      {
+        "name": "role",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "account",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "owner",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "pendingDefaultAdmin",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "newAdmin",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "schedule",
+        "type": "uint48",
+        "internalType": "uint48"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "pendingDefaultAdminDelay",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "newDelay",
+        "type": "uint48",
+        "internalType": "uint48"
+      },
+      {
+        "name": "schedule",
+        "type": "uint48",
+        "internalType": "uint48"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "proposeArtifactBinding",
+    "inputs": [
+      {
+        "name": "discoverySetId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "artifactSetId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "proposeArtifactSet",
+    "inputs": [
+      {
+        "name": "a",
+        "type": "tuple",
+        "internalType": "struct ProtocolRegistry.ArtifactSet",
+        "components": [
+          {
+            "name": "artifactSetId",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "zkeySha256",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "witnessMobileSha256",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "witnessServerR1csSha256",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "witnessServerWasmSha256",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "artifactBaseUrl",
+            "type": "string",
+            "internalType": "string"
+          },
+          {
+            "name": "minAppVersion",
+            "type": "string",
+            "internalType": "string"
+          },
+          {
+            "name": "publishedAt",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "active",
+            "type": "bool",
+            "internalType": "bool"
+          }
+        ]
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "proposeDiscoverySet",
+    "inputs": [
+      {
+        "name": "d",
+        "type": "tuple",
+        "internalType": "struct ProtocolRegistry.DiscoverySet",
+        "components": [
+          {
+            "name": "discoverySetId",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "factory",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "verificationRegistry",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "sbt",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "verifier",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "entityRegistry",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "circuitId",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "publishedAt",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "active",
+            "type": "bool",
+            "internalType": "bool"
+          }
+        ]
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "renounceRole",
+    "inputs": [
+      {
+        "name": "role",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "account",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "resolveDiscovery",
+    "inputs": [
+      {
+        "name": "discoverySetId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "discoverySet",
+        "type": "tuple",
+        "internalType": "struct ProtocolRegistry.DiscoverySet",
+        "components": [
+          {
+            "name": "discoverySetId",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "factory",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "verificationRegistry",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "sbt",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "verifier",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "entityRegistry",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "circuitId",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "publishedAt",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "active",
+            "type": "bool",
+            "internalType": "bool"
+          }
+        ]
+      },
+      {
+        "name": "artifactSet",
+        "type": "tuple",
+        "internalType": "struct ProtocolRegistry.ArtifactSet",
+        "components": [
+          {
+            "name": "artifactSetId",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "zkeySha256",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "witnessMobileSha256",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "witnessServerR1csSha256",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "witnessServerWasmSha256",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "artifactBaseUrl",
+            "type": "string",
+            "internalType": "string"
+          },
+          {
+            "name": "minAppVersion",
+            "type": "string",
+            "internalType": "string"
+          },
+          {
+            "name": "publishedAt",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "active",
+            "type": "bool",
+            "internalType": "bool"
+          }
+        ]
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "revokeRole",
+    "inputs": [
+      {
+        "name": "role",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "account",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "rollbackDefaultAdminDelay",
+    "inputs": [],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "supportsInterface",
+    "inputs": [
+      {
+        "name": "interfaceId",
+        "type": "bytes4",
+        "internalType": "bytes4"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "event",
+    "name": "ArtifactBindingProposed",
+    "inputs": [
+      {
+        "name": "discoverySetId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "artifactSetId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "eta",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "ArtifactBindingSet",
+    "inputs": [
+      {
+        "name": "discoverySetId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "artifactSetId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "ArtifactSetDeprecated",
+    "inputs": [
+      {
+        "name": "artifactSetId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "ArtifactSetProposed",
+    "inputs": [
+      {
+        "name": "artifactSetId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "eta",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "ArtifactSetPublished",
+    "inputs": [
+      {
+        "name": "artifactSetId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "isNew",
+        "type": "bool",
+        "indexed": false,
+        "internalType": "bool"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "DefaultAdminDelayChangeCanceled",
+    "inputs": [],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "DefaultAdminDelayChangeScheduled",
+    "inputs": [
+      {
+        "name": "newDelay",
+        "type": "uint48",
+        "indexed": false,
+        "internalType": "uint48"
+      },
+      {
+        "name": "effectSchedule",
+        "type": "uint48",
+        "indexed": false,
+        "internalType": "uint48"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "DefaultAdminTransferCanceled",
+    "inputs": [],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "DefaultAdminTransferScheduled",
+    "inputs": [
+      {
+        "name": "newAdmin",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "acceptSchedule",
+        "type": "uint48",
+        "indexed": false,
+        "internalType": "uint48"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "DiscoverySetDeprecated",
+    "inputs": [
+      {
+        "name": "discoverySetId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "DiscoverySetProposed",
+    "inputs": [
+      {
+        "name": "discoverySetId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "eta",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "DiscoverySetPublished",
+    "inputs": [
+      {
+        "name": "discoverySetId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "isNew",
+        "type": "bool",
+        "indexed": false,
+        "internalType": "bool"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "RoleAdminChanged",
+    "inputs": [
+      {
+        "name": "role",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "previousAdminRole",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "newAdminRole",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "RoleGranted",
+    "inputs": [
+      {
+        "name": "role",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "account",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "sender",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "RoleRevoked",
+    "inputs": [
+      {
+        "name": "role",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "account",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "sender",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "error",
+    "name": "AccessControlBadConfirmation",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "AccessControlEnforcedDefaultAdminDelay",
+    "inputs": [
+      {
+        "name": "schedule",
+        "type": "uint48",
+        "internalType": "uint48"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "AccessControlEnforcedDefaultAdminRules",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "AccessControlInvalidDefaultAdmin",
+    "inputs": [
+      {
+        "name": "defaultAdmin",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "AccessControlUnauthorizedAccount",
+    "inputs": [
+      {
+        "name": "account",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "neededRole",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "PublishTimelockBelowFloor",
+    "inputs": [
+      {
+        "name": "given",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "floor",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "SafeCastOverflowedUintDowncast",
+    "inputs": [
+      {
+        "name": "bits",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
+        "name": "value",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  }
+]

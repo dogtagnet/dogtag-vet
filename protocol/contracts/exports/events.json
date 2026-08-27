@@ -1,0 +1,452 @@
+[
+  {
+    "contract": "DogTagSBTConsent",
+    "event": "Approval",
+    "signature": "Approval(address,address,uint256)",
+    "topic0": "0x8c5be1e5ebec7d5bd14f71427d1e84f3dd0314c0f7b2291e5b200ac8c7c3b925"
+  },
+  {
+    "contract": "DogTagSBTConsent",
+    "event": "ApprovalForAll",
+    "signature": "ApprovalForAll(address,address,bool)",
+    "topic0": "0x17307eab39ab6107e8899845ad3d59bd9653f200f220920489ca2b5937696c31"
+  },
+  {
+    "contract": "DogTagSBTConsent",
+    "event": "Burned",
+    "signature": "Burned(uint256)",
+    "topic0": "0xd83c63197e8e676d80ab0122beba9a9d20f3828839e9a1d6fe81d242e9cd7e6e"
+  },
+  {
+    "contract": "DogTagSBTConsent",
+    "event": "DefaultAdminDelayChangeCanceled",
+    "signature": "DefaultAdminDelayChangeCanceled()",
+    "topic0": "0x2b1fa2edafe6f7b9e97c1a9e0c3660e645beb2dcaa2d45bdbf9beaf5472e1ec5"
+  },
+  {
+    "contract": "DogTagSBTConsent",
+    "event": "DefaultAdminDelayChangeScheduled",
+    "signature": "DefaultAdminDelayChangeScheduled(uint48,uint48)",
+    "topic0": "0xf1038c18cf84a56e432fdbfaf746924b7ea511dfe03a6506a0ceba4888788d9b"
+  },
+  {
+    "contract": "DogTagSBTConsent",
+    "event": "DefaultAdminTransferCanceled",
+    "signature": "DefaultAdminTransferCanceled()",
+    "topic0": "0x8886ebfc4259abdbc16601dd8fb5678e54878f47b3c34836cfc51154a9605109"
+  },
+  {
+    "contract": "DogTagSBTConsent",
+    "event": "DefaultAdminTransferScheduled",
+    "signature": "DefaultAdminTransferScheduled(address,uint48)",
+    "topic0": "0x3377dc44241e779dd06afab5b788a35ca5f3b778836e2990bdb26a2a4b2e5ed6"
+  },
+  {
+    "contract": "DogTagSBTConsent",
+    "event": "Issued",
+    "signature": "Issued(uint256,address)",
+    "topic0": "0x77e191429f36211c964f6a7ae48f443f6560fe55e925c946ae18916222f093c7"
+  },
+  {
+    "contract": "DogTagSBTConsent",
+    "event": "Locked",
+    "signature": "Locked(uint256)",
+    "topic0": "0x032bc66be43dbccb7487781d168eb7bda224628a3b2c3388bdf69b532a3a1611"
+  },
+  {
+    "contract": "DogTagSBTConsent",
+    "event": "RoleAdminChanged",
+    "signature": "RoleAdminChanged(bytes32,bytes32,bytes32)",
+    "topic0": "0xbd79b86ffe0ab8e8776151514217cd7cacd52c909f66475c3af44e129f0b00ff"
+  },
+  {
+    "contract": "DogTagSBTConsent",
+    "event": "RoleGranted",
+    "signature": "RoleGranted(bytes32,address,address)",
+    "topic0": "0x2f8788117e7eff1d82e926ec794901d17c78024a50270940304540a733656f0d"
+  },
+  {
+    "contract": "DogTagSBTConsent",
+    "event": "RoleRevoked",
+    "signature": "RoleRevoked(bytes32,address,address)",
+    "topic0": "0xf6391f5c32d9c69d2a47ea670b442974b53935d1edc7fd64eb21e047a839171b"
+  },
+  {
+    "contract": "DogTagSBTConsent",
+    "event": "StatusChanged",
+    "signature": "StatusChanged(uint256,uint8,uint8,address,bytes32)",
+    "topic0": "0x1122e928bf6af3563d04f04fad6e3afbf57a2fb2da66bf7ce7f0a0ac72b319f7"
+  },
+  {
+    "contract": "DogTagSBTConsent",
+    "event": "Transfer",
+    "signature": "Transfer(address,address,uint256)",
+    "topic0": "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
+  },
+  {
+    "contract": "DogTagSBTConsent",
+    "event": "Unlocked",
+    "signature": "Unlocked(uint256)",
+    "topic0": "0xf27b6ce5b2f5e68ddb2fd95a8a909d4ecf1daaac270935fff052feacb24f1842"
+  },
+  {
+    "contract": "EntityRegistry",
+    "event": "AdminApiUrlSet",
+    "signature": "AdminApiUrlSet(string)",
+    "topic0": "0xa87998378e322e175c137ca56cc455cc746339a978083093ea18dac92c022d34"
+  },
+  {
+    "contract": "EntityRegistry",
+    "event": "EntityAccountUpdated",
+    "signature": "EntityAccountUpdated(address,address)",
+    "topic0": "0x41512e4851dbee877157b3e3d7a68fd6a8111264dfa4e3a33b42c85929905047"
+  },
+  {
+    "contract": "EntityRegistry",
+    "event": "EntityAdded",
+    "signature": "EntityAdded(address,EntityRegistry.EntityKind,string,string,bytes32)",
+    "topic0": "0xc1dbb9900caae56b7498b86dba75df9a066a1dc6f9bbe255a499046a60b8b159"
+  },
+  {
+    "contract": "EntityRegistry",
+    "event": "EntityReinstated",
+    "signature": "EntityReinstated(address,bytes32)",
+    "topic0": "0x67946b2f9cb1af55248f3ede9dc9eefc9bc7844bd2677da85ef1249138e5113c"
+  },
+  {
+    "contract": "EntityRegistry",
+    "event": "EntityRevoked",
+    "signature": "EntityRevoked(address,bytes32)",
+    "topic0": "0x2ec6b3b60cf0b79d925a613d31f267dfa6bbe1350819a7785767e183bfb3d87f"
+  },
+  {
+    "contract": "EntityRegistry",
+    "event": "EntityUpdated",
+    "signature": "EntityUpdated(address,string,string,bytes32,bytes32)",
+    "topic0": "0xd6608df1cecc85ae57a05688e263723c54a3d85eb76ad56d9c5ec64fa17e7836"
+  },
+  {
+    "contract": "EntityRegistry",
+    "event": "Initialized",
+    "signature": "Initialized(uint64)",
+    "topic0": "0xc7f505b2f371ae2175ee4913f4499e1f2633a7b5936321eed1cdaeb6115181d2"
+  },
+  {
+    "contract": "EntityRegistry",
+    "event": "OwnershipTransferStarted",
+    "signature": "OwnershipTransferStarted(address,address)",
+    "topic0": "0x38d16b8cac22d99fc7c124b9cd0de2d3fa1faef420bfe791d8c362d765e22700"
+  },
+  {
+    "contract": "EntityRegistry",
+    "event": "OwnershipTransferred",
+    "signature": "OwnershipTransferred(address,address)",
+    "topic0": "0x8be0079c531659141344cd1fd0a4f28419497f9722a3daafe3b4186f6b6457e0"
+  },
+  {
+    "contract": "EntityRegistry",
+    "event": "Upgraded",
+    "signature": "Upgraded(address)",
+    "topic0": "0xbc7cd75a20ee27fd9adebab32041f755214dbc6bffa90cc0225b39da2e5c2d3b"
+  },
+  {
+    "contract": "EntityRegistry",
+    "event": "VerifierCapabilitySet",
+    "signature": "VerifierCapabilitySet(bytes32,address,bool)",
+    "topic0": "0xd53324d405b77511fc4d8e9e54f260c585990bf8e9b884daffb6ce76d561f645"
+  },
+  {
+    "contract": "VetIssuer",
+    "event": "FundsReceived",
+    "signature": "FundsReceived(address,uint256)",
+    "topic0": "0x8e47b87b0ef542cdfa1659c551d88bad38aa7f452d2bbb349ab7530dfec8be8f"
+  },
+  {
+    "contract": "VetIssuer",
+    "event": "Initialized",
+    "signature": "Initialized(uint64)",
+    "topic0": "0xc7f505b2f371ae2175ee4913f4499e1f2633a7b5936321eed1cdaeb6115181d2"
+  },
+  {
+    "contract": "VetIssuer",
+    "event": "MaxRefundSet",
+    "signature": "MaxRefundSet(uint256)",
+    "topic0": "0x35f01fd76ab7ddc11c208241d89f3ae9f07095f6069456037c40b3304c0397dd"
+  },
+  {
+    "contract": "VetIssuer",
+    "event": "OperatorSet",
+    "signature": "OperatorSet(address,bool)",
+    "topic0": "0x1a594081ae893ab78e67d9b9e843547318164322d32c65369d78a96172d9dc8f"
+  },
+  {
+    "contract": "VetIssuer",
+    "event": "RecordIssued",
+    "signature": "RecordIssued(bytes32,bytes32,address)",
+    "topic0": "0x7ee4c4f5fa5722dca726d9850b8ff890b4fd808c96f528e0bd8cde3fec9ee0d3"
+  },
+  {
+    "contract": "VetIssuer",
+    "event": "RecordReactivated",
+    "signature": "RecordReactivated(bytes32,bytes32,address)",
+    "topic0": "0x76b3d543c498b23a45cc97f5ef33c0bc7babf733cfb300f84f50a03aaa08fb33"
+  },
+  {
+    "contract": "VetIssuer",
+    "event": "RecordRevoked",
+    "signature": "RecordRevoked(bytes32,bytes32,address)",
+    "topic0": "0x01437366f5c4d4d6ba1a04f6fc9c46f8d3129684fd839a01bf1a5e979ca8f840"
+  },
+  {
+    "contract": "VetIssuer",
+    "event": "RefundSkipped",
+    "signature": "RefundSkipped(address,uint256)",
+    "topic0": "0x6ce8c040ac5ab6dc5ee680ea2fd3ac6a726abd2895a694dfe802480ebf3db7a9"
+  },
+  {
+    "contract": "VetIssuer",
+    "event": "TagIssued",
+    "signature": "TagIssued(uint256,bytes32,address)",
+    "topic0": "0x6de30bc44cf7d59c73d7880687295ced072745db6adb8ebf44024bf5e0bd08fa"
+  },
+  {
+    "contract": "VetIssuer",
+    "event": "TagReactivated",
+    "signature": "TagReactivated(uint256,bytes32,bytes32,address)",
+    "topic0": "0x58db53e7537b78d44d941db6cfd3a8dd48f886e5f582b32e61b77f57cb278dee"
+  },
+  {
+    "contract": "VetIssuer",
+    "event": "TagRevoked",
+    "signature": "TagRevoked(uint256,bytes32,bytes32,address)",
+    "topic0": "0x97f8e51f9177d85aab2c2e5940f3257c9fc7178abb738b1bde9b719ee9fb9e33"
+  },
+  {
+    "contract": "VetIssuer",
+    "event": "Upgraded",
+    "signature": "Upgraded(address)",
+    "topic0": "0xbc7cd75a20ee27fd9adebab32041f755214dbc6bffa90cc0225b39da2e5c2d3b"
+  },
+  {
+    "contract": "VetIssuer",
+    "event": "VetIssuerInitialized",
+    "signature": "VetIssuerInitialized(address,address)",
+    "topic0": "0x010a56db6835c9992fa63e5d6d49d21fb48bfafcc1a6934336e1d81b76b982e8"
+  },
+  {
+    "contract": "VetIssuer",
+    "event": "VetOwnerSet",
+    "signature": "VetOwnerSet(address,address)",
+    "topic0": "0xbbca9c569e1e493cd05cb4ff5406f9774c44018cc6e767973803acbedc248d18"
+  },
+  {
+    "contract": "VetIssuer",
+    "event": "Withdrawn",
+    "signature": "Withdrawn(address,uint256)",
+    "topic0": "0x7084f5476618d8e60b11ef0d7d3f06914655adb8793e28ff7f018d4c76d505d5"
+  },
+  {
+    "contract": "VetIssuerFactory",
+    "event": "CloneOwnerSynced",
+    "signature": "CloneOwnerSynced(address,address,address)",
+    "topic0": "0x214298ee64502df78961247545a1bf8d97e019c2243d10873d684aa211debb00"
+  },
+  {
+    "contract": "VetIssuerFactory",
+    "event": "CloneUpgraded",
+    "signature": "CloneUpgraded(address,address)",
+    "topic0": "0x2d243d7667e3bfd5c10163ed463b31eb663cb2ba08b1a573c92172df2d4955f1"
+  },
+  {
+    "contract": "VetIssuerFactory",
+    "event": "DefaultImplementationSet",
+    "signature": "DefaultImplementationSet(address)",
+    "topic0": "0xb9b8339879efc82f37ee664b009cfa0f32f546a934471bd5199cf9f5de312f7e"
+  },
+  {
+    "contract": "VetIssuerFactory",
+    "event": "Initialized",
+    "signature": "Initialized(uint64)",
+    "topic0": "0xc7f505b2f371ae2175ee4913f4499e1f2633a7b5936321eed1cdaeb6115181d2"
+  },
+  {
+    "contract": "VetIssuerFactory",
+    "event": "OwnershipTransferStarted",
+    "signature": "OwnershipTransferStarted(address,address)",
+    "topic0": "0x38d16b8cac22d99fc7c124b9cd0de2d3fa1faef420bfe791d8c362d765e22700"
+  },
+  {
+    "contract": "VetIssuerFactory",
+    "event": "OwnershipTransferred",
+    "signature": "OwnershipTransferred(address,address)",
+    "topic0": "0x8be0079c531659141344cd1fd0a4f28419497f9722a3daafe3b4186f6b6457e0"
+  },
+  {
+    "contract": "VetIssuerFactory",
+    "event": "RootIndexed",
+    "signature": "RootIndexed(bytes32,address)",
+    "topic0": "0x8fda811842dae05610808c409ebdeb8c7973a892c420440b40057eb1428fddd4"
+  },
+  {
+    "contract": "VetIssuerFactory",
+    "event": "Upgraded",
+    "signature": "Upgraded(address)",
+    "topic0": "0xbc7cd75a20ee27fd9adebab32041f755214dbc6bffa90cc0225b39da2e5c2d3b"
+  },
+  {
+    "contract": "VetIssuerFactory",
+    "event": "VetDeployed",
+    "signature": "VetDeployed(address,address,address)",
+    "topic0": "0xbcb3e3b6673ecc9635ed99e875ff524ee44290ea9660d283439966e0fe2ab8c3"
+  },
+  {
+    "contract": "VerificationRegistryConsent",
+    "event": "DefaultAdminDelayChangeCanceled",
+    "signature": "DefaultAdminDelayChangeCanceled()",
+    "topic0": "0x2b1fa2edafe6f7b9e97c1a9e0c3660e645beb2dcaa2d45bdbf9beaf5472e1ec5"
+  },
+  {
+    "contract": "VerificationRegistryConsent",
+    "event": "DefaultAdminDelayChangeScheduled",
+    "signature": "DefaultAdminDelayChangeScheduled(uint48,uint48)",
+    "topic0": "0xf1038c18cf84a56e432fdbfaf746924b7ea511dfe03a6506a0ceba4888788d9b"
+  },
+  {
+    "contract": "VerificationRegistryConsent",
+    "event": "DefaultAdminTransferCanceled",
+    "signature": "DefaultAdminTransferCanceled()",
+    "topic0": "0x8886ebfc4259abdbc16601dd8fb5678e54878f47b3c34836cfc51154a9605109"
+  },
+  {
+    "contract": "VerificationRegistryConsent",
+    "event": "DefaultAdminTransferScheduled",
+    "signature": "DefaultAdminTransferScheduled(address,uint48)",
+    "topic0": "0x3377dc44241e779dd06afab5b788a35ca5f3b778836e2990bdb26a2a4b2e5ed6"
+  },
+  {
+    "contract": "VerificationRegistryConsent",
+    "event": "RoleAdminChanged",
+    "signature": "RoleAdminChanged(bytes32,bytes32,bytes32)",
+    "topic0": "0xbd79b86ffe0ab8e8776151514217cd7cacd52c909f66475c3af44e129f0b00ff"
+  },
+  {
+    "contract": "VerificationRegistryConsent",
+    "event": "RoleGranted",
+    "signature": "RoleGranted(bytes32,address,address)",
+    "topic0": "0x2f8788117e7eff1d82e926ec794901d17c78024a50270940304540a733656f0d"
+  },
+  {
+    "contract": "VerificationRegistryConsent",
+    "event": "RoleRevoked",
+    "signature": "RoleRevoked(bytes32,address,address)",
+    "topic0": "0xf6391f5c32d9c69d2a47ea670b442974b53935d1edc7fd64eb21e047a839171b"
+  },
+  {
+    "contract": "VerificationRegistryConsent",
+    "event": "Verified",
+    "signature": "Verified(uint256,address,bytes32,bytes32,uint256,uint256)",
+    "topic0": "0xeb5f75f2727c9d0d91b1fe9120ed35d6867952fa5f5103488f44a7afe21f532b"
+  },
+  {
+    "contract": "VerificationRegistryConsent",
+    "event": "ZkVerifierProposed",
+    "signature": "ZkVerifierProposed(address,uint256)",
+    "topic0": "0x7424e7750f375c0109926dc14924fdf383c66875d42beec5159093d715df7e17"
+  },
+  {
+    "contract": "VerificationRegistryConsent",
+    "event": "ZkVerifierUpdated",
+    "signature": "ZkVerifierUpdated(address)",
+    "topic0": "0x7b7bc61d0bf593dae61bd00be8085d8afa8c3851a1f5853415edf6ec334a8531"
+  },
+  {
+    "contract": "ProtocolRegistry",
+    "event": "ArtifactBindingProposed",
+    "signature": "ArtifactBindingProposed(bytes32,bytes32,uint256)",
+    "topic0": "0xe591b5255220e221a72bef892aa85bed5dda503ce86d9198b7e7043f3b06c5a3"
+  },
+  {
+    "contract": "ProtocolRegistry",
+    "event": "ArtifactBindingSet",
+    "signature": "ArtifactBindingSet(bytes32,bytes32)",
+    "topic0": "0x1a65ef697597e4bff3066c55b85e4037b799eb05cc6ba1e80dbc67bdb19afa12"
+  },
+  {
+    "contract": "ProtocolRegistry",
+    "event": "ArtifactSetDeprecated",
+    "signature": "ArtifactSetDeprecated(bytes32)",
+    "topic0": "0x70b194a8ef9c4ea52fef88b24fd138d424e9465c3ccdd71d3ab5524b33ec35c7"
+  },
+  {
+    "contract": "ProtocolRegistry",
+    "event": "ArtifactSetProposed",
+    "signature": "ArtifactSetProposed(bytes32,uint256)",
+    "topic0": "0x4f63dc9961c8e157c8bf819df7ab982874b6bc452c8de409b5271566b5d2c906"
+  },
+  {
+    "contract": "ProtocolRegistry",
+    "event": "ArtifactSetPublished",
+    "signature": "ArtifactSetPublished(bytes32,bool)",
+    "topic0": "0xc4997809d02bd363a27b42d39e9d01acdb16243e6fc02a783403f55ff249f714"
+  },
+  {
+    "contract": "ProtocolRegistry",
+    "event": "DefaultAdminDelayChangeCanceled",
+    "signature": "DefaultAdminDelayChangeCanceled()",
+    "topic0": "0x2b1fa2edafe6f7b9e97c1a9e0c3660e645beb2dcaa2d45bdbf9beaf5472e1ec5"
+  },
+  {
+    "contract": "ProtocolRegistry",
+    "event": "DefaultAdminDelayChangeScheduled",
+    "signature": "DefaultAdminDelayChangeScheduled(uint48,uint48)",
+    "topic0": "0xf1038c18cf84a56e432fdbfaf746924b7ea511dfe03a6506a0ceba4888788d9b"
+  },
+  {
+    "contract": "ProtocolRegistry",
+    "event": "DefaultAdminTransferCanceled",
+    "signature": "DefaultAdminTransferCanceled()",
+    "topic0": "0x8886ebfc4259abdbc16601dd8fb5678e54878f47b3c34836cfc51154a9605109"
+  },
+  {
+    "contract": "ProtocolRegistry",
+    "event": "DefaultAdminTransferScheduled",
+    "signature": "DefaultAdminTransferScheduled(address,uint48)",
+    "topic0": "0x3377dc44241e779dd06afab5b788a35ca5f3b778836e2990bdb26a2a4b2e5ed6"
+  },
+  {
+    "contract": "ProtocolRegistry",
+    "event": "DiscoverySetDeprecated",
+    "signature": "DiscoverySetDeprecated(bytes32)",
+    "topic0": "0xfd60dfc21ce338ca9231a647975c2e276143ae6adfa6d53f649d7665a69daec9"
+  },
+  {
+    "contract": "ProtocolRegistry",
+    "event": "DiscoverySetProposed",
+    "signature": "DiscoverySetProposed(bytes32,uint256)",
+    "topic0": "0x9e0209a7e6e4fa92108bc46632bb0587e2db05e5b57a24c8132768769b42073c"
+  },
+  {
+    "contract": "ProtocolRegistry",
+    "event": "DiscoverySetPublished",
+    "signature": "DiscoverySetPublished(bytes32,bool)",
+    "topic0": "0x0f0e9419f8c796f176b9c3b030bd87841b3d6a604f506975fc630d1b08b18321"
+  },
+  {
+    "contract": "ProtocolRegistry",
+    "event": "RoleAdminChanged",
+    "signature": "RoleAdminChanged(bytes32,bytes32,bytes32)",
+    "topic0": "0xbd79b86ffe0ab8e8776151514217cd7cacd52c909f66475c3af44e129f0b00ff"
+  },
+  {
+    "contract": "ProtocolRegistry",
+    "event": "RoleGranted",
+    "signature": "RoleGranted(bytes32,address,address)",
+    "topic0": "0x2f8788117e7eff1d82e926ec794901d17c78024a50270940304540a733656f0d"
+  },
+  {
+    "contract": "ProtocolRegistry",
+    "event": "RoleRevoked",
+    "signature": "RoleRevoked(bytes32,address,address)",
+    "topic0": "0xf6391f5c32d9c69d2a47ea670b442974b53935d1edc7fd64eb21e047a839171b"
+  }
+]

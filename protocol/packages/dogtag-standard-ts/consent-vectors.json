@@ -1,0 +1,17 @@
+{
+  "_comment": "DogTag consent-key test vectors (impl §1.10). TS = reference; dogtag-standard-rs asserts this file. keyHash = Poseidon(Ax, Ay) — the value the owner.consentKey leaf commits into R.",
+  "keyHash": [
+    {
+      "name": "kh_1_2",
+      "Ax": "1",
+      "Ay": "2",
+      "expected": "0x115cc0f5e7d690413df64c6b9662e9cf2a3617f2743245519e19607a4417189a"
+    },
+    {
+      "name": "kh_large",
+      "Ax": "12345678901234567890123456789012345678901234567890",
+      "Ay": "98765432109876543210987654321098765432109876543210",
+      "expected": "0x1dd60047c600b60b6836d93195da6f75f6c0d78b2bd13f28339bc5d44da4962b"
+    }
+  ]
+}

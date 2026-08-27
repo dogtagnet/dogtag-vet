@@ -1,0 +1,309 @@
+openapi: 3.1.0
+info:
+  title: DogTag Admin Public API
+  version: "2.0.0"
+  description: |-
+    The admin directory surface mobile apps call after on-chain discovery.
+    Discovery chain: apps bundle only the ROAX RPC endpoint and the `EntityRegistry` contract
+    address; everything else - the admin API base URL, then each entity's own vet/government/
+    groomer platform - resolves from chain and this directory (`docs/architecture-v2.md`,
+    "Discovery chain").
+    `adminApiUrl` on `EntityRegistry` points at the base URL this spec's routes are served
+    from; each directory row's `platformBaseUrl` then points at that entity's own deployment,
+    whose standardized surface is `specs/vet-public-api.yaml`.
+    This is a READ-ONLY public surface: no route here accepts a mutation. Entity onboarding,
+    KYC review, and on-chain writes are staff-only admin-platform screens, out of scope for
+    this spec.
+  license:
+    name: Apache-2.0
+    identifier: Apache-2.0
+# Every route is either fully public (the directory) or gated only by a resource-scoped opaque
+# token that OpenAPI's security-scheme vocabulary has no shape for (see the sibling
+# vet-public-api.yaml for the same reasoning) - not applicable here since every route below is
+# unconditionally public, but recorded for consistency across the two specs.
+security: []
+servers:
+  - url: "https://{adminHost}"
+    description: The DogTag admin platform's public API base (the value every `EntityRegistry.adminApiUrl` on ROAX points at).
+    variables:
+      adminHost:
+        default: admin.dogtag.example
+tags:
+  - name: directory
+    description: The public entity directory - every Active entity on chain, plus enough off-chain metadata to render a map/list.
+  - name: health
+    description: Liveness/readiness for k8s probes and uptime monitors.
+x-common-headers:
+  rateLimit: &rateLimitHeaders
+    X-RateLimit-Limit: {$ref: '#/components/headers/RateLimitLimit'}
+    X-RateLimit-Remaining: {$ref: '#/components/headers/RateLimitRemaining'}
+    X-RateLimit-Reset: {$ref: '#/components/headers/RateLimitReset'}
+paths:
+  /v1/entities:
+    get:
+      operationId: listEntities
+      tags: [directory]
+      summary: Paged, filterable entity directory
+      description: |-
+        Defaults to `status=Active` only - a revoked entity (`EntityRegistry.status ==
+        Revoked`) is omitted unless the caller explicitly asks for it via `status`, matching
+        the acceptance anchor "entity revoked in the registry ... is visibly revoked across
+        admin, directory, and vet platform" (a caller that WANTS to show "this entity was
+        revoked" passes `status=Revoked` or `status=All` deliberately).
+      parameters:
+        - name: kind
+          in: query
+          schema: {type: string, enum: [VET, GOVERNMENT, GROOMER]}
+        - name: q
+          in: query
+          description: Free-text match against name and DBA.
+          schema: {type: string, maxLength: 200}
+        - name: near
+          in: query
+          description: "`lat,lng` center point for a radius filter. Requires `radiusKm`."
+          schema: {type: string, pattern: '^-?\d{1,3}(\.\d+)?,-?\d{1,3}(\.\d+)?$'}
+        - name: radiusKm
+          in: query
+          schema: {type: number, minimum: 0.1, maximum: 20000}
+        - name: status
+          in: query
+          description: "Defaults to `Active`. `All` returns every status."
+          schema: {type: string, enum: [Active, Revoked, All], default: Active}
+        - name: cursor
+          in: query
+          description: Opaque pagination cursor from a previous page's `nextCursor`. Absent on the first page.
+          schema: {type: string}
+        - name: limit
+          in: query
+          schema: {type: integer, minimum: 1, maximum: 200, default: 50}
+      responses:
+        "200":
+          description: A page of the directory.
+          headers: *rateLimitHeaders
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EntityPage'
+        "400":
+          description: "`near` given without `radiusKm` (or vice versa), or a malformed `cursor`."
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
+        "429":
+          $ref: '#/components/responses/RateLimited'
+        "5XX":
+          $ref: '#/components/responses/ServerError'
+
+  /v1/entities/{account}:
+    get:
+      operationId: getEntity
+      tags: [directory]
+      summary: One entity's full public card
+      parameters:
+        - $ref: '#/components/parameters/EntityAccount'
+      responses:
+        "200":
+          description: The entity's full public card.
+          headers: *rateLimitHeaders
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EntityDetail'
+        "404":
+          description: No entity at this account (never registered, or the address is malformed).
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
+        "429":
+          $ref: '#/components/responses/RateLimited'
+        "5XX":
+          $ref: '#/components/responses/ServerError'
+
+  /v1/entities/{account}/logo:
+    get:
+      operationId: getEntityLogo
+      tags: [directory]
+      summary: An entity's logo image
+      description: Served from the same store the admin platform's client-side 512x512 crop wrote at onboarding.
+      parameters:
+        - $ref: '#/components/parameters/EntityAccount'
+      responses:
+        "200":
+          description: The logo image.
+          headers: *rateLimitHeaders
+          content:
+            image/png:
+              schema: {type: string, contentEncoding: base64, contentMediaType: image/png}
+            image/jpeg:
+              schema: {type: string, contentEncoding: base64, contentMediaType: image/jpeg}
+            image/webp:
+              schema: {type: string, contentEncoding: base64, contentMediaType: image/webp}
+        "404":
+          description: No entity at this account, or the entity has no logo on file.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
+        "429":
+          $ref: '#/components/responses/RateLimited'
+        "5XX":
+          $ref: '#/components/responses/ServerError'
+
+  /health:
+    get:
+      operationId: getHealth
+      tags: [health]
+      summary: Liveness/readiness probe
+      description: Unauthenticated and uncached. Rate-limited generously (a much higher ceiling than the directory routes) so k8s probes hitting this every few seconds are never mistaken for abuse.
+      responses:
+        "200":
+          description: Healthy - the API can reach its database and its ROAX RPC.
+          headers: *rateLimitHeaders
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+        "429":
+          $ref: '#/components/responses/RateLimited'
+        "503":
+          description: Unhealthy - a dependency (database, RPC) is unreachable. `HealthResponse.checks` names which.
+          headers: *rateLimitHeaders
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+
+components:
+  parameters:
+    EntityAccount:
+      name: account
+      in: path
+      required: true
+      description: The entity's on-chain wallet address (its `EntityRegistry` key).
+      schema: {$ref: '#/components/schemas/Address'}
+
+  headers:
+    RateLimitLimit:
+      description: Requests allowed in the current window for this route + client.
+      schema: {type: integer, minimum: 1}
+    RateLimitRemaining:
+      description: Requests remaining in the current window.
+      schema: {type: integer, minimum: 0}
+    RateLimitReset:
+      description: Unix seconds until the window resets.
+      schema: {type: integer, minimum: 0}
+
+  responses:
+    RateLimited:
+      description: Rate limit exceeded for this route + client.
+      headers:
+        <<: *rateLimitHeaders
+        Retry-After: {schema: {type: integer, minimum: 0}}
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Error'}
+    ServerError:
+      description: Transient failure (chain read timeout, database unavailable). Retry with backoff.
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Error'}
+
+  schemas:
+    Address:
+      type: string
+      pattern: '^0x[0-9a-fA-F]{40}$'
+
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code: {type: string, description: "A stable machine-readable code, e.g. `entity_not_found`, `bad_radius_filter`, `rate_limited`."}
+            message: {type: string, description: "A short, human-safe sentence."}
+            requestId: {type: string}
+
+    EntityKind:
+      type: string
+      enum: [VET, GOVERNMENT, GROOMER]
+
+    EntityStatus:
+      type: string
+      description: Mirrors the on-chain `EntityRegistry.EntityStatus` enum (`None` never appears here - an unregistered account is a 404, not a status value).
+      enum: [Active, Revoked]
+
+    Coordinates:
+      type: object
+      required: [lat, lng]
+      properties:
+        lat: {type: number, minimum: -90, maximum: 90}
+        lng: {type: number, minimum: -180, maximum: 180}
+
+    PostalAddress:
+      type: object
+      properties:
+        line1: {type: string}
+        line2: {type: string}
+        city: {type: string}
+        region: {type: string}
+        postalCode: {type: string}
+        country: {type: string, description: ISO 3166-1 alpha-2.}
+
+    Contact:
+      type: object
+      properties:
+        email: {type: string, format: email}
+        phone: {type: string}
+
+    EntityRow:
+      type: object
+      required: [account, kind, name, coordinates, address, contact, platformBaseUrl, registeredAt, status]
+      properties:
+        account: {$ref: '#/components/schemas/Address'}
+        kind: {$ref: '#/components/schemas/EntityKind'}
+        name: {type: string}
+        dba: {type: string, description: "\"Doing business as\" name, if different from `name`."}
+        logoUrl: {type: string, description: "`GET /v1/entities/{account}/logo`, absolute."}
+        coordinates: {$ref: '#/components/schemas/Coordinates'}
+        address: {$ref: '#/components/schemas/PostalAddress'}
+        contact: {$ref: '#/components/schemas/Contact'}
+        platformBaseUrl:
+          type: string
+          description: This entity's own platform base URL (a `dogtag-vet` deployment for `kind == VET`). Off-chain only, excluded from `docsHash`, so it can change without re-hashing the entity's KYC record.
+        registeredAt: {type: string, format: date-time, description: When this entity was added to `EntityRegistry`.}
+        status: {$ref: '#/components/schemas/EntityStatus'}
+
+    EntityDetail:
+      allOf:
+        - $ref: '#/components/schemas/EntityRow'
+        - type: object
+          required: [registrationId, docsHash]
+          properties:
+            registrationId: {type: string, description: The on-chain `registrationId` public field.}
+            docsHash:
+              type: string
+              pattern: '^0x[0-9a-fA-F]{64}$'
+              description: sha256 over the canonical KYC document manifest, as anchored on chain.
+            bookingEnabled: {type: boolean, description: "Whether this entity's platform exposes `specs/vet-public-api.yaml`'s booking routes."}
+
+    EntityPage:
+      type: object
+      required: [entities]
+      properties:
+        entities:
+          type: array
+          items: {$ref: '#/components/schemas/EntityRow'}
+        nextCursor:
+          type: string
+          description: Pass as `cursor` to fetch the next page. Absent on the last page.
+
+    HealthResponse:
+      type: object
+      required: [status, checks]
+      properties:
+        status: {type: string, enum: [ok, degraded]}
+        checks:
+          type: object
+          additionalProperties: {type: string, enum: [ok, fail]}
+          description: "One entry per dependency, e.g. `{\"database\": \"ok\", \"roaxRpc\": \"fail\"}`."
