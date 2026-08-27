@@ -1,0 +1,39 @@
+import {z} from "zod";
+
+/** Every protocol amount (weights, prices, token base units) is a canonical decimal string, never
+ * a native float - see profileBind.ts / encode.ts in @dogtag/standard. This schema only checks
+ * shape (optional leading `-`, digits, optional single `.` with digits); callers that need a
+ * non-negative integer string layer a `.regex(/^\d+$/)` refinement on top. */
+export const decimalString = z
+  .string()
+  .regex(/^-?\d+(\.\d+)?$/, "Must be a decimal number as a string, e.g. \"12.50\"");
+
+export const nonNegativeIntegerString = z.string().regex(/^\d+$/, "Must be a non-negative integer string");
+
+export const hexAddress = z
+  .string()
+  .regex(/^0x[0-9a-fA-F]{40}$/, "Must be a 0x-prefixed 40-hex-character address");
+
+export const hex32 = z
+  .string()
+  .regex(/^0x[0-9a-fA-F]{64}$/, "Must be a 0x-prefixed 32-byte hex value");
+
+export const hex16Salt = z
+  .string()
+  .regex(/^0x[0-9a-fA-F]{32}$/, "Must be a 0x-prefixed 16-byte hex salt");
+
+export const hexToken32 = z
+  .string()
+  .regex(/^[0-9a-f]{32}$/, "Must be 32 lowercase hex characters");
+
+export const unixSeconds = z.number().int().nonnegative();
+
+export const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Must be an ISO date (YYYY-MM-DD)");
+
+export const moneySchema = z.object({
+  amount: decimalString,
+  currency: z.string().length(3),
+});
+
+export const paymentChainKey = z.enum(["ethereum", "base", "sepolia", "baseSepolia"]);
+export const paymentToken = z.enum(["ETH", "USDC", "USDT"]);

@@ -1,0 +1,104 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+ * Design tokens (protocol/design/design-system.md). Every color used anywhere in this repo must
+ * resolve to one of these custom properties - never a hardcoded hex value outside this file.
+ * Light values are the default on :root; dark values override under .dark (class-strategy dark
+ * mode, toggled by ThemeToggle - see src/components/ui/ThemeToggle.tsx).
+ */
+:root {
+  /* Neutrals and surfaces */
+  --bg: #f6f7f9;
+  --surface: #ffffff;
+  --surface-2: #eef1f4;
+  --border: #d8dee5;
+  --border-strong: #b7c0cb;
+  --ink: #16202b;
+  --ink-muted: #5b6773;
+  --ink-faint: #8a95a1;
+
+  /* Brand and accents */
+  --brand: #0e6e63;
+  --brand-soft: #dcefec;
+  --link: #0b62a4;
+  --focus: rgba(11, 98, 164, 0.4);
+
+  /* Status palette */
+  --ok: #1f7a44;
+  --ok-soft: #dff0e6;
+  --warn: #9a6b00;
+  --warn-soft: #f7ecce;
+  --danger: #b42331;
+  --danger-soft: #f8dee0;
+  --info: #275fbf;
+  --info-soft: #dfe8f8;
+  --neutral-status: #5b6773;
+  --neutral-status-soft: #e7ebef;
+
+  /* QR surfaces are always printed on a white quiet zone, in both themes - this is a fixed
+     token, not a themed one, so it is declared once here and never overridden under .dark. */
+  --qr-paper: #ffffff;
+}
+
+.dark {
+  --bg: #0d1117;
+  --surface: #161b22;
+  --surface-2: #1f2630;
+  --border: #2c333d;
+  --border-strong: #414b58;
+  --ink: #e6ebf1;
+  --ink-muted: #93a0ae;
+  --ink-faint: #6b7683;
+
+  --brand: #2fb3a4;
+  --brand-soft: #123a35;
+  --link: #58a6e8;
+  --focus: rgba(88, 166, 232, 0.4);
+
+  --ok: #4cc38a;
+  --ok-soft: #12271c;
+  --warn: #e2b93b;
+  --warn-soft: #2e2510;
+  --danger: #f07178;
+  --danger-soft: #331418;
+  --info: #7aa7f0;
+  --info-soft: #14213a;
+  --neutral-status: #93a0ae;
+  --neutral-status-soft: #232b34;
+}
+
+* {
+  border-color: var(--border);
+}
+
+html {
+  color-scheme: light;
+}
+
+html.dark {
+  color-scheme: dark;
+}
+
+body {
+  background-color: var(--bg);
+  color: var(--ink);
+}
+
+::selection {
+  background-color: var(--brand-soft);
+  color: var(--ink);
+}
+
+/* Light theme uses soft shadows; dark theme relies on borders instead (design-system.md). */
+.dark .shadow-card,
+.dark .shadow-raised {
+  box-shadow: none;
+}
+
+/* Tabular numerals for every mono/amount surface (HashCell, AddressChip, DataTable numeric
+   columns) - amounts and ids must align in a column. */
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}

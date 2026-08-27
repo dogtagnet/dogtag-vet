@@ -1,0 +1,3 @@
+packages:
+  - "."
+  - "protocol/packages/dogtag-standard-ts"

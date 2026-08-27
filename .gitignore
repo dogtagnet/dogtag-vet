@@ -1,0 +1,39 @@
+# dependencies
+node_modules/
+protocol/**/node_modules/
+.pnpm-store/
+
+# next.js
+.next/
+out/
+next-env.d.ts
+
+# build output (the vendored protocol/**/dist is committed and already tracked;
+# this only affects untracked build output elsewhere in the repo)
+/build/
+/dist/
+
+# env
+.env
+.env.local
+.env.*.local
+
+# testing
+/coverage
+/playwright-report/
+/test-results/
+/blob-report/
+
+# misc
+.DS_Store
+*.pem
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# local data
+/tmp/
+/data/
+*.tsbuildinfo
