@@ -51,6 +51,11 @@ export interface MintSessionDoc {
   errorReason?: string;
   tokenExp: number; // unix seconds
   createdAt: Date;
+  /** Set the first time `GET /p/:token` resolves this session - distinct from `resolvedAt`
+   * (terminal bind/error time) - so the one-time TTL extension in `vet-public-api.yaml`'s
+   * `/p/{token}` doc comment ("The first successful resolve extends the session's TTL once") has
+   * somewhere to record that it already happened. */
+  firstResolvedAt?: Date;
   resolvedAt?: Date;
 }
 
@@ -116,6 +121,7 @@ const mintSessionSchema = new Schema<MintSessionDoc>(
     errorStage: {type: String, enum: ["attestation", "seal", "issue", "verify", "interrupted"]},
     errorReason: String,
     tokenExp: {type: Number, required: true},
+    firstResolvedAt: Date,
     resolvedAt: Date,
   },
   {timestamps: {createdAt: true, updatedAt: false}},

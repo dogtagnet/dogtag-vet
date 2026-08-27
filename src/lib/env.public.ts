@@ -19,4 +19,5 @@ export const publicEnv = {
   vetIssuerFactoryAddress: process.env.NEXT_PUBLIC_VET_ISSUER_FACTORY_ADDRESS ?? "",
   entityRegistryAddress: process.env.NEXT_PUBLIC_ENTITY_REGISTRY_ADDRESS ?? "",
   dogTagSbtAddress: process.env.NEXT_PUBLIC_DOGTAG_SBT_ADDRESS ?? "",
+  verificationRegistryAddress: process.env.NEXT_PUBLIC_VERIFICATION_REGISTRY_ADDRESS ?? "",
 };

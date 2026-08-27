@@ -44,6 +44,10 @@ export interface ClinicSettingsDoc {
    * anything else. Generated lazily on first read (`getClinicSettings`) rather than at schema
    * level so every pre-existing deployment gets one transparently. */
   icsFeedToken: string;
+  /** The chain-activity follower's cursor (`src/worker/index.ts`) - the next block to scan from.
+   * Lives here rather than a dedicated collection since this deployment only ever follows one
+   * clone, so there is exactly one cursor to keep, same singleton as everything else here. */
+  activityCursorBlock?: number;
   updatedAt: Date;
 }
 
@@ -75,6 +79,7 @@ const clinicSettingsSchema = new Schema<ClinicSettingsDoc>(
       baseSepolia: String,
     },
     icsFeedToken: {type: String, index: true, sparse: true, unique: true},
+    activityCursorBlock: Number,
   },
   {timestamps: {createdAt: false, updatedAt: true}},
 );

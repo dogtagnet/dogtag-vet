@@ -65,6 +65,14 @@ const envSchema = z.object({
   // Payment confirmation depth
   CONFIRMATIONS_MAINNET: z.coerce.number().default(3),
   CONFIRMATIONS_TESTNET: z.coerce.number().default(2),
+
+  // Chain-activity follower (src/worker/index.ts). Defaults to 0 (scan from genesis) - ROAX is a
+  // dedicated, low-volume identity chain, so a full-history scan on first run is cheap; a
+  // deployment onboarding onto a much taller chain should set this to its clone's actual deploy
+  // block instead of paying for a genesis-to-tip scan it doesn't need.
+  ACTIVITY_START_BLOCK: z.coerce.number().default(0),
+  ACTIVITY_POLL_MS: z.coerce.number().default(15_000),
+  ACTIVITY_CHUNK_BLOCKS: z.coerce.number().default(2000),
 });
 
 export type ServerEnv = z.infer<typeof envSchema>;

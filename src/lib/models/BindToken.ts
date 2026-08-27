@@ -7,6 +7,10 @@ export interface BindTokenDoc {
   sessionId: string;
   exp: number; // unix seconds
   consumed: boolean;
+  /** Set atomically alongside `consumed: true` - `GET /p/:token/status` keeps answering for a
+   * grace period measured from this timestamp (`vet-public-api.yaml`'s doc comment: "keeps
+   * answering for a grace period after the token is consumed"), then starts returning 410. */
+  consumedAt?: number; // unix seconds
 }
 
 const bindTokenSchema = new Schema<BindTokenDoc>({
@@ -14,6 +18,7 @@ const bindTokenSchema = new Schema<BindTokenDoc>({
   sessionId: {type: String, required: true, index: true},
   exp: {type: Number, required: true},
   consumed: {type: Boolean, required: true, default: false},
+  consumedAt: Number,
 });
 
 export const BindToken =

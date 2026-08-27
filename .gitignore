@@ -37,3 +37,12 @@ pnpm-debug.log*
 /tmp/
 /data/
 *.tsbuildinfo
+
+# A common global gitignore excludes a bare `tags` (ctags index files) at any depth, which also
+# silently swallows this repo's own `/tags` route directories (`src/app/(app)/tags`,
+# `src/app/api/tags` - the DogTag tag-management pages and API, unrelated to ctags). Re-include
+# them explicitly; a parent-directory exclusion must be un-ignored before its contents can be.
+!src/app/(app)/tags/
+!src/app/(app)/tags/**
+!src/app/api/tags/
+!src/app/api/tags/**

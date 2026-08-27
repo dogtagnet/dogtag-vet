@@ -31,6 +31,7 @@ export const authConfig = {
         "/x/",
         "/v1/",
         "/r/",
+        "/profiles/",
         "/api/calendar/feed/",
       ];
       const isPublic = pathname === "/" || publicPrefixes.some((p) => pathname.startsWith(p));

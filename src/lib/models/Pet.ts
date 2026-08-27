@@ -18,6 +18,24 @@ export interface MicrochipInfo {
   bodyLocation?: string;
 }
 
+/** The C3 EIP-712 issuer attestation (`protocol/specs/issuer-attestation.md`), signed by the
+ * operator wallet immediately after `issueTag` confirms. Stored verbatim (domain + message +
+ * signature) so an offline verifier can recover the signer without any further chain read -
+ * see the spec's "How verifiers check it". Never a leaf - this sits outside the Merkle root R,
+ * exactly like the spec documents. */
+export interface IssuerAttestation {
+  domain: {name: string; version: string; chainId: number; verifyingContract: string};
+  message: {
+    merkleRoot: string;
+    recordType: string;
+    issuerContract: string;
+    issuerName: string;
+    issuerDomain: string;
+  };
+  signature: string;
+  issuerSigner: string;
+}
+
 export interface DogTagInfo {
   dogTagIdDec?: string;
   dogTagIdField?: string;
@@ -25,6 +43,7 @@ export interface DogTagInfo {
   status?: DogTagStatus;
   issuedTx?: string;
   cloneAddress?: string;
+  attestation?: IssuerAttestation;
 }
 
 export interface PetDoc {
@@ -64,6 +83,27 @@ const microchipSchema = new Schema<MicrochipInfo>(
   {_id: false},
 );
 
+const issuerAttestationSchema = new Schema<IssuerAttestation>(
+  {
+    domain: {
+      name: {type: String, required: true},
+      version: {type: String, required: true},
+      chainId: {type: Number, required: true},
+      verifyingContract: {type: String, required: true},
+    },
+    message: {
+      merkleRoot: {type: String, required: true},
+      recordType: {type: String, required: true},
+      issuerContract: {type: String, required: true},
+      issuerName: {type: String, required: true},
+      issuerDomain: {type: String, required: true},
+    },
+    signature: {type: String, required: true},
+    issuerSigner: {type: String, required: true},
+  },
+  {_id: false},
+);
+
 const dogTagSchema = new Schema<DogTagInfo>(
   {
     dogTagIdDec: {type: String, index: true},
@@ -72,6 +112,7 @@ const dogTagSchema = new Schema<DogTagInfo>(
     status: {type: String, enum: ["active", "revoked"]},
     issuedTx: String,
     cloneAddress: String,
+    attestation: issuerAttestationSchema,
   },
   {_id: false},
 );

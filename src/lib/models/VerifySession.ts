@@ -27,6 +27,10 @@ export interface ProfileDisclosure {
 
 export interface VerifySessionDoc {
   sessionId: string;
+  /** The 32-lowercase-hex verify-session token from the `/x/<32hex>?a=<relayer>` QR
+   * (`specs/qr-formats.md`) - the public lookup key for `GET /x/:token` and this session's own
+   * status poll. Distinct from `sessionId` (an internal id never exposed in a URL). */
+  token: string;
   relayerAddress: string;
   purpose: string;
   recordType: string;
@@ -81,6 +85,7 @@ const profileDisclosureSchema = new Schema<ProfileDisclosure>(
 const verifySessionSchema = new Schema<VerifySessionDoc>(
   {
     sessionId: {type: String, required: true, unique: true, default: () => randomUUID()},
+    token: {type: String, required: true, unique: true},
     relayerAddress: {type: String, required: true, index: true},
     purpose: {type: String, required: true},
     recordType: {type: String, required: true},

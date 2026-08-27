@@ -1,11 +1,11 @@
 import {PageHeader} from "@/components/shell/PageHeader";
-import {ComingSoon} from "@/components/shell/ComingSoon";
+import {VerifySessionPanel} from "@/app/(app)/verify/VerifySessionPanel";
 
 export default function Page() {
   return (
     <>
-      <PageHeader title="Verify" />
-      <ComingSoon feature="Consent verification" />
+      <PageHeader title="Verify" description="Start a consent-verification session as the relayer." />
+      <VerifySessionPanel />
     </>
   );
 }
