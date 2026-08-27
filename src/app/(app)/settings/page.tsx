@@ -4,13 +4,21 @@ import {KeyValuePanel} from "@/components/ui/KeyValuePanel";
 import {StatusBadge} from "@/components/ui/StatusBadge";
 import {AddressChip} from "@/components/ui/AddressChip";
 import {connectToDatabase} from "@/lib/db";
+import {AvailabilityException, AvailabilityRule, getBookingSettings} from "@/lib/models/Availability";
 import {getClinicSettings} from "@/lib/models/ClinicSettings";
 import {getServerEnv} from "@/lib/env";
+import {BookingConfigSection} from "@/app/(app)/settings/BookingConfigSection";
+import {IcsFeedSection} from "@/app/(app)/settings/IcsFeedSection";
 import {SettingsForm} from "@/app/(app)/settings/SettingsForm";
 
 export default async function SettingsPage() {
   await connectToDatabase();
-  const settings = await getClinicSettings();
+  const [settings, bookingSettings, rules, exceptions] = await Promise.all([
+    getClinicSettings(),
+    getBookingSettings(),
+    AvailabilityRule.find({}).lean(),
+    AvailabilityException.find({}).sort({date: 1}).lean(),
+  ]);
   const env = getServerEnv();
   const smtpConfigured = Boolean(env.EMAIL_SERVER && env.EMAIL_FROM);
 
@@ -59,6 +67,10 @@ export default async function SettingsPage() {
         </div>
       )}
       <SettingsForm initial={settings} />
+      <div className="mt-6 max-w-2xl space-y-6">
+        <BookingConfigSection settings={bookingSettings} rules={rules} exceptions={exceptions} />
+        <IcsFeedSection initialToken={settings.icsFeedToken} publicBaseUrl={env.PUBLIC_BASE_URL} />
+      </div>
     </>
   );
 }

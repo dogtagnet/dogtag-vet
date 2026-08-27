@@ -15,6 +15,7 @@ export const clinicSettingsInputSchema = z.object({
     .object({
       name: z.string().trim().optional(),
       logoUrl: z.string().url().optional(),
+      contactEmail: z.string().trim().email().optional(),
     })
     .optional(),
   rpcOverrides: z

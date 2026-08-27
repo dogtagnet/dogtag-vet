@@ -76,6 +76,7 @@ export const AvailabilityException = getOrCreateModel<AvailabilityExceptionDoc>(
  * getBookingSettings()/upsert rather than a raw find, so callers never have to think about the
  * singleton invariant. */
 export interface BookingSettingsDoc {
+  _id: string; // always the fixed singleton id - see BOOKING_SETTINGS_ID below
   timezone: string; // IANA, e.g. "America/Los_Angeles"
   minNoticeMinutes: number;
   maxAdvanceDays: number;
@@ -85,6 +86,7 @@ export interface BookingSettingsDoc {
 
 const bookingSettingsSchema = new Schema<BookingSettingsDoc>(
   {
+    _id: {type: String, required: true},
     timezone: {type: String, required: true, default: "America/New_York"},
     minNoticeMinutes: {type: Number, required: true, default: 60, min: 0},
     maxAdvanceDays: {type: Number, required: true, default: 60, min: 1},

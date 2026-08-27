@@ -1,3 +1,9 @@
+// `server-only`'s package.json maps the `react-server` export condition to a no-op stub and
+// everything else (including plain Node) to a throwing one - Next's own bundler sets that
+// condition automatically for server components, but a standalone script run via plain `tsx`
+// (scripts/seed.ts, src/worker/index.ts) does not. Both of those scripts are run with
+// `tsx --conditions=react-server` (see package.json) specifically so importing this file - or
+// anything that transitively imports it, like src/lib/db.ts - doesn't throw outside Next.
 import "server-only";
 import {z} from "zod";
 

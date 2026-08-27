@@ -23,7 +23,16 @@ export const authConfig = {
       // Everything is staff-only (behind sign-in) except the marketing/auth surface and the
       // protocol-mandated public routes (mint/verify resolve, booking, payment status, receipts -
       // specs/vet-public-api.yaml) - those never carry staff credentials by design.
-      const publicPrefixes = ["/sign-in", "/design", "/api/auth", "/p/", "/x/", "/v1/", "/r/"];
+      const publicPrefixes = [
+        "/sign-in",
+        "/design",
+        "/api/auth",
+        "/p/",
+        "/x/",
+        "/v1/",
+        "/r/",
+        "/api/calendar/feed/",
+      ];
       const isPublic = pathname === "/" || publicPrefixes.some((p) => pathname.startsWith(p));
       if (isPublic) return true;
       return isLoggedIn;

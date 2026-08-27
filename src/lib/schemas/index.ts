@@ -4,6 +4,7 @@ export * from "@/lib/schemas/pet";
 export * from "@/lib/schemas/service";
 export * from "@/lib/schemas/availability";
 export * from "@/lib/schemas/appointment";
+export * from "@/lib/schemas/booking";
 export * from "@/lib/schemas/payment";
 export * from "@/lib/schemas/mintSession";
 export * from "@/lib/schemas/verifySession";

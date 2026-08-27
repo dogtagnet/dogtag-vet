@@ -18,6 +18,9 @@ export const navGroups: NavGroup[] = [
     items: [
       {href: "/calendar", label: "Calendar"},
       {href: "/appointments", label: "Appointments"},
+      {href: "/clients", label: "Clients"},
+      {href: "/pets", label: "Pets"},
+      {href: "/services", label: "Services"},
     ],
   },
   {

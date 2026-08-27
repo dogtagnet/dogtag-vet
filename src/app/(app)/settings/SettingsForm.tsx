@@ -19,6 +19,7 @@ export function SettingsForm({initial}: {initial: ClinicSettingsDoc}) {
   const snackbar = useSnackbar();
   const [businessName, setBusinessName] = useState(initial.businessProfile?.name ?? "");
   const [logoUrl, setLogoUrl] = useState(initial.businessProfile?.logoUrl ?? "");
+  const [contactEmail, setContactEmail] = useState(initial.businessProfile?.contactEmail ?? "");
   const [receiving, setReceiving] = useState<Record<PaymentChainKey, string>>(() => {
     const map: Record<PaymentChainKey, string> = {ethereum: "", base: "", sepolia: "", baseSepolia: ""};
     for (const entry of initial.receivingAddresses ?? []) map[entry.chainKey] = entry.address;
@@ -43,7 +44,11 @@ export function SettingsForm({initial}: {initial: ClinicSettingsDoc}) {
         method: "PATCH",
         headers: {"Content-Type": "application/json"},
         body: JSON.stringify({
-          businessProfile: {name: businessName || undefined, logoUrl: logoUrl || undefined},
+          businessProfile: {
+            name: businessName || undefined,
+            logoUrl: logoUrl || undefined,
+            contactEmail: contactEmail || undefined,
+          },
           receivingAddresses,
           rpcOverrides: {
             roax: rpc.roax || undefined,
@@ -71,6 +76,18 @@ export function SettingsForm({initial}: {initial: ClinicSettingsDoc}) {
         </FormField>
         <FormField label="Logo URL" htmlFor="logo-url" helperText="From the admin directory, or your own hosting.">
           <Input id="logo-url" value={logoUrl} onChange={(e) => setLogoUrl(e.target.value)} placeholder="https://" />
+        </FormField>
+        <FormField
+          label="Booking notification email"
+          htmlFor="contact-email"
+          helperText="Where a public booking or cancellation notice is sent. Leave blank to skip clinic notifications."
+        >
+          <Input
+            id="contact-email"
+            type="email"
+            value={contactEmail}
+            onChange={(e) => setContactEmail(e.target.value)}
+          />
         </FormField>
       </FormSection>
 
