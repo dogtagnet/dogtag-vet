@@ -1,22 +1,21 @@
 /**
  * The background worker process (`pnpm worker`, run via `tsx --conditions=react-server` per
- * package.json - see `src/lib/env.ts`'s doc comment on why that flag matters here). Two jobs,
- * both named in wp4-vet.md:
+ * package.json - see `src/lib/env.ts`'s doc comment on why that flag matters here). Three jobs,
+ * all named in wp4-vet.md, running as two independent polling loops (`main`, below):
  *
- * 1. Boot recovery: a `MintSession` left `issuing` when a previous process died mid-flight (the
- *    tx was sent but this process never got to read back the confirmation) is marked
- *    `interrupted` so it shows up as retryable rather than silently stuck forever.
- * 2. The chain-activity follower for `/activity`: chunked `getLogs` over this clinic's clone
- *    (`TagIssued`/`TagRevoked`/`TagReactivated`/`RecordIssued`/`RecordRevoked`/
- *    `RecordReactivated`/`FundsReceived`/`RefundSkipped`), plus `StatusChanged` on
+ * 1. Boot recovery (once, at startup): a `MintSession` left `issuing` when a previous process died
+ *    mid-flight (the tx was sent but this process never got to read back the confirmation) is
+ *    marked `interrupted` so it shows up as retryable rather than silently stuck forever.
+ * 2. The chain-activity follower for `/activity` (`runActivityFollowerLoop`): chunked `getLogs`
+ *    over this clinic's clone (`TagIssued`/`TagRevoked`/`TagReactivated`/`RecordIssued`/
+ *    `RecordRevoked`/`RecordReactivated`/`FundsReceived`/`RefundSkipped`), plus `StatusChanged` on
  *    `DogTagSBTConsent` and `Verified` on `VerificationRegistryConsent` - both of the latter are
  *    contracts SHARED across every vet on the protocol, so their logs are filtered down to just
  *    this clinic's own `dogTagId`s (read from the local `Pet` collection) before being stored,
  *    per wp4-vet.md's "this clinic's clone + ... for this clinic" scoping.
- *
- * This repo has no separate payment-watcher/email-dispatch worker wired yet (those land with the
- * payments stage) - this file's loop is written so a future stage adds its own `setInterval`
- * alongside this one rather than restructuring it.
+ * 3. The payment watcher (`runPaymentWatcherLoop`, `src/lib/payments/watcher.ts`): scans the four
+ *    payment chains for matching transfers to open invoices, marks them paid, fires receipt/notice
+ *    emails, and sweeps past-due payments to `expired`.
  */
 import {connectToDatabase} from "@/lib/db";
 import {getServerEnv} from "@/lib/env";
@@ -26,6 +25,7 @@ import {Pet, type PetDoc} from "@/lib/models/Pet";
 import {ChainActivity} from "@/lib/models/ChainActivity";
 import {roaxPublicClient} from "@/lib/chainRead";
 import {vetIssuerAbi, dogTagSBTConsentAbi, verificationRegistryConsentAbi} from "@/lib/abi";
+import {runPaymentWatcherOnce} from "@/lib/payments/watcher";
 import type {Log} from "viem";
 
 async function recoverInterruptedSessions(): Promise<void> {
@@ -153,20 +153,44 @@ async function followOnce(): Promise<void> {
   }
 }
 
-async function main() {
-  await connectToDatabase();
-  await recoverInterruptedSessions();
+/** The payment watcher's own loop (`src/lib/payments/watcher.ts`) - a second, independent
+ * `setInterval`-style loop alongside the chain-activity follower's, per this file's original doc
+ * comment anticipating exactly this addition. Deliberately not merged into `followOnce`'s loop:
+ * the two watch entirely different chains (ROAX vs. the four payment chains) on different
+ * cadences, and a failure in one must never stall the other. */
+async function runPaymentWatcherLoop(pollMs: number): Promise<never> {
+  for (;;) {
+    try {
+      await runPaymentWatcherOnce();
+    } catch (err) {
+      console.error("[payment-watcher] iteration failed", err);
+    }
+    await new Promise((resolve) => setTimeout(resolve, pollMs));
+  }
+}
 
-  const env = getServerEnv();
-  console.log(`[worker] starting chain-activity follower (poll every ${env.ACTIVITY_POLL_MS}ms)`);
+async function runActivityFollowerLoop(pollMs: number): Promise<never> {
   for (;;) {
     try {
       await followOnce();
     } catch (err) {
       console.error("[worker] follower iteration failed", err);
     }
-    await new Promise((resolve) => setTimeout(resolve, env.ACTIVITY_POLL_MS));
+    await new Promise((resolve) => setTimeout(resolve, pollMs));
   }
+}
+
+async function main() {
+  await connectToDatabase();
+  await recoverInterruptedSessions();
+
+  const env = getServerEnv();
+  console.log(`[worker] starting chain-activity follower (poll every ${env.ACTIVITY_POLL_MS}ms)`);
+  console.log(`[worker] starting payment watcher (poll every ${env.PAYMENT_WATCHER_POLL_MS}ms)`);
+  await Promise.all([
+    runActivityFollowerLoop(env.ACTIVITY_POLL_MS),
+    runPaymentWatcherLoop(env.PAYMENT_WATCHER_POLL_MS),
+  ]);
 }
 
 main().catch((err) => {

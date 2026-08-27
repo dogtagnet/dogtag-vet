@@ -6,6 +6,7 @@
 // anything that transitively imports it, like src/lib/db.ts - doesn't throw outside Next.
 import "server-only";
 import {z} from "zod";
+import {DEFAULT_TOKEN_ADDRESSES} from "@/lib/payments/tokenTable";
 
 /**
  * Typed server-side environment configuration.
@@ -65,6 +66,27 @@ const envSchema = z.object({
   // Payment confirmation depth
   CONFIRMATIONS_MAINNET: z.coerce.number().default(3),
   CONFIRMATIONS_TESTNET: z.coerce.number().default(2),
+
+  // ERC-20 contract addresses per (chain, token) - src/lib/payments/tokenRegistry.ts. Ethereum and
+  // Base values are Circle's/Tether's real deployments; the three testnet USDT slots have no
+  // canonical issuer deployment, so their defaults are clearly-marked placeholders (documented in
+  // tokenRegistry.ts) that an operator MUST override before ever toggling that rail on for a real
+  // invoice.
+  TOKEN_USDC_ETHEREUM_ADDRESS: z.string().default(DEFAULT_TOKEN_ADDRESSES.usdcEthereum),
+  TOKEN_USDC_BASE_ADDRESS: z.string().default(DEFAULT_TOKEN_ADDRESSES.usdcBase),
+  TOKEN_USDC_SEPOLIA_ADDRESS: z.string().default(DEFAULT_TOKEN_ADDRESSES.usdcSepolia),
+  TOKEN_USDC_BASE_SEPOLIA_ADDRESS: z.string().default(DEFAULT_TOKEN_ADDRESSES.usdcBaseSepolia),
+  TOKEN_USDT_ETHEREUM_ADDRESS: z.string().default(DEFAULT_TOKEN_ADDRESSES.usdtEthereum),
+  TOKEN_USDT_BASE_ADDRESS: z.string().default(DEFAULT_TOKEN_ADDRESSES.usdtBasePlaceholder),
+  TOKEN_USDT_SEPOLIA_ADDRESS: z.string().default(DEFAULT_TOKEN_ADDRESSES.usdtSepoliaPlaceholder),
+  TOKEN_USDT_BASE_SEPOLIA_ADDRESS: z.string().default(DEFAULT_TOKEN_ADDRESSES.usdtBaseSepoliaPlaceholder),
+
+  // CoinGecko simple-price API (no key required) - src/lib/payments/priceFeed.ts.
+  COINGECKO_API_BASE: z.string().default("https://api.coingecko.com/api/v3"),
+
+  // Payment watcher (src/worker/index.ts) - separate loop from the chain-activity follower above.
+  PAYMENT_WATCHER_POLL_MS: z.coerce.number().default(30_000),
+  PAYMENT_ACTIVITY_CHUNK_BLOCKS: z.coerce.number().default(2000),
 
   // Chain-activity follower (src/worker/index.ts). Defaults to 0 (scan from genesis) - ROAX is a
   // dedicated, low-volume identity chain, so a full-history scan on first run is cheap; a

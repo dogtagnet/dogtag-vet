@@ -60,7 +60,16 @@ export interface PaymentDoc {
   dueAt?: number;
   crypto: CryptoRail[];
   paidWith?: PaidWith;
+  /** Set only by manual mark-paid (never alongside `paidWith`, which is reserved for a watcher- or
+   * staff-confirmed on-chain match with a real txHash/from/blockNumber - see
+   * `src/lib/payments/markPaid.ts`'s doc comment for why the two never coexist). */
+  manualPaidNote?: string;
   receiptToken: string;
+  /** Bearer token stamped on the invoice's shareable link (`/pay/{paymentId}?token=...`) and
+   * required by `GET /v1/payments/{id}/public` - distinct from `receiptToken` (which gates the
+   * wire-spec PDF-download endpoint and only resolves once paid). Not one-time-consumed: the same
+   * link keeps working for repeated status polling up to and past payment. */
+  viewToken: string;
   emailedTo: EmailedRecord[];
   notes?: string;
   createdAt: Date;
@@ -143,7 +152,14 @@ const paymentSchema = new Schema<PaymentDoc>(
     dueAt: Number,
     crypto: {type: [cryptoRailSchema], default: []},
     paidWith: paidWithSchema,
+    manualPaidNote: String,
     receiptToken: {
+      type: String,
+      required: true,
+      unique: true,
+      default: () => randomBytes(18).toString("base64url"),
+    },
+    viewToken: {
       type: String,
       required: true,
       unique: true,
@@ -155,9 +171,11 @@ const paymentSchema = new Schema<PaymentDoc>(
   {timestamps: true},
 );
 
-// Dust-suffix uniqueness is enforced among OPEN payments per (chain, token, receivingAddress);
-// this compound index is the write-time guard the payment-creation flow checks against, and later
-// the watcher's exact-amount match relies on it to be a true 1:1 key while a payment is pending.
+// Read-path index only: the watcher's exact-amount match (`src/lib/payments/watcher.ts`) and the
+// payments list page both filter/sort across `crypto.*` fields. Dust-suffix uniqueness itself is
+// enforced atomically by `AmountReservation`'s unique `_id` (see `src/lib/payments/reservations.ts`
+// and `amountBase.ts`'s `pickDust`), NOT by this index - a non-unique compound index here could
+// only ever catch a collision after the fact, too late to pick a different dust value.
 paymentSchema.index({"crypto.chainKey": 1, "crypto.token": 1, "crypto.receivingAddress": 1, "crypto.amountBase": 1});
 
 export const Payment = getOrCreateModel<PaymentDoc>("Payment", paymentSchema);

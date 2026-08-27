@@ -12,7 +12,13 @@ const nextConfig: NextConfig = {
   // field-element crypto. That code must only ever run on the server (mint-session verification,
   // dogTagIdField derivation) - never bundled into a client component. Marking it external keeps
   // it out of the client bundle and lets Next require() it directly on the server at runtime.
-  serverExternalPackages: ["@dogtag/standard", "circomlibjs", "poseidon-lite"],
+  // pdfkit loads its .afm font-metrics files from disk at runtime (not bundle time) - left
+  // un-externalized, Next's bundler would inline it and that file lookup would fail against the
+  // bundled output path instead of pdfkit's real package directory, breaking PDF generation at
+  // request time with `pnpm build` still green. See src/lib/payments/pdf.ts and
+  // tests/unit/pdf.test.ts (which asserts a real PDF actually comes out, not just that the build
+  // succeeds).
+  serverExternalPackages: ["@dogtag/standard", "circomlibjs", "poseidon-lite", "pdfkit"],
   eslint: {
     ignoreDuringBuilds: false,
   },

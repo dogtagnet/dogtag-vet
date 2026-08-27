@@ -7,6 +7,8 @@ export * from "@/lib/models/MintSession";
 export * from "@/lib/models/BindToken";
 export * from "@/lib/models/VerifySession";
 export * from "@/lib/models/Payment";
+export * from "@/lib/models/AmountReservation";
+export * from "@/lib/models/PaymentChainCursor";
 export * from "@/lib/models/Counter";
 export * from "@/lib/models/ChainActivity";
 export * from "@/lib/models/StoredFile";

@@ -35,7 +35,10 @@ export const navGroups: NavGroup[] = [
   },
   {
     label: "Billing",
-    items: [{href: "/payments", label: "Payments"}],
+    items: [
+      {href: "/payments", label: "Payments"},
+      {href: "/accounting", label: "Accounting"},
+    ],
   },
   {
     label: "Administration",

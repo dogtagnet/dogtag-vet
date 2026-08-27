@@ -31,6 +31,7 @@ export const authConfig = {
         "/x/",
         "/v1/",
         "/r/",
+        "/pay/",
         "/profiles/",
         "/api/calendar/feed/",
       ];

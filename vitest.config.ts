@@ -17,6 +17,10 @@ export default defineConfig({
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
+      // Next maps `server-only` to a no-op under its own `react-server` build condition; vitest
+      // has no such condition, so alias it to an equivalent no-op stub here too - see
+      // tests/stubs/server-only.js for the full rationale.
+      "server-only": path.resolve(__dirname, "./tests/stubs/server-only.js"),
     },
   },
 });

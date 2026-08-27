@@ -16,3 +16,27 @@ export const vetIssuerAbi = VetIssuerAbiJson as unknown as Abi;
 export const entityRegistryAbi = EntityRegistryAbiJson as unknown as Abi;
 export const dogTagSBTConsentAbi = DogTagSBTConsentAbiJson as unknown as Abi;
 export const verificationRegistryConsentAbi = VerificationRegistryConsentAbiJson as unknown as Abi;
+
+// The generic ERC-20 `Transfer` event (and `decimals`, used only for display/sanity checks, never
+// for computing amountBase - that always comes from the token registry so a misreporting contract
+// can never shift what the watcher considers a match). Not protocol-vendored: ERC-20 is a public
+// standard, not a DogTag contract, so hand-writing this minimal ABI slice does not run afoul of
+// "never reimplement protocol crypto/contracts" - there is no protocol source to vendor it from.
+export const erc20Abi = [
+  {
+    type: "event",
+    name: "Transfer",
+    inputs: [
+      {name: "from", type: "address", indexed: true},
+      {name: "to", type: "address", indexed: true},
+      {name: "value", type: "uint256", indexed: false},
+    ],
+  },
+  {
+    type: "function",
+    name: "decimals",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{name: "", type: "uint8"}],
+  },
+] as unknown as Abi;
