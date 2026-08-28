@@ -42,7 +42,55 @@
   --qr-paper: #ffffff;
 }
 
+/*
+ * Explicit light-token block, mirroring `:root`'s defaults. Needed only so a `.light`-scoped
+ * subtree can restore light tokens while nested under an ancestor `html.dark` (the design
+ * gallery's side-by-side "Light" column, src/app/design/page.tsx - `:root`'s own defaults are not
+ * enough there because `html.dark`'s `.dark` block below already overrode them higher up the
+ * tree, and CSS custom properties resolve from the nearest declaration, not from `:root`
+ * specifically). Kept byte-identical to `:root`'s light values rather than sharing a single block
+ * with it, since `:root` must stay the actual default (unscoped pages have no `.light` wrapper to
+ * rely on).
+ */
+.light {
+  /* Native form-control chrome (scrollbars, `Input`/`Select` affordances) reads `color-scheme`,
+     which - like the custom properties below - inherits from the nearest ancestor declaration,
+     not from `html` specifically. `html { color-scheme: light }` alone leaves a `.light`-scoped
+     subtree nested under `html.dark` (the design gallery's Light column, viewed in dark theme)
+     rendering dark-chromed native controls despite every token around them reading light. */
+  color-scheme: light;
+  --bg: #f6f7f9;
+  --surface: #ffffff;
+  --surface-2: #eef1f4;
+  --border: #d8dee5;
+  --border-strong: #b7c0cb;
+  --ink: #16202b;
+  --ink-muted: #5b6773;
+  --ink-faint: #8a95a1;
+
+  --brand: #0e6e63;
+  --brand-soft: #dcefec;
+  --link: #0b62a4;
+  --focus: rgba(11, 98, 164, 0.4);
+
+  --ok: #1f7a44;
+  --ok-soft: #dff0e6;
+  --warn: #9a6b00;
+  --warn-soft: #f7ecce;
+  --danger: #b42331;
+  --danger-soft: #f8dee0;
+  --info: #275fbf;
+  --info-soft: #dfe8f8;
+  --neutral-status: #5b6773;
+  --neutral-status-soft: #e7ebef;
+}
+
 .dark {
+  /* Redundant with `html.dark { color-scheme: dark }` below for the ordinary top-level case, but
+     needed here too for the same reason `.light` needs its own `color-scheme` above: a `.dark`-
+     scoped subtree nested under plain (light) `html` - the design gallery's Dark column - has no
+     `html.dark` ancestor to inherit it from. */
+  color-scheme: dark;
   --bg: #0d1117;
   --surface: #161b22;
   --surface-2: #1f2630;
@@ -95,6 +143,19 @@ body {
 .dark .shadow-card,
 .dark .shadow-raised {
   box-shadow: none;
+}
+
+/* Undoes the dark-theme shadow suppression above for a `.light`-scoped subtree nested under an
+   ancestor `.dark` (the design gallery's "Light" column, rendered while the page itself is in
+   dark theme - see the `.light` token block above). The extra `.light` class gives these two
+   rules higher specificity than the plain `.dark` pair above, so they win regardless of source
+   order; the values restored are the exact ones `shadow-card`/`shadow-raised` already carry as
+   Tailwind utility classes (tailwind.config.ts's own boxShadow.card/raised). */
+.dark .light .shadow-card {
+  box-shadow: 0 1px 2px rgba(22, 32, 43, 0.06);
+}
+.dark .light .shadow-raised {
+  box-shadow: 0 4px 16px rgba(22, 32, 43, 0.06);
 }
 
 /* Tabular numerals for every mono/amount surface (HashCell, AddressChip, DataTable numeric

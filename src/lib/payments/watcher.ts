@@ -139,7 +139,12 @@ async function scanChain(chainKey: PaymentChainKey, rails: OpenRail[], rpcOverri
     // leave the cursor unadvanced and later matches in this same range unprocessed until the next
     // tick re-derives them, for no benefit (the paid status itself is not at risk).
     try {
-      await sendPaymentPaidEmails(updated, settings.businessProfile, clientDoc?.email, bookingSettings.timezone);
+      await sendPaymentPaidEmails(
+        updated,
+        settings.businessProfile,
+        clientDoc ? {name: clientDoc.name, email: clientDoc.email} : undefined,
+        bookingSettings.timezone,
+      );
     } catch (err) {
       console.error(`[watcher] payment ${updated.paymentId} marked paid but notification email failed:`, err);
     }

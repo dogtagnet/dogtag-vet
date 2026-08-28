@@ -2,6 +2,7 @@ import {NextResponse} from "next/server";
 import {auth} from "@/auth";
 import {connectToDatabase} from "@/lib/db";
 import {Payment, type PaymentDoc} from "@/lib/models/Payment";
+import {Client, type ClientDoc} from "@/lib/models/Client";
 import {getClinicSettings} from "@/lib/models/ClinicSettings";
 import {getBookingSettings} from "@/lib/models/Availability";
 import {getServerEnv} from "@/lib/env";
@@ -50,7 +51,11 @@ export async function GET(request: Request, {params}: {params: Promise<{id: stri
     );
   }
 
-  const [settings, bookingSettings] = await Promise.all([getClinicSettings(), getBookingSettings()]);
+  const [settings, bookingSettings, clientDoc] = await Promise.all([
+    getClinicSettings(),
+    getBookingSettings(),
+    payment.clientId ? Client.findOne({clientId: payment.clientId}).lean<ClientDoc>() : Promise.resolve(null),
+  ]);
   const baseUrl = getServerEnv().PUBLIC_BASE_URL ?? new URL(request.url).origin;
   const pdf = await generateInvoicePdf({
     payment,
@@ -58,6 +63,7 @@ export async function GET(request: Request, {params}: {params: Promise<{id: stri
     publicBaseUrl: baseUrl,
     timeZone: bookingSettings.timezone,
     stamped: payment.status === "paid",
+    client: clientDoc ? {name: clientDoc.name, email: clientDoc.email} : undefined,
   });
 
   return new NextResponse(new Uint8Array(pdf), {

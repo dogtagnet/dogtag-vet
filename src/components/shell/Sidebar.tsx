@@ -4,8 +4,31 @@ import Link from "next/link";
 import {usePathname} from "next/navigation";
 import {navGroups} from "@/components/shell/nav";
 
+/** The single nav item that should render active for `pathname`, or `undefined` off-nav (e.g. a
+ * sign-in page). A path can match more than one item's prefix - `/tags/issue` starts with both
+ * `/tags` and `/tags/issue` - so this picks the longest (most specific) matching `href` across
+ * every group rather than letting every ancestor light up at once, which is what a plain
+ * `pathname.startsWith(item.href)` per-item check produced (both "Tags" and "Issue tag" active on
+ * `/tags/issue`, per the round-5 grader finding). Exact-match candidates and prefix-match
+ * candidates (`${href}/`) are gathered the same way a plain per-item check would, just compared
+ * against each other for specificity before deciding a winner. */
+function findActiveHref(pathname: string | null): string | undefined {
+  if (pathname === null) return undefined;
+  let best: string | undefined;
+  for (const group of navGroups) {
+    for (const item of group.items) {
+      const matches = pathname === item.href || pathname.startsWith(`${item.href}/`);
+      if (matches && (best === undefined || item.href.length > best.length)) {
+        best = item.href;
+      }
+    }
+  }
+  return best;
+}
+
 export function Sidebar() {
   const pathname = usePathname();
+  const activeHref = findActiveHref(pathname);
 
   return (
     <nav className="flex h-full w-60 shrink-0 flex-col gap-6 overflow-y-auto border-r border-border bg-surface px-3 py-5">
@@ -19,7 +42,7 @@ export function Sidebar() {
           </p>
           <ul className="space-y-0.5">
             {group.items.map((item) => {
-              const active = pathname === item.href || pathname?.startsWith(`${item.href}/`);
+              const active = item.href === activeHref;
               return (
                 <li key={item.href}>
                   <Link

@@ -4,15 +4,8 @@ import {useState} from "react";
 import {QrSurface} from "@/components/ui/QrSurface";
 import {MonoValue} from "@/components/ui/MonoValue";
 import {formatTokenAmount} from "@/lib/format";
+import {paymentChainByKey, paymentChainDisplayName} from "@/lib/chains";
 import type {CryptoRail} from "@/lib/models/Payment";
-
-const CHAIN_LABELS: Record<CryptoRail["chainKey"], string> = {
-  ethereum: "Ethereum",
-  base: "Base",
-  sepolia: "Sepolia",
-  baseSepolia: "Base Sepolia",
-};
-const TESTNET_CHAINS = new Set<CryptoRail["chainKey"]>(["sepolia", "baseSepolia"]);
 
 /** QR tabs, one per accepted crypto rail: amount, token, a clearly-marked network badge for
  * testnets, and a countdown to the invoice's due date (the payment window) - wp4-vet.md's payments
@@ -35,8 +28,8 @@ export function PaymentRailTabs({rails, dueAt}: {rails: CryptoRail[]; dueAt?: nu
               i === active ? "border-brand bg-brand-soft text-brand" : "border-border text-ink-muted hover:bg-surface-2"
             }`}
           >
-            {CHAIN_LABELS[r.chainKey]} - {r.token}
-            {TESTNET_CHAINS.has(r.chainKey) && (
+            {paymentChainDisplayName[r.chainKey]} - {r.token}
+            {Boolean(paymentChainByKey[r.chainKey].testnet) && (
               <span className="ml-1.5 rounded-badge bg-neutral-status-soft px-1.5 py-0.5 text-caption text-neutral-status">
                 Testnet
               </span>

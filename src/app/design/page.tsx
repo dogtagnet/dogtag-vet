@@ -7,8 +7,12 @@ export const metadata = {
 };
 
 /** Dev-only component gallery: every shared UI primitive, rendered once in light and once in dark
- * (a `.dark` wrapper div, not `html.dark` - see globals.css) so both themes are checkable side by
- * side without toggling. Not reachable in a production build. */
+ * (a `.light`/`.dark` wrapper div each, not `html.dark` - see globals.css) so both themes are
+ * checkable side by side without toggling, regardless of which theme the page itself is in. The
+ * `.light` wrapper matters even though light is `:root`'s default: viewed while `html` itself
+ * carries `.dark` (the page's own ThemeToggle set to dark), an unwrapped column would inherit the
+ * ancestor's dark tokens with nothing to override them back - `.light` restores them explicitly
+ * (globals.css's `.light` block). Not reachable in a production build. */
 export default function DesignGalleryPage() {
   if (process.env.NODE_ENV === "production") {
     notFound();
@@ -24,7 +28,7 @@ export default function DesignGalleryPage() {
         <ThemeToggle />
       </div>
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-        <div className="overflow-hidden rounded-card border border-border">
+        <div className="light overflow-hidden rounded-card border border-border">
           <p className="border-b border-border bg-surface-2 px-4 py-2 text-caption font-medium uppercase tracking-wide text-ink-muted">
             Light
           </p>

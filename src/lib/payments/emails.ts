@@ -5,18 +5,25 @@ import type {PaymentDoc} from "@/lib/models/Payment";
 import type {BusinessProfile} from "@/lib/models/ClinicSettings";
 import {getServerEnv} from "@/lib/env";
 
+/** Bill-to shape `generateInvoicePdf` accepts - see its own `client` doc comment. A plain
+ * structural type (not `Pick<ClientDoc, ...>`) so this module stays independent of the Client
+ * model; every caller already has a full `ClientDoc` in hand and passes it through as-is. */
+type BillToClient = {name: string; email?: string};
+
 function invoiceFilename(payment: PaymentDoc): string {
   return `invoice-${payment.invoiceNumber}.pdf`;
 }
 
 /** Emails the (possibly unpaid) invoice PDF to any address - the staff-triggered "email to any
  * address" feature. Also records the send in `Payment.emailedTo` (caller's responsibility, since
- * that write needs the live Mongoose document, not this pure send). */
+ * that write needs the live Mongoose document, not this pure send). `client` (when the payment is
+ * linked to one) becomes the PDF's "Bill to" block - see `generateInvoicePdf`'s doc comment. */
 export async function sendInvoiceEmail(
   payment: PaymentDoc,
   businessProfile: BusinessProfile | undefined,
   toEmail: string,
   timeZone: string,
+  client?: BillToClient,
 ): Promise<void> {
   const baseUrl = getServerEnv().PUBLIC_BASE_URL ?? "";
   const pdf = await generateInvoicePdf({
@@ -25,6 +32,7 @@ export async function sendInvoiceEmail(
     publicBaseUrl: baseUrl,
     timeZone,
     stamped: payment.status === "paid",
+    client,
   });
   await sendMail({
     to: toEmail,
@@ -37,19 +45,20 @@ export async function sendInvoiceEmail(
 /** Fires the paid-notification emails wp4-vet.md's watcher section describes: a receipt to the
  * client (if their email is on file) and a plain notice to the clinic's own contact address.
  * Best-effort - `sendMail` never throws, so a mail failure here never unwinds the payment's
- * already-committed `paid` status. */
+ * already-committed `paid` status. Takes the full `client` (not just an email) so the attached
+ * receipt PDF can also render a "Bill to" block - see `generateInvoicePdf`'s doc comment. */
 export async function sendPaymentPaidEmails(
   payment: PaymentDoc,
   businessProfile: BusinessProfile | undefined,
-  clientEmail: string | undefined,
+  client: BillToClient | undefined,
   timeZone: string,
 ): Promise<void> {
   const baseUrl = getServerEnv().PUBLIC_BASE_URL ?? "";
 
-  if (clientEmail) {
-    const pdf = await generateInvoicePdf({payment, businessProfile, publicBaseUrl: baseUrl, timeZone, stamped: true});
+  if (client?.email) {
+    const pdf = await generateInvoicePdf({payment, businessProfile, publicBaseUrl: baseUrl, timeZone, stamped: true, client});
     await sendMail({
-      to: clientEmail,
+      to: client.email,
       subject: `Receipt for invoice ${payment.invoiceNumber}`,
       text: `Your payment of ${payment.total} ${payment.currency} for invoice ${payment.invoiceNumber} has been received. The receipt is attached.`,
       attachments: [

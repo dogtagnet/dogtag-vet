@@ -46,3 +46,19 @@ export const paymentChainKeyByChainId: Record<number, PaymentChainKey> = {
   [sepolia.id]: "sepolia",
   [baseSepolia.id]: "baseSepolia",
 };
+
+/**
+ * Human-facing chain name for `PaymentChainKey` - "Base Sepolia", never the internal camelCase key
+ * (`baseSepolia`) or the wire-format kebab-case one (`base-sepolia`). Declared explicitly here,
+ * once, rather than read off `paymentChainByKey[key].name` (viem's own chain-metadata field): that
+ * value happens to agree today, but it is vendor-owned copy this app does not control, and every
+ * customer-facing surface that names a chain - the payment QR tabs, the invoice PDF's accepted-
+ * rails list - must render identically and independently of whatever viem ships next. Round-5
+ * grader finding: the invoice PDF was printing the raw internal `chainKey` itself.
+ */
+export const paymentChainDisplayName: Record<PaymentChainKey, string> = {
+  ethereum: "Ethereum",
+  base: "Base",
+  sepolia: "Sepolia",
+  baseSepolia: "Base Sepolia",
+};

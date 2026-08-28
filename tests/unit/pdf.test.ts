@@ -184,7 +184,7 @@ describe("generateInvoicePdf", () => {
     expect(page.text).toContain("Invoice");
   });
 
-  it("prints the receipt QR caption as the last text on the page, immediately followed by the code itself", async () => {
+  it("prints the QR caption as the last text on the page, immediately followed by the code itself", async () => {
     const pdf = await generateInvoicePdf({
       payment: fixturePayment(),
       businessProfile: {name: "Riverside Vet Clinic"},
@@ -198,9 +198,118 @@ describe("generateInvoicePdf", () => {
     // order the caption is the last line - the previously-reported defect had the caption written
     // from wherever an unrelated block above (the rails loop) had left the cursor, nowhere near the
     // QR image actually printed at the page's bottom-left.
-    expect(page.text.trim().endsWith("Scan to view this receipt")).toBe(true);
+    expect(page.text.trim().endsWith("Scan to view this invoice online")).toBe(true);
 
     const image = await new PDFParse({data: new Uint8Array(pdf)}).getImage({partial: [1]});
     expect(image.pages[0]?.images?.length).toBeGreaterThan(0);
+  });
+
+  it("never prints the paid-only receipt URL as a scannable code on an unpaid invoice - it 404s by design until paid (qr-formats.md)", async () => {
+    const pdf = await generateInvoicePdf({
+      payment: fixturePayment({receiptToken: "receipt-token-abc", viewToken: "view-token-abc", paymentId: "pay-1"}),
+      businessProfile: {name: "Riverside Vet Clinic"},
+      publicBaseUrl: "https://vet.example",
+      timeZone: TIME_ZONE,
+      stamped: false,
+    });
+
+    const page = await extractPage1Items(pdf);
+    expect(page.text).toContain("Scan to view this invoice online");
+    expect(page.text).not.toContain("Scan to view this receipt");
+
+    const image = await new PDFParse({data: new Uint8Array(pdf)}).getImage({partial: [1]});
+    const items = image.pages[0]?.images ?? [];
+    expect(items.length).toBeGreaterThan(0);
+  });
+
+  it("prints the wire-authoritative receipt URL as the QR once stamped paid", async () => {
+    const pdf = await generateInvoicePdf({
+      payment: fixturePayment({status: "paid"}),
+      businessProfile: {name: "Riverside Vet Clinic"},
+      publicBaseUrl: "https://vet.example",
+      timeZone: TIME_ZONE,
+      stamped: true,
+    });
+
+    const page = await extractPage1Items(pdf);
+    expect(page.text).toContain("Scan to view this receipt");
+    expect(page.text).not.toContain("Scan to view this invoice online");
+  });
+
+  it("prints the accepted rail's human-facing chain name, never the internal chain key or its wire kebab-case form", async () => {
+    const pdf = await generateInvoicePdf({
+      payment: fixturePayment({
+        crypto: [
+          {
+            chainKey: "baseSepolia",
+            token: "USDC",
+            decimals: 6,
+            quotedRate: "1.00",
+            amountBase: "388786001",
+            receivingAddress: "0x" + "33".repeat(20),
+            eip681: "ethereum:0x0",
+          },
+        ],
+      }),
+      businessProfile: {name: "Riverside Vet Clinic"},
+      publicBaseUrl: "https://vet.example",
+      timeZone: TIME_ZONE,
+      stamped: false,
+    });
+
+    const page = await extractPage1Items(pdf);
+    expect(page.text).toContain("Base Sepolia (testnet)");
+    expect(page.text).not.toContain("baseSepolia");
+    expect(page.text).not.toContain("base-sepolia");
+  });
+
+  it("renders a clinic postal address and a bill-to block when supplied", async () => {
+    const pdf = await generateInvoicePdf({
+      payment: fixturePayment({clientId: "client-1"}),
+      businessProfile: {
+        name: "Riverside Vet Clinic",
+        contactEmail: "hello@riverside.example",
+        address: {line1: "1180 Bayfront Avenue", city: "San Francisco", region: "CA", postalCode: "94107", country: "US"},
+      },
+      publicBaseUrl: "https://vet.example",
+      timeZone: TIME_ZONE,
+      stamped: false,
+      client: {name: "Jordan Alvarez", email: "jordan@example.com"},
+    });
+
+    const page = await extractPage1Items(pdf);
+    expect(page.text).toContain("1180 Bayfront Avenue");
+    expect(page.text).toContain("San Francisco, CA 94107");
+    expect(page.text).toContain("US");
+    expect(page.text).toContain("Bill to");
+    expect(page.text).toContain("Jordan Alvarez");
+    expect(page.text).toContain("jordan@example.com");
+  });
+
+  it("omits the bill-to block for a client-less payment rather than rendering it empty", async () => {
+    const pdf = await generateInvoicePdf({
+      payment: fixturePayment(),
+      businessProfile: {name: "Riverside Vet Clinic"},
+      publicBaseUrl: "https://vet.example",
+      timeZone: TIME_ZONE,
+      stamped: false,
+    });
+
+    const page = await extractPage1Items(pdf);
+    expect(page.text).not.toContain("Bill to");
+  });
+
+  it("falls back to a text-only header when the configured logo URL is unreachable, rather than failing invoice generation", async () => {
+    const pdf = await generateInvoicePdf({
+      payment: fixturePayment(),
+      businessProfile: {name: "Riverside Vet Clinic", logoUrl: "https://logo.invalid/does-not-resolve.png"},
+      publicBaseUrl: "https://vet.example",
+      timeZone: TIME_ZONE,
+      stamped: false,
+    });
+
+    expect(pdf.subarray(0, 5).toString("ascii")).toBe("%PDF-");
+    const page = await extractPage1Items(pdf);
+    expect(page.text).toContain("Riverside Vet Clinic");
   });
 });

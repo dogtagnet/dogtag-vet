@@ -35,7 +35,12 @@ export async function POST(request: Request, {params}: {params: Promise<{id: str
   // that would tell the operator the mark-paid failed when it did not. Mirrors sendMail's own
   // "never throws" contract one level up, for the one step (PDF generation) that isn't sendMail.
   try {
-    await sendPaymentPaidEmails(updated, settings.businessProfile, client?.email, bookingSettings.timezone);
+    await sendPaymentPaidEmails(
+      updated,
+      settings.businessProfile,
+      client ? {name: client.name, email: client.email} : undefined,
+      bookingSettings.timezone,
+    );
   } catch (err) {
     console.error(`[mark-paid] payment ${updated.paymentId} marked paid but notification email failed:`, err);
   }
