@@ -95,8 +95,18 @@ If you switch to a managed Mongo under Docker Compose, you can also drop the `mo
 
 Every public API route (`/p/`, `/x/`, `/v1/booking/*`, `/v1/verify/consent`, `/v1/payments/*/public`, `/v1/entity`, `/r/pay/*`, `/profiles/issue/custodial-bind`) already rate-limits and caps request body size at the application layer (`src/lib/rateLimit.ts`, `src/lib/bodyLimit.ts`) and records rejected requests to an abuse log visible on the Settings page.
 The client-facing HTML pages that front those routes - `/book` (the booking form) and `/booking/*` (the status/cancel page a confirmation email links to) - carry no application-layer rate limit of their own; they are static-ish page renders, and every write or lookup they trigger goes through the limited API routes above, so the exposure is the same page-load cost any public page has.
-That log keys each entry by the requester's IP address (read from `X-Forwarded-For`, so it is only as accurate as whatever reverse proxy you put in front of this app - see the `X-Forwarded-For` note below) and self-prunes after 14 days, which is the entirety of this deployment's retention policy for that data.
+That log keys each entry by the requester's IP address and self-prunes after 14 days, which is the entirety of this deployment's retention policy for that data.
 A reverse proxy in front of the app is still worth having, both to absorb traffic before it reaches this single Node process at all and for TLS termination.
+
+### Trusted proxy hops (X-Forwarded-For)
+
+`X-Forwarded-For` is a header any CLIENT can set to anything it wants - a reverse proxy in front of this app only ever APPENDS to it (nginx's `proxy_add_x_forwarded_for`, used below, does exactly this), so whatever a client sent stays present, untouched, to the left of what the proxy chain adds. Reading the wrong entry from this header is a real vulnerability, not just an inaccuracy: keying a per-IP rate limit on the client-controlled leftmost entry lets an attacker bypass it completely by rotating that value on every request.
+
+This app never trusts the leftmost entry. Instead:
+
+- `CF-Connecting-IP`, when present, is used first - Cloudflare sets this itself (see "Cloudflare" below) and it cannot be forged by a client proxied through Cloudflare's edge.
+- Otherwise, `TRUSTED_PROXY_HOPS` (`.env.example`, default `0`) says how many reverse-proxy hops directly in front of this app are trusted to have faithfully appended the real peer address - the client key is read from that many entries counted **from the right** of `X-Forwarded-For`. A single nginx (or any other) reverse proxy directly in front of this app - the setup both the nginx snippet below and the standard Cloudflare-proxied path produce - means exactly one trusted hop: set `TRUSTED_PROXY_HOPS=1`, and the RIGHTMOST entry (the one that hop actually appended) is what gets trusted.
+- With `TRUSTED_PROXY_HOPS` left at `0` (or set higher than the number of entries actually present), `X-Forwarded-For` is not trusted at all - every caller collapses into one shared bucket, which is safe (nothing a client sends can escape it) but coarse (one abusive caller can also 429 every other visitor). Set this correctly for your deployment; do not leave it at the default behind a real reverse proxy.
 
 ### Cloudflare
 
@@ -109,6 +119,8 @@ If you are proxying through Cloudflare (orange-clouded DNS record, which the clo
    - Everything else under `/v1/*` and `/r/*`: Cloudflare's default rate limiting is usually sufficient; add a rule only if you see abuse in the logs.
 2. **Bot Fight Mode** (Security > Bots) - turn it on.
    It challenges automated traffic hitting the public mint/verify/booking pages without affecting the DogTag mobile app or a browser filling out the booking form normally.
+
+Cloudflare's `CF-Connecting-IP` header is used automatically (see "Trusted proxy hops" above) - it takes priority over `X-Forwarded-For`, so `TRUSTED_PROXY_HOPS` does not need to be set for a purely Cloudflare-proxied deployment. Still set it if this app also sits behind an additional reverse proxy of your own between Cloudflare and this process.
 
 ### nginx fallback (no Cloudflare, no managed WAF)
 
@@ -151,7 +163,7 @@ server {
 }
 ```
 
-`X-Forwarded-For` is what `src/lib/rateLimit.ts` reads to key its own per-IP limits, so setting it correctly here matters even beyond nginx's own `limit_req`.
+`X-Forwarded-For` is what `src/lib/rateLimit.ts` reads to key its own per-IP limits, so setting it correctly here matters even beyond nginx's own `limit_req`. `proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for` appends the real peer nginx saw to the RIGHT of whatever the client sent - set `TRUSTED_PROXY_HOPS=1` in `.env` for this single-nginx-hop setup so the app trusts exactly that rightmost entry (see "Trusted proxy hops" above). Leaving `TRUSTED_PROXY_HOPS` at its default of `0` with this nginx config in front of it means the app's own rate limits fall back to one shared bucket for every caller - nginx's `limit_req` above still applies either way, but the application-layer limits lose their per-IP granularity.
 
 ## Backups
 

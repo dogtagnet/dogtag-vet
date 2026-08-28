@@ -41,6 +41,15 @@ const envSchema = z.object({
   // booking confirmation links, and the receipt URL (specs/qr-formats.md).
   PUBLIC_BASE_URL: z.string().optional(),
 
+  // Number of reverse-proxy hops in front of this app that are trusted to have faithfully
+  // APPENDED (never replaced) the peer address they saw to `X-Forwarded-For` - see
+  // `src/lib/rateLimit.ts`'s `clientKeyFromRequest` doc comment and `docs/DEPLOY.md`'s "Trusted
+  // proxy hops" section. Defaults to 0 (trust nothing in `X-Forwarded-For`) because an
+  // untrustworthy value here is a security bug (a client can put anything it wants in that
+  // header), not just an inaccuracy - every real deployment behind the reverse proxies this app's
+  // own docs recommend should set this explicitly (1 for a single nginx/Cloudflare hop).
+  TRUSTED_PROXY_HOPS: z.coerce.number().int().min(0).default(0),
+
   // ROAX (identity chain, chainId 135) - always legacy tx type, per architecture-v2.md.
   ROAX_RPC_URL: z.string().default("https://roax-testnet-rpc.dogtag.example/rpc"),
   ROAX_CHAIN_ID: z.coerce.number().default(135),
@@ -95,6 +104,12 @@ const envSchema = z.object({
   ACTIVITY_START_BLOCK: z.coerce.number().default(0),
   ACTIVITY_POLL_MS: z.coerce.number().default(15_000),
   ACTIVITY_CHUNK_BLOCKS: z.coerce.number().default(2000),
+
+  // Worker boot recovery (src/worker/index.ts's recoverInterruptedSessions): how long a
+  // MintSession may sit `issuing` before it is considered stale enough to act on. wp4-vet.md
+  // itself calls this recovery step "stale" - a seconds-old in-flight `issueTag` transaction from
+  // a process that is still very much alive must be left alone.
+  MINT_SESSION_STALE_MS: z.coerce.number().default(5 * 60_000),
 });
 
 export type ServerEnv = z.infer<typeof envSchema>;

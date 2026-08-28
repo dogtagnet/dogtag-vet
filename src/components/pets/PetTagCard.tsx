@@ -3,6 +3,7 @@ import {AddressChip} from "@/components/ui/AddressChip";
 import {HashCell} from "@/components/ui/HashCell";
 import {MonoValue} from "@/components/ui/MonoValue";
 import {StatusBadge} from "@/components/ui/StatusBadge";
+import {dogTagStatusLabel, dogTagStatusTone} from "@/lib/tagStatusTone";
 import type {DogTagInfo} from "@/lib/models/Pet";
 
 /**
@@ -32,7 +33,11 @@ export function PetTagCard({dogTag = {}}: {dogTag?: DogTagInfo}) {
     <section className="rounded-card border border-border bg-surface p-5 shadow-card">
       <div className="mb-4 flex items-center justify-between">
         <h3 className="text-section-title text-ink">DogTag</h3>
-        <StatusBadge tone={dogTag.status === "active" ? "ok" : "danger"} label={dogTag.status ?? "unknown"} />
+        {dogTag.status ? (
+          <StatusBadge tone={dogTagStatusTone[dogTag.status]} label={dogTagStatusLabel[dogTag.status]} />
+        ) : (
+          <StatusBadge tone="neutral" label="Unknown" />
+        )}
       </div>
       <dl className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <div>

@@ -6,6 +6,7 @@ import {SearchBox} from "@/components/ui/SearchBox";
 import {StatusBadge} from "@/components/ui/StatusBadge";
 import {connectToDatabase} from "@/lib/db";
 import {Pet, type PetDoc} from "@/lib/models/Pet";
+import {dogTagStatusLabel, dogTagStatusTone} from "@/lib/tagStatusTone";
 
 export default async function PetsPage({searchParams}: {searchParams: Promise<{q?: string}>}) {
   const {q} = await searchParams;
@@ -43,12 +44,14 @@ export default async function PetsPage({searchParams}: {searchParams: Promise<{q
           {
             key: "dogTag",
             header: "DogTag",
-            render: (p: PetDoc) =>
-              p.dogTag?.status ? (
-                <StatusBadge tone={p.dogTag.status === "active" ? "ok" : "danger"} label={p.dogTag.status} />
+            render: (p: PetDoc) => {
+              const status = p.dogTag?.status;
+              return status ? (
+                <StatusBadge tone={dogTagStatusTone[status]} label={dogTagStatusLabel[status]} />
               ) : (
                 <StatusBadge tone="neutral" label="None" />
-              ),
+              );
+            },
           },
         ]}
         rows={pets}

@@ -3,8 +3,15 @@ import {NextResponse} from "next/server";
 import {checkRateLimit, clientKeyFromRequest, rateLimitHeaders, type RateLimitResult} from "@/lib/rateLimit";
 import {recordAbuse} from "@/lib/abuseLog";
 import {readJsonBody as readJsonBodyRaw, type ReadJsonBodyResult} from "@/lib/bodyLimit";
+import {getServerEnv} from "@/lib/env";
 
 export type {ReadJsonBodyResult} from "@/lib/bodyLimit";
+
+/** The one place `TRUSTED_PROXY_HOPS` is read for rate-limit/abuse-log purposes, so every public
+ * route derives the client key identically - see `clientKeyFromRequest`'s doc comment. */
+function requestClientKey(request: Request): string {
+  return clientKeyFromRequest(request, getServerEnv().TRUSTED_PROXY_HOPS);
+}
 
 /** The `{error: {code, message, ...}}` envelope every route in `vet-public-api.yaml` uses. */
 export function errorBody(code: string, message: string, details?: Record<string, unknown>) {
@@ -27,15 +34,16 @@ export function enforceRateLimit(
   limit: number,
   windowMs: number,
 ): {limited: false; headers: Record<string, string>} | {limited: true; response: NextResponse} {
+  const clientKey = requestClientKey(request);
   const result: RateLimitResult = checkRateLimit({
     route,
-    clientKey: clientKeyFromRequest(request),
+    clientKey,
     limit,
     windowMs,
   });
   const headers = rateLimitHeaders(result);
   if (!result.ok) {
-    void recordAbuse(route, clientKeyFromRequest(request), "rate_limited");
+    void recordAbuse(route, clientKey, "rate_limited");
     return {
       limited: true,
       response: jsonWithHeaders(errorBody("rate_limited", "Too many requests. Try again shortly."), {
@@ -56,7 +64,7 @@ export function enforceRateLimit(
 export async function readJsonBody(request: Request, route: string): Promise<ReadJsonBodyResult> {
   const result = await readJsonBodyRaw(request);
   if (!result.ok && result.tooLarge) {
-    void recordAbuse(route, clientKeyFromRequest(request), "body_too_large");
+    void recordAbuse(route, requestClientKey(request), "body_too_large");
   }
   return result;
 }

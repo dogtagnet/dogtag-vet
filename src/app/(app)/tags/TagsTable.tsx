@@ -13,6 +13,7 @@ import {roax} from "@/lib/chains";
 import {legacyTx} from "@/lib/chainWrite";
 import {REASON_CODES, reasonCodeHash, type ReasonCodeName} from "@/lib/reasonCodes";
 import {formatUnixSeconds} from "@/lib/format";
+import {dogTagStatusLabel, dogTagStatusTone, mintSessionStatusLabel, mintSessionStatusTone} from "@/lib/tagStatusTone";
 import type {PetDoc} from "@/lib/models/Pet";
 import type {MintSessionDoc} from "@/lib/models/MintSession";
 
@@ -102,9 +103,20 @@ export function TagsTable({timeZone}: {timeZone: string}) {
           {
             key: "status",
             header: "Status",
-            render: (p: PetDoc) => (
-              <StatusBadge tone={p.dogTag.status === "active" ? "ok" : "danger"} label={p.dogTag.status ?? "unknown"} />
-            ),
+            render: (p: PetDoc) => {
+              const status = p.dogTag.status;
+              return status ? (
+                <StatusBadge tone={dogTagStatusTone[status]} label={dogTagStatusLabel[status]} />
+              ) : (
+                <StatusBadge tone="neutral" label="Unknown" />
+              );
+            },
+          },
+          {
+            key: "issuedAt",
+            header: "Issued date",
+            render: (p: PetDoc) =>
+              p.dogTag.issuedAt ? formatUnixSeconds(Math.floor(new Date(p.dogTag.issuedAt).getTime() / 1000), timeZone) : "-",
           },
           {key: "tx", header: "Issued tx", render: (p: PetDoc) => (p.dogTag.issuedTx ? <HashCell value={p.dogTag.issuedTx} chain="roax" kind="tx" /> : "-")},
           {
@@ -164,7 +176,7 @@ export function TagsTable({timeZone}: {timeZone: string}) {
                 key: "status",
                 header: "Status",
                 render: (s: MintSessionDoc) => (
-                  <StatusBadge tone={s.status === "error" ? "danger" : "info"} label={s.status} />
+                  <StatusBadge tone={mintSessionStatusTone[s.status]} label={mintSessionStatusLabel[s.status]} />
                 ),
               },
               {

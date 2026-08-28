@@ -15,6 +15,7 @@ import {vetIssuerAbi} from "@/lib/abi";
 import {roax} from "@/lib/chains";
 import {legacyTx} from "@/lib/chainWrite";
 import {reasonCodeHash} from "@/lib/reasonCodes";
+import {mintSessionStatusLabel, mintSessionStatusTone} from "@/lib/tagStatusTone";
 import type {ClientDoc} from "@/lib/models/Client";
 import type {PetDoc, PetSex, WeightEntry} from "@/lib/models/Pet";
 
@@ -352,6 +353,18 @@ export function TagIssueWizard() {
       snackbar.show(body?.error?.message ?? "Retry failed", "danger");
       return;
     }
+    if (body.status === "bound") {
+      // The session had actually anchored on chain already (e.g. a worker restart marked it
+      // `error` without that ever being true) - the retry route reconciled it straight to `bound`
+      // instead of manufacturing a token that could never seal. Reflect that immediately rather
+      // than pretending a fresh mint round just started.
+      stopPolling();
+      setSession((prev) =>
+        prev ? {...prev, status: "bound", dogTagId: body.dogTagId ?? prev.dogTagId, root: body.root ?? prev.root} : prev,
+      );
+      snackbar.show("This tag was already issued on chain - marked bound.", "ok");
+      return;
+    }
     setSession({
       sessionId: body.sessionId,
       dogTagId: body.dogTagId,
@@ -377,18 +390,7 @@ export function TagIssueWizard() {
       <div className="max-w-2xl space-y-6">
         <FormSection title={`Tag ${session.dogTagId}`} helperText="Session status updates automatically.">
           <div className="flex items-center gap-3">
-            <StatusBadge
-              tone={
-                session.status === "bound"
-                  ? "ok"
-                  : session.status === "error"
-                    ? "danger"
-                    : session.status === "ready" || session.status === "issuing"
-                      ? "info"
-                      : "neutral"
-              }
-              label={session.status}
-            />
+            <StatusBadge tone={mintSessionStatusTone[session.status]} label={mintSessionStatusLabel[session.status]} />
             {session.root && <HashCell value={session.root} kind="root" label="root" />}
             {session.txHash && <HashCell value={session.txHash} chain="roax" kind="tx" label="tx" />}
           </div>

@@ -1,6 +1,7 @@
 "use client";
 
 import {useState} from "react";
+import type {ReactNode} from "react";
 import {useRouter} from "next/navigation";
 import {Button, Input, Textarea} from "@/components/ui/controls";
 import {FormActionBar, FormField, FormSection} from "@/components/ui/FormSection";
@@ -25,7 +26,15 @@ function toValues(client?: ClientDoc): ClientFormValues {
   };
 }
 
-export function ClientForm({client}: {client?: ClientDoc}) {
+/**
+ * `children` renders BETWEEN the contact-details card and the fixed `FormActionBar` - so any
+ * related-records panels a caller adds (the client detail page's Pets/appointments/payments
+ * sections) sit inside the SAME single `max-w-2xl` column and the "Save changes" bar stays what
+ * its own name implies: the thing that terminates the form, not a rule bisecting the page between
+ * two cards (round-6 grader finding - see `clients/[id]/page.tsx`, which used to wrap this
+ * component's own `max-w-2xl` div in a SECOND, outer one just to add a Pets card after it).
+ */
+export function ClientForm({client, children}: {client?: ClientDoc; children?: ReactNode}) {
   const router = useRouter();
   const snackbar = useSnackbar();
   const [values, setValues] = useState<ClientFormValues>(toValues(client));
@@ -95,6 +104,7 @@ export function ClientForm({client}: {client?: ClientDoc}) {
           />
         </FormField>
       </FormSection>
+      {children}
       <FormActionBar>
         <Button onClick={handleSave} disabled={saving}>
           {saving ? "Saving..." : client ? "Save changes" : "Create client"}

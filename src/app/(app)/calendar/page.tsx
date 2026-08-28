@@ -1,7 +1,14 @@
 import {PageHeader} from "@/components/shell/PageHeader";
 import {calendarRangeFor, startOfWeek} from "@/lib/booking/calendarRange";
+import {computeCalendarWindow} from "@/lib/booking/calendarWindow";
 import {todayInTimeZone} from "@/lib/booking/dst";
-import {getBookingSettings, AvailabilityRule, type AvailabilityRuleDoc} from "@/lib/models/Availability";
+import {
+  getBookingSettings,
+  AvailabilityException,
+  AvailabilityRule,
+  type AvailabilityExceptionDoc,
+  type AvailabilityRuleDoc,
+} from "@/lib/models/Availability";
 import {connectToDatabase} from "@/lib/db";
 import {Appointment, type AppointmentDoc} from "@/lib/models/Appointment";
 import {Service, type ServiceDoc} from "@/lib/models/Service";
@@ -20,16 +27,24 @@ export default async function CalendarPage({
   const days = view === "day" ? 1 : 7;
   const range = calendarRangeFor(rangeStart, days, settings.timezone);
 
-  const [appointments, services, rules] = await Promise.all([
+  const [appointments, services, rules, exceptions] = await Promise.all([
     Appointment.find({startAt: {$lt: range.toUtc}, endAt: {$gt: range.fromUtc}})
       .sort({startAt: 1})
       .lean<AppointmentDoc[]>(),
     Service.find({active: true}).sort({name: 1}).lean<ServiceDoc[]>(),
     AvailabilityRule.find({}).lean<AvailabilityRuleDoc[]>(),
+    // Exceptions can override the normal weekly rules with EXTENDED hours (per wp4-vet.md) - slot
+    // generation for booking already honors these; the grid below must too, or an appointment
+    // booked into an exception's extended window renders nowhere (round-6 grader finding).
+    AvailabilityException.find({date: {$in: range.dates}}).lean<AvailabilityExceptionDoc[]>(),
   ]);
 
-  const dayStartMinute = rules.length ? Math.min(...rules.map((r) => r.startMinute), 480) : 480;
-  const dayEndMinute = rules.length ? Math.max(...rules.map((r) => r.endMinute), 1080) : 1080;
+  const {dayStartMinute, dayEndMinute, hasHoursOutsideRules} = computeCalendarWindow({
+    rules: rules.map((r) => ({startMinute: r.startMinute, endMinute: r.endMinute})),
+    exceptions: exceptions.flatMap((e) => e.windows ?? []),
+    appointments: appointments.map((a) => ({startAt: a.startAt, endAt: a.endAt})),
+    timeZone: settings.timezone,
+  });
 
   return (
     <>
@@ -41,6 +56,7 @@ export default async function CalendarPage({
         anchorDate={anchor}
         dayStartMinute={dayStartMinute}
         dayEndMinute={dayEndMinute}
+        hasHoursOutsideRules={hasHoursOutsideRules}
         appointments={appointments.map((a) => ({
           appointmentId: a.appointmentId,
           startAt: a.startAt,

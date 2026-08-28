@@ -13,11 +13,13 @@ import {verificationRegistryConsentAbi} from "@/lib/abi";
 import {roax} from "@/lib/chains";
 import {legacyTx} from "@/lib/chainWrite";
 import {publicEnv} from "@/lib/env.public";
+import {verifySessionStatusLabel, verifySessionStatusTone} from "@/lib/verifySessionTone";
 import type {PetDoc} from "@/lib/models/Pet";
+import type {VerifySessionStatus} from "@/lib/models/VerifySession";
 
 interface SessionState {
   sessionId: string;
-  status: string;
+  status: VerifySessionStatus;
   purpose: string;
   recordType: string;
   relayerAddress: string;
@@ -147,7 +149,7 @@ export function VerifySessionPanel() {
       <div className="max-w-2xl space-y-6">
         <FormSection title="Verification session">
           <div className="flex items-center gap-3">
-            <StatusBadge tone={session.status === "recorded" ? "ok" : "info"} label={session.status} />
+            <StatusBadge tone={verifySessionStatusTone[session.status]} label={verifySessionStatusLabel[session.status]} />
             {session.txHash && <HashCell value={session.txHash} chain="roax" kind="tx" label="tx" />}
           </div>
           {session.status === "pending" && (

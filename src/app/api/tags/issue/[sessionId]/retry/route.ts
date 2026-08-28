@@ -2,9 +2,11 @@ import {NextResponse} from "next/server";
 import {connectToDatabase} from "@/lib/db";
 import {MintSession, type MintSessionDoc} from "@/lib/models/MintSession";
 import {BindToken, generateHexToken} from "@/lib/models/BindToken";
+import {getClinicSettings} from "@/lib/models/ClinicSettings";
 import {badRequest, notFound, requireStaffSession} from "@/lib/staffApi";
 import {preflightIssuance} from "@/lib/mint/preflight";
-import {getServerEnv} from "@/lib/env";
+import {mongoReconcileDeps, reconcileAnchoredSession} from "@/lib/mint/reconcile";
+import {getServerEnv, requireEnv} from "@/lib/env";
 import {hexAddress} from "@/lib/schemas/common";
 
 const TOKEN_TTL_SECS = 600;
@@ -16,6 +18,17 @@ const TOKEN_TTL_SECS = 600;
  * touches the dogTagId counter - the whole point of retry is that the id is already safely
  * reserved and its root is (by construction of every failure path that reaches `error`) still
  * unset on chain.
+ *
+ * That last assumption is exactly what a session recovered from a worker restart (or one
+ * re-checked here) can violate: `errorStage: "issue"`/`"verify"`/`"interrupted"` are only reached
+ * AFTER a root was already sealed (`session.root` set), and if that root's `issueTag` transaction
+ * actually landed on chain, the id's root is anchored FOREVER - re-arming would `$unset` `root`
+ * and hand out a fresh token whose eventual `custodial-bind` can never seal (its own
+ * `isRootStillUnset` re-check will always read false), permanently stranding the tag in
+ * `seal_conflict`. So before re-arming anything, check whether that already happened -
+ * `reconcileAnchoredSession`, the same check the worker's boot recovery and the confirm route
+ * use - and short-circuit straight to `bound` if so, rather than manufacturing a retry that can
+ * never succeed.
  */
 export async function POST(request: Request, {params}: {params: Promise<{sessionId: string}>}) {
   const {response} = await requireStaffSession();
@@ -31,6 +44,23 @@ export async function POST(request: Request, {params}: {params: Promise<{session
   if (!session) return notFound("Mint session not found.");
   if (session.status !== "error") {
     return badRequest("Only a session in error can be retried.");
+  }
+
+  if (session.root) {
+    const settings = await getClinicSettings();
+    let sbtAddress: `0x${string}` | undefined;
+    try {
+      sbtAddress = requireEnv("DOGTAG_SBT_ADDRESS") as `0x${string}`;
+    } catch {
+      sbtAddress = undefined;
+    }
+    if (sbtAddress && settings.cloneAddress) {
+      const cloneAddress = settings.cloneAddress as `0x${string}`;
+      const outcome = await reconcileAnchoredSession(session, cloneAddress, mongoReconcileDeps(sbtAddress, cloneAddress));
+      if (outcome.reconciled) {
+        return NextResponse.json({sessionId, status: "bound", dogTagId: outcome.dogTagIdDec, root: outcome.root});
+      }
+    }
   }
 
   const preflight = await preflightIssuance(parsedOperator.data as `0x${string}`);

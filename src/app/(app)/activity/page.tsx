@@ -6,8 +6,11 @@ import {connectToDatabase} from "@/lib/db";
 import {ChainActivity, type ChainActivityDoc} from "@/lib/models/ChainActivity";
 import {getClinicSettings} from "@/lib/models/ClinicSettings";
 import {getBookingSettings} from "@/lib/models/Availability";
+import {robustLocalMidnightUtc} from "@/lib/booking/calendarRange";
+import {addCalendarDays} from "@/lib/booking/dst";
 import {roaxPublicClient} from "@/lib/chainRead";
 import {reasonCodeLabel} from "@/lib/reasonCodes";
+import {ActivityFilters} from "@/app/(app)/activity/ActivityFilters";
 
 function StatTile({label, value, hint}: {label: string; value: string; hint?: string}) {
   return (
@@ -27,15 +30,31 @@ function StatTile({label, value, hint}: {label: string; value: string; hint?: st
  * actually exists) and documents the gap rather than inventing a listener for an event that is
  * never emitted.
  */
-export default async function Page() {
+export default async function Page({searchParams}: {searchParams: Promise<{type?: string; from?: string; to?: string}>}) {
+  const {type, from, to} = await searchParams;
   await connectToDatabase();
-  const [entries, settings, bookingSettings] = await Promise.all([
-    ChainActivity.find({})
+  const bookingSettings = await getBookingSettings();
+  const timeZone = bookingSettings.timezone;
+
+  const filter: Record<string, unknown> = {};
+  if (type) filter.type = type;
+  if (from || to) {
+    // Clinic-local calendar-day boundaries, same convention `/appointments` uses for its own
+    // date-range filter - a chain event's wall-clock date should mean the same thing here as it
+    // does everywhere else in this app.
+    filter.blockTimestamp = {
+      ...(from ? {$gte: robustLocalMidnightUtc(from, timeZone)} : {}),
+      ...(to ? {$lt: robustLocalMidnightUtc(addCalendarDays(to, 1), timeZone)} : {}),
+    };
+  }
+
+  const [entries, availableTypes, settings] = await Promise.all([
+    ChainActivity.find(filter)
       .sort({blockNumber: -1, logIndex: -1})
       .limit(200)
       .lean<ChainActivityDoc[]>(),
+    ChainActivity.distinct("type"),
     getClinicSettings(),
-    getBookingSettings(),
   ]);
 
   let balance: bigint | null = null;
@@ -65,6 +84,7 @@ export default async function Page() {
   return (
     <>
       <PageHeader title="On-chain activity" description="This clinic's clone, SBT, and verification events." />
+      <ActivityFilters types={availableTypes} />
       {!settings.cloneAddress && (
         <Banner tone="warn" title="Setup incomplete">
           Finish the setup wizard to start following this clinic&apos;s clone.

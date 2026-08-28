@@ -87,16 +87,63 @@ export function rateLimitHeaders(result: RateLimitResult): Record<string, string
   return headers;
 }
 
-/** Best-effort client identity for a public request: the first hop in `X-Forwarded-For` (set by
- * the reverse proxy every deployment guide for this app puts in front of it - see
- * docs/DEPLOY.md), falling back to a constant so local dev without a proxy still rate-limits
- * (coarsely, across all callers) rather than throwing. */
-export function clientKeyFromRequest(request: Request): string {
-  const forwarded = request.headers.get("x-forwarded-for");
-  if (forwarded) {
-    const first = forwarded.split(",")[0]?.trim();
-    if (first) return first;
+/**
+ * Best-effort, spoof-resistant client identity for a public request.
+ *
+ * The previous implementation keyed every bucket on the LEFTMOST `X-Forwarded-For` entry - the
+ * one furthest from this server and closest to the original caller, which is exactly the part of
+ * the header a CLIENT supplies. Nothing stops a caller from sending
+ * `X-Forwarded-For: 1.2.3.4, 5.6.7.8, ...` directly; a well-behaved reverse proxy in front of this
+ * app only ever APPENDS to that header (nginx's `proxy_add_x_forwarded_for`, which this app's own
+ * `docs/DEPLOY.md` snippet uses, does exactly this), so the entries a client supplied are still
+ * there, untouched, to the left of whatever the proxy chain added. Reading the leftmost entry
+ * therefore reads attacker-controlled input every time - rotating it (as the round-6 finding
+ * reproduced) defeats per-IP rate limiting completely, since every "client" looks distinct.
+ *
+ * The fix has two parts, in preference order:
+ *
+ * 1. `CF-Connecting-IP`, when present - Cloudflare's own header for "the address that actually
+ *    connected to our edge," which Cloudflare sets itself and strips/overwrites any
+ *    client-supplied copy of (when the deployment is genuinely proxied through Cloudflare, which
+ *    `docs/DEPLOY.md` recommends as the default path).
+ * 2. Otherwise, the `TRUSTED_PROXY_HOPS`-configured entry of `X-Forwarded-For`, counted from the
+ *    RIGHT: with `N` trusted hops in front of this app (each of which faithfully APPENDS, like
+ *    nginx's `$proxy_add_x_forwarded_for`), the `N`-th entry from the right is the address the
+ *    `N`-th proxy actually observed connecting to it - real, not client-suppliable - while
+ *    everything to the left of that boundary is exactly as attacker-controlled as before.
+ *    `TRUSTED_PROXY_HOPS=1` (a single reverse proxy directly in front of this app, the common
+ *    case) means "trust the rightmost entry."
+ *
+ * With neither available (`TRUSTED_PROXY_HOPS` left at its default of 0, or fewer hops present
+ * than configured), this falls back to the same constant every caller previously fell back to
+ * with no proxy at all: NEVER the client-controlled leftmost value. In principle the better
+ * fallback here would be the raw TCP socket peer address, the way a bare `http.Server` would use
+ * it directly - but there is no such thing to fall back to from inside a Next.js App Router route
+ * handler in this stack: handlers receive a spec `Request`, and `NextRequest` itself dropped
+ * `.ip`/`.geo` (confirmed absent from the installed `next` package's own type declarations) after
+ * Next.js decided self-hosted deployments must get this from their own reverse proxy's headers
+ * instead - there is no lower-level connection object exposed to reach for. The constant fallback
+ * at least preserves the one property that matters: it is never something a request's own headers
+ * can influence.
+ */
+export function clientKeyFromRequest(request: Request, trustedProxyHops = 0): string {
+  const cfConnectingIp = request.headers.get("cf-connecting-ip")?.trim();
+  if (cfConnectingIp) return cfConnectingIp;
+
+  if (trustedProxyHops > 0) {
+    const forwarded = request.headers.get("x-forwarded-for");
+    if (forwarded) {
+      const hops = forwarded
+        .split(",")
+        .map((hop) => hop.trim())
+        .filter(Boolean);
+      if (hops.length >= trustedProxyHops) {
+        const trusted = hops[hops.length - trustedProxyHops];
+        if (trusted) return trusted;
+      }
+    }
   }
+
   return "unknown";
 }
 

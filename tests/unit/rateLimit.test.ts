@@ -75,13 +75,77 @@ describe("rateLimitHeaders", () => {
 });
 
 describe("clientKeyFromRequest", () => {
-  it("uses the first hop of X-Forwarded-For", () => {
-    const request = new Request("https://example.com", {headers: {"x-forwarded-for": "9.9.9.9, 10.0.0.1"}});
-    expect(clientKeyFromRequest(request)).toBe("9.9.9.9");
-  });
-
   it("falls back to a constant when no header is present", () => {
     const request = new Request("https://example.com");
     expect(clientKeyFromRequest(request)).toBe("unknown");
+    expect(clientKeyFromRequest(request, 1)).toBe("unknown");
+  });
+
+  it("ignores X-Forwarded-For entirely when no trusted proxy hop is configured (the safe default)", () => {
+    // The exact shape of the vulnerability this fix closes: a caller can put anything it wants in
+    // this header. With TRUSTED_PROXY_HOPS at its default of 0, none of it is trusted.
+    const request = new Request("https://example.com", {headers: {"x-forwarded-for": "9.9.9.9, 10.0.0.1"}});
+    expect(clientKeyFromRequest(request)).toBe("unknown");
+    expect(clientKeyFromRequest(request, 0)).toBe("unknown");
+  });
+
+  it("prefers CF-Connecting-IP over X-Forwarded-For", () => {
+    const request = new Request("https://example.com", {
+      headers: {"cf-connecting-ip": "203.0.113.9", "x-forwarded-for": "9.9.9.9, 10.0.0.1"},
+    });
+    expect(clientKeyFromRequest(request, 1)).toBe("203.0.113.9");
+  });
+
+  it("with one trusted proxy hop, uses the rightmost X-Forwarded-For entry", () => {
+    // Mirrors nginx's `proxy_add_x_forwarded_for`: whatever the client sent stays on the left,
+    // and the proxy appends the real peer it saw on the right.
+    const request = new Request("https://example.com", {headers: {"x-forwarded-for": "9.9.9.9, 203.0.113.50"}});
+    expect(clientKeyFromRequest(request, 1)).toBe("203.0.113.50");
+  });
+
+  it("with two trusted proxy hops, uses the second-from-right entry", () => {
+    const request = new Request("https://example.com", {
+      headers: {"x-forwarded-for": "9.9.9.9, 203.0.113.50, 172.16.0.9"},
+    });
+    expect(clientKeyFromRequest(request, 2)).toBe("203.0.113.50");
+  });
+
+  it("falls back to unknown when fewer hops are present than configured", () => {
+    const request = new Request("https://example.com", {headers: {"x-forwarded-for": "203.0.113.50"}});
+    expect(clientKeyFromRequest(request, 2)).toBe("unknown");
+  });
+
+  it("a rotating leftmost (client-supplied) XFF entry no longer escapes the bucket, while the fixed trusted hop still gets limited", () => {
+    // Reproduces the round-6 finding, then proves the fix: with a configured trusted hop, rotating
+    // the client-controlled left entry never changes the derived key, so the SAME bucket keeps
+    // counting every request and the limit still bites.
+    const trustedHops = 1;
+    const now = 1_000_000;
+    const realPeer = "203.0.113.77"; // what the trusted reverse proxy actually observed
+    let limited = 0;
+    for (let i = 0; i < 5; i++) {
+      const forgedLeftHop = `198.51.100.${i}`; // a different, attacker-chosen value every request
+      const request = new Request("https://example.com", {
+        headers: {"x-forwarded-for": `${forgedLeftHop}, ${realPeer}`},
+      });
+      const key = clientKeyFromRequest(request, trustedHops);
+      expect(key).toBe(realPeer);
+      const result = checkRateLimit({route: "public", clientKey: key, limit: 3, windowMs: 60_000, now});
+      if (!result.ok) limited++;
+    }
+    expect(limited).toBe(2); // 3 allowed, then 2 rejected - keyed on the fixed trusted hop, not the rotating one
+
+    // Confirm the OLD vulnerable behavior really is gone: taking the leftmost entry (hops=0, so no
+    // XFF is trusted at all, but this also demonstrates a rotating leftmost never lands in the same
+    // bucket twice under the pre-fix logic) would have let every one of the 5 requests through.
+    __resetRateLimitsForTests();
+    let allowedIfVulnerable = 0;
+    for (let i = 0; i < 5; i++) {
+      const forgedLeftHop = `198.51.100.${i}`;
+      const legacyLeftmostKey = forgedLeftHop; // what the old, unfixed implementation would have used
+      const result = checkRateLimit({route: "public", clientKey: legacyLeftmostKey, limit: 3, windowMs: 60_000, now});
+      if (result.ok) allowedIfVulnerable++;
+    }
+    expect(allowedIfVulnerable).toBe(5);
   });
 });

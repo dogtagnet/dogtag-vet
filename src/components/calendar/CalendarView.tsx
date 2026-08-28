@@ -2,6 +2,7 @@
 
 import {Fragment, useMemo, useState} from "react";
 import {useRouter} from "next/navigation";
+import {Banner} from "@/components/ui/Banner";
 import {Button, Input, Select, Textarea} from "@/components/ui/controls";
 import {useSnackbar} from "@/components/ui/Snackbar";
 import {appointmentStatusLabel, appointmentStatusTone} from "@/lib/appointmentTone";
@@ -32,6 +33,12 @@ export interface CalendarViewProps {
   dayEndMinute: number;
   appointments: CalendarAppointment[];
   services: CalendarService[];
+  /** True when the grid's window had to widen past the clinic's normal weekly hours to fit an
+   * availability exception's extended window or an appointment actually booked outside them
+   * (`computeCalendarWindow`, `src/lib/booking/calendarWindow.ts`) - shows a small banner so staff
+   * understand why the grid runs earlier/later than the usual business hours, rather than the grid
+   * silently stretching with no explanation. */
+  hasHoursOutsideRules?: boolean;
 }
 
 const ROW_MINUTES = 30;
@@ -77,7 +84,7 @@ function weekdayLabel(dateStr: string): string {
 }
 
 export function CalendarView(props: CalendarViewProps) {
-  const {dates, timezone, view, anchorDate, dayStartMinute, dayEndMinute, appointments, services} = props;
+  const {dates, timezone, view, anchorDate, dayStartMinute, dayEndMinute, appointments, services, hasHoursOutsideRules} = props;
   const router = useRouter();
   const snackbar = useSnackbar();
   const [draft, setDraft] = useState<{date: string; minute: number} | null>(null);
@@ -114,6 +121,13 @@ export function CalendarView(props: CalendarViewProps) {
 
   return (
     <div>
+      {hasHoursOutsideRules && (
+        <div className="mb-4">
+          <Banner tone="info" title="Showing hours outside the normal schedule">
+            This range includes an availability exception or a booked appointment outside the clinic&apos;s standard weekly hours, so the grid has widened to show it.
+          </Banner>
+        </div>
+      )}
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-2">
           <Button variant="secondary" onClick={() => shiftDate(view === "day" ? -1 : -7)}>

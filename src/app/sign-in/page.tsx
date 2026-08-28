@@ -2,6 +2,7 @@ import {getServerEnv, isDevLoginEnabled} from "@/lib/env";
 import {Button, Input} from "@/components/ui/controls";
 import {FormField} from "@/components/ui/FormSection";
 import {Banner} from "@/components/ui/Banner";
+import {ThemeToggle} from "@/components/ui/ThemeToggle";
 import {signInWithDevLogin, signInWithEmail, signInWithGoogle} from "@/app/sign-in/actions";
 
 export default async function SignInPage({searchParams}: {searchParams: Promise<{error?: string}>}) {
@@ -12,7 +13,10 @@ export default async function SignInPage({searchParams}: {searchParams: Promise<
   const devLoginEnabled = isDevLoginEnabled();
 
   return (
-    <div className="flex min-h-dvh items-center justify-center bg-bg px-4">
+    <div className="relative flex min-h-dvh items-center justify-center bg-bg px-4">
+      <div className="absolute right-4 top-4">
+        <ThemeToggle />
+      </div>
       <div className="w-full max-w-sm rounded-card border border-border bg-surface p-6 shadow-card">
         <h1 className="mb-1 text-section-title text-ink">Staff sign in</h1>
         <p className="mb-6 text-body text-ink-muted">Access this clinic&apos;s dogtag-vet deployment.</p>

@@ -44,6 +44,11 @@ export interface DogTagInfo {
   issuedTx?: string;
   cloneAddress?: string;
   attestation?: IssuerAttestation;
+  /** When this tag was bound (the confirm route's or the reconcile path's terminal write) -
+   * distinct from `Pet.updatedAt`, which also moves on an unrelated edit (name, notes, ...) and so
+   * cannot serve as "issued date" for the `/tags` table. Absent on any pet issued before this
+   * field existed. */
+  issuedAt?: Date;
 }
 
 export interface PetDoc {
@@ -113,6 +118,7 @@ const dogTagSchema = new Schema<DogTagInfo>(
     issuedTx: String,
     cloneAddress: String,
     attestation: issuerAttestationSchema,
+    issuedAt: Date,
   },
   {_id: false},
 );

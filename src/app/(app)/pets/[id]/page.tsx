@@ -16,7 +16,7 @@ export default async function PetDetailPage({params}: {params: Promise<{id: stri
   return (
     <>
       <PageHeader title={pet.name} description="Pet record." />
-      <div className="mb-6">
+      <div className="mb-6 max-w-2xl">
         <PetTagCard dogTag={pet.dogTag ?? {}} />
       </div>
       <PetForm pet={pet} initialOwners={owners} />

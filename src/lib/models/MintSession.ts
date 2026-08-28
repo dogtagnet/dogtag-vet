@@ -57,6 +57,12 @@ export interface MintSessionDoc {
    * `/p/{token}` doc comment ("The first successful resolve extends the session's TTL once") has
    * somewhere to record that it already happened. */
   firstResolvedAt?: Date;
+  /** Set by `POST .../tx` the moment the session enters `issuing` - the worker's boot-recovery
+   * staleness check (`isMintSessionStale`, `src/lib/mint/reconcile.ts`) measures from THIS, never
+   * `createdAt`: a session can sit `pending` for minutes waiting on the owner's phone before ever
+   * reaching `issuing`, so `createdAt` would count that ordinary wait against the staleness
+   * threshold and could flip a transaction that has been in flight for mere seconds. */
+  issuingAt?: Date;
   resolvedAt?: Date;
 }
 
@@ -118,6 +124,7 @@ const mintSessionSchema = new Schema<MintSessionDoc>(
     errorReason: String,
     tokenExp: {type: Number, required: true},
     firstResolvedAt: Date,
+    issuingAt: Date,
     resolvedAt: Date,
   },
   {timestamps: {createdAt: true, updatedAt: false}},

@@ -22,6 +22,8 @@ export async function POST(request: Request, {params}: {params: Promise<{session
   if (!session) return notFound("Mint session not found.");
   if (session.status !== "ready") return badRequest("Only a session that is ready can be issued.");
 
-  await MintSession.updateOne({sessionId}, {$set: {status: "issuing", txHash}});
+  // `issuingAt` (not `createdAt`) is what the worker's boot-recovery staleness check measures
+  // from - see `MintSession.ts`'s doc comment on that field.
+  await MintSession.updateOne({sessionId}, {$set: {status: "issuing", txHash, issuingAt: new Date()}});
   return NextResponse.json({sessionId, status: "issuing", txHash});
 }
