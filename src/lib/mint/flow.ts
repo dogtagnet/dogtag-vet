@@ -130,7 +130,16 @@ export type CustodialBindResult =
   // TTL simply lapsed (or the token never existed as a session at all).
   | {ok: false; code: "expired_or_reused"}
   | {ok: false; code: "leaf_commitment_invalid"; sessionId: string}
-  | {ok: false; code: "seal_conflict"; sessionId: string};
+  | {ok: false; code: "seal_conflict"; sessionId: string}
+  // `isRootStillUnset` (`chainRead.ts`'s `isProfileRootUnset`) is deliberately fail-closed: an
+  // RPC timeout or a downed node THROWS rather than resolving to a guessed `true`/`false` (see
+  // that file's doc comment). By the time this call runs, `tryConsumeToken` above has already
+  // succeeded, so a bare rethrow here would escape uncaught past the route handler, wedge the
+  // session at `pending` forever (its bind token burned, un-retryable - `error`-only sessions
+  // qualify for `/retry`), and answer with a bodyless 500 instead of the yaml's documented
+  // `Error`-shaped ServerError. This code exists so the caller can instead mark the session
+  // `error`/`seal` (making it immediately retryable with a fresh token) and answer 503 properly.
+  | {ok: false; code: "transient_error"; sessionId: string};
 
 /**
  * `POST /profiles/issue/custodial-bind`. Order of operations, all fail-closed (wp4-vet.md issuance
@@ -183,7 +192,18 @@ export async function custodialBind(
     return {ok: false, code: "leaf_commitment_invalid", sessionId: session.sessionId};
   }
 
-  const stillUnset = await isRootStillUnset(session.dogTagIdFieldDec);
+  // The token is already consumed at this point (see above), so from here on ANY unhandled throw
+  // - not just a `false` result - must still leave the session in a recoverable state rather than
+  // escaping uncaught. `store.markError` below always runs before this function returns, on every
+  // path: the on-chain root read failing outright (`catch`), and the read succeeding but reporting
+  // the root already set (the pre-existing `seal_conflict` branch).
+  let stillUnset: boolean;
+  try {
+    stillUnset = await isRootStillUnset(session.dogTagIdFieldDec);
+  } catch {
+    await store.markError(session.sessionId, "seal");
+    return {ok: false, code: "transient_error", sessionId: session.sessionId};
+  }
   if (!stillUnset) {
     await store.markError(session.sessionId, "seal");
     return {ok: false, code: "seal_conflict", sessionId: session.sessionId};

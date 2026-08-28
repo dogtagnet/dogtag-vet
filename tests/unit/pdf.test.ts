@@ -164,6 +164,26 @@ describe("generateInvoicePdf", () => {
     expect(page.text).toMatch(/sepolia.*\(testnet\)/i);
   });
 
+  it("renders without a configured business profile - a fresh, never-configured deployment's default state", async () => {
+    // Regression test for the round-4 finding: `ClinicSettings.businessProfile` had no schema
+    // default, so `getClinicSettings()` returned it as `undefined` on any deployment whose
+    // business profile had never been touched, and every PDF path (including the wire-authoritative
+    // `GET /r/pay/{receiptToken}`) 500'd dereferencing `.name` off it. Passing `undefined` here
+    // exercises `generateInvoicePdf`'s own defensive default directly, independent of whether the
+    // ClinicSettings-layer fix is also in place.
+    const pdf = await generateInvoicePdf({
+      payment: fixturePayment(),
+      businessProfile: undefined,
+      publicBaseUrl: "https://vet.example",
+      timeZone: TIME_ZONE,
+      stamped: false,
+    });
+
+    expect(pdf.subarray(0, 5).toString("ascii")).toBe("%PDF-");
+    const page = await extractPage1Items(pdf);
+    expect(page.text).toContain("Invoice");
+  });
+
   it("prints the receipt QR caption as the last text on the page, immediately followed by the code itself", async () => {
     const pdf = await generateInvoicePdf({
       payment: fixturePayment(),

@@ -35,7 +35,12 @@ const PDF_COLOR = {
 
 export interface InvoicePdfInput {
   payment: PaymentDoc;
-  businessProfile: BusinessProfile;
+  /** Optional defensively: `getClinicSettings()` always returns a populated object (schema
+   * default plus a read-time backfill for older deployments - see ClinicSettings.ts), but this
+   * function has no way to enforce that at its own boundary, and a fresh, never-configured
+   * deployment is exactly the state every vet's self-hosted clone starts in. Every field below is
+   * read with `?? ...` / optional chaining against an empty object rather than assumed present. */
+  businessProfile: BusinessProfile | undefined;
   publicBaseUrl: string;
   /** Clinic IANA timezone (`BookingSettings.timezone`) - the Issued/Due lines render in this zone,
    * never the rendering process's, with the zone abbreviation shown since this document leaves the
@@ -67,7 +72,7 @@ function resetX(doc: PDFKit.PDFDocument): void {
  * route (always `stamped: true`, since that endpoint only ever serves an already-paid invoice).
  */
 export async function generateInvoicePdf(input: InvoicePdfInput): Promise<Buffer> {
-  const {payment, businessProfile, publicBaseUrl, timeZone, stamped} = input;
+  const {payment, businessProfile = {}, publicBaseUrl, timeZone, stamped} = input;
   const receiptUrl = `${publicBaseUrl.replace(/\/$/, "")}/r/pay/${payment.receiptToken}`;
   const qrPngBuffer = await QRCode.toBuffer(receiptUrl, {margin: 2, width: 200});
 

@@ -14,7 +14,7 @@ function invoiceFilename(payment: PaymentDoc): string {
  * that write needs the live Mongoose document, not this pure send). */
 export async function sendInvoiceEmail(
   payment: PaymentDoc,
-  businessProfile: BusinessProfile,
+  businessProfile: BusinessProfile | undefined,
   toEmail: string,
   timeZone: string,
 ): Promise<void> {
@@ -28,7 +28,7 @@ export async function sendInvoiceEmail(
   });
   await sendMail({
     to: toEmail,
-    subject: `Invoice ${payment.invoiceNumber} from ${businessProfile.name ?? "your vet"}`,
+    subject: `Invoice ${payment.invoiceNumber} from ${businessProfile?.name ?? "your vet"}`,
     text: `Invoice ${payment.invoiceNumber} - total ${payment.total} ${payment.currency}.\n\nThe invoice is attached as a PDF.`,
     attachments: [{filename: invoiceFilename(payment), content: pdf.toString("base64"), encoding: "base64", contentType: "application/pdf"}],
   });
@@ -40,7 +40,7 @@ export async function sendInvoiceEmail(
  * already-committed `paid` status. */
 export async function sendPaymentPaidEmails(
   payment: PaymentDoc,
-  businessProfile: BusinessProfile,
+  businessProfile: BusinessProfile | undefined,
   clientEmail: string | undefined,
   timeZone: string,
 ): Promise<void> {
@@ -58,7 +58,7 @@ export async function sendPaymentPaidEmails(
     });
   }
 
-  if (businessProfile.contactEmail) {
+  if (businessProfile?.contactEmail) {
     await sendMail({
       to: businessProfile.contactEmail,
       subject: `Payment received - invoice ${payment.invoiceNumber}`,

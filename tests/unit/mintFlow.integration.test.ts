@@ -205,6 +205,37 @@ describe("mint flow integration (mocked chain reads, no live database)", () => {
     expect(result.code).toBe("seal_conflict");
     expect(sessions.get(session.sessionId)?.errorStage).toBe("seal");
   });
+
+  it("a transient chain-read failure during the seal re-check never escapes uncaught, and leaves the session error/retryable rather than wedged pending", async () => {
+    // Regression test for the round-4 finding: `isRootStillUnset` (`chainRead.ts`) is deliberately
+    // fail-closed and THROWS on an RPC failure rather than resolving to a guess. The token is
+    // already consumed by the time this call runs, so a bare rethrow used to escape `custodialBind`
+    // entirely, past both `markError` calls, leaving the session at `pending` forever with its one
+    // bind token burned - un-retryable (`/retry` only accepts `status: "error"`) and unrecoverable.
+    const {session, token, identityLeaves} = newSessionFixture();
+    const {store, sessions, tokens} = makeStore(session, token);
+    const now = Math.floor(Date.now() / 1000);
+    const bindRequest = deviceBuildBindRequest(token.token, identityLeaves, session.petName);
+
+    const isRootStillUnset = async () => {
+      throw new Error("ECONNREFUSED: RPC endpoint unreachable");
+    };
+
+    const result = await custodialBind(store, bindRequest, now, isRootStillUnset);
+
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("unreachable");
+    expect(result.code).toBe("transient_error");
+
+    // The token was already (correctly) consumed before the failing read - that part of the
+    // fail-closed contract ("a second bind against this token is always rejected") is unaffected.
+    expect(tokens.get(token.token)?.consumed).toBe(true);
+    // But the SESSION - unlike before this fix - is left in a state the owner and the operator can
+    // both actually recover from: `error`/`seal` is immediately eligible for
+    // `/api/tags/issue/:sessionId/retry`, which mints a fresh token against the same dogTagId.
+    expect(sessions.get(session.sessionId)?.status).toBe("error");
+    expect(sessions.get(session.sessionId)?.errorStage).toBe("seal");
+  });
 });
 
 describe("dogTagId allocation (fail-closed)", () => {

@@ -29,7 +29,16 @@ export async function POST(request: Request, {params}: {params: Promise<{id: str
     getBookingSettings(),
     updated.clientId ? Client.findOne({clientId: updated.clientId}).lean<ClientDoc>() : Promise.resolve(null),
   ]);
-  await sendPaymentPaidEmails(updated, settings.businessProfile, client?.email, bookingSettings.timezone);
+  // Best-effort, deliberately outside the mutation above: the payment is already durably marked
+  // paid, so a failure rendering/sending the follow-up email (a PDF-generation bug, a malformed
+  // business profile, an SMTP outage) must never turn a successful operator action into a 500 -
+  // that would tell the operator the mark-paid failed when it did not. Mirrors sendMail's own
+  // "never throws" contract one level up, for the one step (PDF generation) that isn't sendMail.
+  try {
+    await sendPaymentPaidEmails(updated, settings.businessProfile, client?.email, bookingSettings.timezone);
+  } catch (err) {
+    console.error(`[mark-paid] payment ${updated.paymentId} marked paid but notification email failed:`, err);
+  }
 
   return NextResponse.json(updated);
 }

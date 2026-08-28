@@ -93,6 +93,49 @@ const receivingAddressSchema = new Schema<ReceivingAddress>(
   {_id: false},
 );
 
+/**
+ * Its own `Schema` (rather than a plain nested-object literal, `receivingAddressSchema`'s own
+ * convention) for two reasons together: it lets `default: () => ({})` attach unambiguously - see
+ * the `businessProfile` field below for why that default has to exist - and `{_id: false}` keeps
+ * Mongoose from giving this single-nested subdocument its own generated `_id`, which every OTHER
+ * embedded object here (`rpcOverrides`, the plain-object fallback this schema replaces) does not
+ * carry either. Verified live against a real MongoDB: without `{_id: false}` an unrelated field on
+ * the SAME nested-object-literal syntax comes back with a stray `_id` that has no business being
+ * there and no field in the `BusinessProfile` interface to hold it.
+ */
+const businessProfileSchema = new Schema<BusinessProfile>(
+  {
+    name: String,
+    logoUrl: String,
+    contactEmail: String,
+    domain: String,
+    phone: String,
+    primaryColor: String,
+    address: {
+      line1: String,
+      line2: String,
+      city: String,
+      region: String,
+      postalCode: String,
+      country: String,
+    },
+    coordinates: {
+      lat: Number,
+      lng: Number,
+    },
+  },
+  // `minimize: false` is load-bearing, not decorative: Mongoose's default (`minimize: true`)
+  // strips a subdocument down to nothing - both from `.toObject()`/`.lean()` output AND from what
+  // actually gets written to MongoDB on save - the instant every one of its fields is blank,
+  // which an untouched `businessProfile: {}` always is on a fresh deployment. Verified live: with
+  // `minimize` left at its default, the schema-level `default: () => ({})` below produces `{}` on
+  // the in-memory document immediately after `create()`, but `doc.toObject()` and the persisted
+  // Mongo document both come back with the `businessProfile` key ABSENT - the exact bug this
+  // whole file exists to fix, just relocated one layer down. `{_id: false}` (see above) keeps this
+  // now-always-present subdocument from also carrying an unwanted generated `_id`.
+  {_id: false, minimize: false},
+);
+
 const clinicSettingsSchema = new Schema<ClinicSettingsDoc>(
   {
     _id: {type: String, required: true},
@@ -100,26 +143,15 @@ const clinicSettingsSchema = new Schema<ClinicSettingsDoc>(
     cloneAddress: String,
     operatorWallet: String,
     receivingAddresses: {type: [receivingAddressSchema], default: []},
-    businessProfile: {
-      name: String,
-      logoUrl: String,
-      contactEmail: String,
-      domain: String,
-      phone: String,
-      primaryColor: String,
-      address: {
-        line1: String,
-        line2: String,
-        city: String,
-        region: String,
-        postalCode: String,
-        country: String,
-      },
-      coordinates: {
-        lat: Number,
-        lng: Number,
-      },
-    },
+    // Every reader (invoice PDF generation chief among them - see pdf.ts) dereferences fields off
+    // this object unconditionally, on the assumption it exists even when every field inside it is
+    // still blank. A nested subdocument path like this one has no materialized value in MongoDB
+    // until a leaf field is set, so WITHOUT an explicit default a fresh, never-configured
+    // deployment reads this back as `undefined` (not `{}`) and every PDF path throws.
+    // `default: () => ({})` makes Mongoose persist an empty object at document-creation time
+    // instead of leaving the path absent. `getClinicSettings()` below additionally backfills this
+    // for deployments whose singleton document predates this default.
+    businessProfile: {type: businessProfileSchema, default: () => ({})},
     rpcOverrides: {
       roax: String,
       ethereum: String,
@@ -141,9 +173,16 @@ const CLINIC_SETTINGS_ID = "singleton";
 export async function getClinicSettings(): Promise<ClinicSettingsDoc> {
   const existing = await ClinicSettings.findById(CLINIC_SETTINGS_ID).lean<ClinicSettingsDoc>();
   if (existing) {
-    if (existing.icsFeedToken) return existing;
-    // Backfill for a deployment created before the ics feed existed.
-    return rotateIcsFeedToken();
+    const backfill: Partial<ClinicSettingsDoc> = {};
+    // Deployments whose singleton document predates a given default (the ics feed token
+    // originally, businessProfile's `default: () => ({})` more recently) never get that default
+    // applied retroactively by Mongoose - defaults only fire at document-creation time - so every
+    // such pre-existing deployment reads the field back as missing/undefined forever unless
+    // patched here once, on first read after the upgrade.
+    if (!existing.icsFeedToken) backfill.icsFeedToken = randomBytes(16).toString("hex");
+    if (!existing.businessProfile) backfill.businessProfile = {};
+    if (Object.keys(backfill).length === 0) return existing;
+    return updateClinicSettings(backfill);
   }
   const created = await ClinicSettings.create({_id: CLINIC_SETTINGS_ID, icsFeedToken: randomBytes(16).toString("hex")});
   return created.toObject();

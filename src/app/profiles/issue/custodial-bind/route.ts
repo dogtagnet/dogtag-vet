@@ -33,7 +33,23 @@ export async function POST(request: Request) {
 
   await connectToDatabase();
   const now = Math.floor(Date.now() / 1000);
-  const result = await custodialBind(mongoMintStore, parsed.data, now, isDogTagIdUnset);
+
+  let result;
+  try {
+    result = await custodialBind(mongoMintStore, parsed.data, now, isDogTagIdUnset);
+  } catch (err) {
+    // Last-resort net, not the primary fix: `custodialBind` itself already catches the one call
+    // in its post-consume path that is expected to throw (the on-chain re-check) and turns it into
+    // the `transient_error` result handled below. This only guards against something else in that
+    // path throwing unexpectedly (a database blip on `markError`/`commitReady` themselves, say) -
+    // it exists so THAT case also answers the yaml's documented `Error`-shaped 5XX rather than an
+    // uncaught, bodyless 500, never so a thrown error is silently swallowed.
+    console.error("[custodial-bind] unhandled error:", err);
+    return jsonWithHeaders(errorBody("transient_error", "Temporarily unable to complete this request. Retry shortly."), {
+      status: 503,
+      headers: rateLimit.headers,
+    });
+  }
 
   if (!result.ok) {
     switch (result.code) {
@@ -62,6 +78,14 @@ export async function POST(request: Request) {
           status: 409,
           headers: rateLimit.headers,
         });
+      case "transient_error":
+        // The session is already marked `error`/`seal` by `custodialBind` before this result is
+        // returned, so it is immediately retryable via `/api/tags/issue/:sessionId/retry` (a fresh
+        // token, same dogTagId) - the operator-side recovery path the spec's issuance step 7 names.
+        return jsonWithHeaders(
+          errorBody("transient_error", "Temporarily unable to complete this request. Retry shortly."),
+          {status: 503, headers: rateLimit.headers},
+        );
     }
   }
 

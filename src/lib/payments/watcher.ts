@@ -134,7 +134,15 @@ async function scanChain(chainKey: PaymentChainKey, rails: OpenRail[], rpcOverri
       getBookingSettings(),
       updated.clientId ? Client.findOne({clientId: updated.clientId}).lean<ClientDoc>() : Promise.resolve(null),
     ]);
-    await sendPaymentPaidEmails(updated, settings.businessProfile, clientDoc?.email, bookingSettings.timezone);
+    // Best-effort, same reasoning as the manual mark-paid route: the payment is already durably
+    // paid on chain, so a notification failure must never abort this scan iteration - that would
+    // leave the cursor unadvanced and later matches in this same range unprocessed until the next
+    // tick re-derives them, for no benefit (the paid status itself is not at risk).
+    try {
+      await sendPaymentPaidEmails(updated, settings.businessProfile, clientDoc?.email, bookingSettings.timezone);
+    } catch (err) {
+      console.error(`[watcher] payment ${updated.paymentId} marked paid but notification email failed:`, err);
+    }
   }
 
   // Only advance the persisted cursor to the safe (confirmed) tip, never past it - a block within
