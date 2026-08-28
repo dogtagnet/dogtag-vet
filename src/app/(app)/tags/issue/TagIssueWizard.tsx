@@ -168,15 +168,29 @@ export function TagIssueWizard() {
   }, [replacePetId, resumeSessionId]);
 
   useEffect(() => {
-    if (revokePrevReceipt.isSuccess && revokePrevTxHash && replacingPet) {
-      fetch(`/api/tags/${replacingPet.petId}/lifecycle`, {
+    // Confirmed against the SUPERSEDED tag's own identity (`replacingPet.dogTag`, captured before
+    // this replace flow began), never by re-reading `Pet.dogTag` for this petId - `POST
+    // /api/tags/issue/:sessionId/confirm` has by now already overwritten that same field with the
+    // NEW tag's id/root (see `revoke-superseded/route.ts`'s doc comment for why a petId-keyed
+    // lookup here would read back the wrong tag and wrongly refuse to confirm).
+    if (revokePrevReceipt.isSuccess && revokePrevTxHash && replacingPet?.dogTag.cloneAddress && replacingPet.dogTag.dogTagIdField && replacingPet.dogTag.root) {
+      fetch("/api/tags/revoke-superseded", {
         method: "POST",
         headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({action: "revoke", reasonCode: "REASON_REPLACED", txHash: revokePrevTxHash}),
-      }).then(() => {
-        snackbar.show("Previous tag revoked", "ok");
-        setPreviousTagRevoked(true);
-      });
+        body: JSON.stringify({
+          cloneAddress: replacingPet.dogTag.cloneAddress,
+          dogTagIdField: replacingPet.dogTag.dogTagIdField,
+          root: replacingPet.dogTag.root,
+          reasonCode: "REASON_REPLACED",
+          txHash: revokePrevTxHash,
+        }),
+      })
+        .then((r) => (r.ok ? r.json() : Promise.reject()))
+        .then(() => {
+          snackbar.show("Previous tag revoked", "ok");
+          setPreviousTagRevoked(true);
+        })
+        .catch(() => snackbar.show("Revoke transaction sent, but confirmation failed. Refresh and retry.", "danger"));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [revokePrevReceipt.isSuccess]);
