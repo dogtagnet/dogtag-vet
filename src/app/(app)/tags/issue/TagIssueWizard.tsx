@@ -14,6 +14,7 @@ import {useSnackbar} from "@/components/ui/Snackbar";
 import {vetIssuerAbi} from "@/lib/abi";
 import {roax} from "@/lib/chains";
 import {legacyTx} from "@/lib/chainWrite";
+import {reasonCodeHash} from "@/lib/reasonCodes";
 import type {ClientDoc} from "@/lib/models/Client";
 import type {PetDoc, PetSex, WeightEntry} from "@/lib/models/Pet";
 
@@ -81,10 +82,21 @@ export function TagIssueWizard() {
   const [issuing, setIssuing] = useState(false);
   const [pendingTxHash, setPendingTxHash] = useState<`0x${string}` | undefined>(undefined);
 
+  // The replace wizard (wp4-vet.md: "replace ... start new mint session for the same pet, and
+  // after the new tag binds, prompt revoke of the old tag with REASON_REPLACED"). `replacingPet`
+  // holds the pet's PRE-replace tag state (root/cloneAddress/dogTagIdField) so the post-bind
+  // revoke prompt below can send `revokeTag` against the tag being replaced, not the new one.
+  const [replacingPet, setReplacingPet] = useState<PetDoc | null>(null);
+  const [revokingPrevious, setRevokingPrevious] = useState(false);
+  const [revokePrevTxHash, setRevokePrevTxHash] = useState<`0x${string}` | undefined>(undefined);
+  const [previousTagRevoked, setPreviousTagRevoked] = useState(false);
+
   const pollRef = useRef<ReturnType<typeof setInterval> | undefined>(undefined);
   const receipt = useWaitForTransactionReceipt({hash: pendingTxHash, chainId: roax.id});
+  const revokePrevReceipt = useWaitForTransactionReceipt({hash: revokePrevTxHash, chainId: roax.id});
   const searchParams = useSearchParams();
   const resumeSessionId = searchParams.get("session");
+  const replacePetId = searchParams.get("replace");
 
   useEffect(() => {
     if (!clientQuery.trim()) {
@@ -138,6 +150,56 @@ export function TagIssueWizard() {
       });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [resumeSessionId]);
+
+  // Replace wizard entry point (`/tags/issue?replace=<petId>` from the Tags page): pre-select the
+  // same pet and its owner, and remember the pet's current tag so the post-bind step below can
+  // offer to revoke exactly that tag once the replacement is bound.
+  useEffect(() => {
+    if (!replacePetId || resumeSessionId) return;
+    fetch(`/api/pets/${replacePetId}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((body: (PetDoc & {owners: ClientDoc[]}) | null) => {
+        if (!body) return;
+        setReplacingPet(body);
+        setPetId(body.petId);
+        setPets([body]);
+        if (body.owners[0]) setSelectedClient(body.owners[0]);
+      });
+  }, [replacePetId, resumeSessionId]);
+
+  useEffect(() => {
+    if (revokePrevReceipt.isSuccess && revokePrevTxHash && replacingPet) {
+      fetch(`/api/tags/${replacingPet.petId}/lifecycle`, {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({action: "revoke", reasonCode: "REASON_REPLACED", txHash: revokePrevTxHash}),
+      }).then(() => {
+        snackbar.show("Previous tag revoked", "ok");
+        setPreviousTagRevoked(true);
+      });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [revokePrevReceipt.isSuccess]);
+
+  async function handleRevokePrevious() {
+    if (!replacingPet?.dogTag.cloneAddress || !replacingPet.dogTag.dogTagIdField || !address) return;
+    setRevokingPrevious(true);
+    try {
+      const hash = await writeContractAsync(
+        legacyTx({
+          address: replacingPet.dogTag.cloneAddress as `0x${string}`,
+          abi: vetIssuerAbi,
+          functionName: "revokeTag",
+          args: [BigInt(replacingPet.dogTag.dogTagIdField), reasonCodeHash("REASON_REPLACED")],
+        }),
+      );
+      setRevokePrevTxHash(hash);
+    } catch (err) {
+      snackbar.show(err instanceof Error ? err.message : "Revoking the previous tag failed", "danger");
+    } finally {
+      setRevokingPrevious(false);
+    }
+  }
 
   async function handleStart() {
     if (!address) {
@@ -334,9 +396,25 @@ export function TagIssueWizard() {
           )}
 
           {session.status === "bound" && (
-            <div className="mt-4">
-              <p className="mb-3 text-body text-ok">Tag bound successfully.</p>
+            <div className="mt-4 space-y-4">
+              <p className="text-body text-ok">Tag bound successfully.</p>
               <Button onClick={handleSignAttestation}>Sign issuer attestation</Button>
+              {replacingPet?.dogTag.status === "active" && !previousTagRevoked && (
+                <Banner tone="warn" title="Revoke the previous tag">
+                  <p className="mb-3">
+                    The new tag for {replacingPet.name} is bound. Revoke the previous tag with reason
+                    &quot;Replaced by a new tag&quot; so it no longer verifies as active.
+                  </p>
+                  <Button
+                    variant="danger"
+                    disabled={revokingPrevious || chainId !== roax.id}
+                    onClick={handleRevokePrevious}
+                  >
+                    Revoke previous tag
+                  </Button>
+                </Banner>
+              )}
+              {previousTagRevoked && <p className="text-body text-ok">Previous tag revoked.</p>}
             </div>
           )}
 
