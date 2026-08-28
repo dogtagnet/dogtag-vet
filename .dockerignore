@@ -1,0 +1,29 @@
+# Keeps the Docker build context small and, more importantly, keeps a stale or host-specific
+# local install out of the image - both Dockerfile and Dockerfile.worker rely on their own `pnpm
+# install` inside the build (see their `deps` stage), not on whatever happens to exist on the
+# machine running `docker build`. Without this, `COPY . .` in the builder stage would copy the
+# host's local node_modules (a different platform/arch than the image's node:22-slim, absent
+# entirely on a fresh checkout, or just stale) over the freshly-installed one, silently reverting
+# exactly the fix Dockerfile's runner stage relies on.
+node_modules
+protocol/**/node_modules
+
+.next
+.git
+.gitignore
+
+test-results
+playwright-report
+blob-report
+coverage
+
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+.env
+.env.local
+.env.*.local
+
+.DS_Store
+*.tsbuildinfo

@@ -1,0 +1,44 @@
+# dogtag-vet worker image: chain-activity follower, payment watcher, and boot recovery.
+# A plain long-running Node process (tsx), not a Next.js build - no standalone-output tracing
+# involved, so none of the crypto-dependency-resolution caveats in Dockerfile/next.config.ts apply
+# here: `pnpm install` in the deps stage produces a complete, correctly-resolved node_modules and
+# that is exactly what this image ships.
+
+FROM node:22-slim AS base
+ENV PNPM_HOME="/pnpm"
+ENV PATH="$PNPM_HOME:$PATH"
+RUN corepack enable
+
+FROM base AS deps
+WORKDIR /app
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY protocol/packages/dogtag-standard-ts/package.json protocol/packages/dogtag-standard-ts/package.json
+RUN pnpm install --frozen-lockfile
+
+FROM base AS runner
+WORKDIR /app
+ENV NODE_ENV=production
+RUN addgroup --system --gid 1001 nodejs && adduser --system --uid 1001 worker
+
+COPY --from=deps /app/node_modules ./node_modules
+COPY --from=deps /app/protocol/packages/dogtag-standard-ts/node_modules ./protocol/packages/dogtag-standard-ts/node_modules
+COPY package.json ./
+# tsconfig.json's `paths` (`@/*` -> `./src/*`) is what tsx resolves the app's own `@/lib/...`,
+# `@/components/...` imports against - every file src/worker/index.ts pulls in uses that alias, so
+# omitting this file (easy to do; it is not obviously "the worker's" the way src/ and protocol/
+# are) fails at the very first import with ERR_MODULE_NOT_FOUND, not at build time (there is no
+# separate build step for this image - see the base-stage comment).
+COPY tsconfig.json ./
+COPY src ./src
+COPY protocol ./protocol
+
+USER worker
+
+# `--conditions=react-server`: src/lib/env.ts (imported transitively by everything the worker
+# touches - src/lib/db.ts, the payment watcher, the activity follower) imports the `server-only`
+# package, whose package.json maps the `react-server` export condition to a no-op stub and every
+# other condition (including plain Node, which is what a bare `tsx worker/index.ts` would use) to
+# one that throws. Next's own bundler sets that condition automatically for the web image; this
+# plain script has to ask for it explicitly, or the process throws on its very first import - see
+# package.json's own "worker" script, which this CMD mirrors exactly.
+CMD ["node_modules/.bin/tsx", "--conditions=react-server", "src/worker/index.ts"]

@@ -16,7 +16,7 @@ export async function POST(request: Request) {
   const rateLimit = enforceRateLimit(request, "mint-bind", 20, 60_000);
   if (rateLimit.limited) return rateLimit.response;
 
-  const parsedBody = await readJsonBody(request);
+  const parsedBody = await readJsonBody(request, "mint-bind");
   if (!parsedBody.ok) {
     return jsonWithHeaders(
       errorBody("malformed_leaf", parsedBody.tooLarge ? "Request body is too large." : "Malformed bind request."),

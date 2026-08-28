@@ -1,0 +1,38 @@
+services:
+  mongo:
+    image: mongo:7
+    restart: unless-stopped
+    volumes:
+      - mongo-data:/data/db
+    # No host port published: only the web and worker services reach mongo, over the compose
+    # network. Expose 27017 yourself (or add a port mapping) only if you need to reach it directly
+    # for backups or debugging - see docs/DEPLOY.md.
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      - mongo
+    ports:
+      - "3000:3000"
+    env_file:
+      - .env
+    environment:
+      MONGODB_URI: mongodb://mongo:27017/dogtag-vet
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    restart: unless-stopped
+    depends_on:
+      - mongo
+    env_file:
+      - .env
+    environment:
+      MONGODB_URI: mongodb://mongo:27017/dogtag-vet
+
+volumes:
+  mongo-data:

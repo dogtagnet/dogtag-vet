@@ -1,0 +1,6 @@
+apiVersion: v2
+name: dogtag-vet
+description: Self-deployable vet-clinic platform on the DogTag protocol (web app + background worker).
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

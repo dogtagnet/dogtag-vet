@@ -16,6 +16,24 @@ export const clinicSettingsInputSchema = z.object({
       name: z.string().trim().optional(),
       logoUrl: z.string().url().optional(),
       contactEmail: z.string().trim().email().optional(),
+      phone: z.string().trim().optional(),
+      primaryColor: z.string().trim().optional(),
+      address: z
+        .object({
+          line1: z.string().trim().optional(),
+          line2: z.string().trim().optional(),
+          city: z.string().trim().optional(),
+          region: z.string().trim().optional(),
+          postalCode: z.string().trim().optional(),
+          country: z.string().trim().length(2).optional(),
+        })
+        .optional(),
+      coordinates: z
+        .object({
+          lat: z.number().min(-90).max(90),
+          lng: z.number().min(-180).max(180),
+        })
+        .optional(),
     })
     .optional(),
   rpcOverrides: z

@@ -1,8 +1,10 @@
 import "server-only";
 import {NextResponse} from "next/server";
 import {checkRateLimit, clientKeyFromRequest, rateLimitHeaders, type RateLimitResult} from "@/lib/rateLimit";
+import {recordAbuse} from "@/lib/abuseLog";
+import {readJsonBody as readJsonBodyRaw, type ReadJsonBodyResult} from "@/lib/bodyLimit";
 
-export {readJsonBody, type ReadJsonBodyResult} from "@/lib/bodyLimit";
+export type {ReadJsonBodyResult} from "@/lib/bodyLimit";
 
 /** The `{error: {code, message, ...}}` envelope every route in `vet-public-api.yaml` uses. */
 export function errorBody(code: string, message: string, details?: Record<string, unknown>) {
@@ -33,6 +35,7 @@ export function enforceRateLimit(
   });
   const headers = rateLimitHeaders(result);
   if (!result.ok) {
+    void recordAbuse(route, clientKeyFromRequest(request), "rate_limited");
     return {
       limited: true,
       response: jsonWithHeaders(errorBody("rate_limited", "Too many requests. Try again shortly."), {
@@ -42,4 +45,18 @@ export function enforceRateLimit(
     };
   }
   return {limited: false, headers};
+}
+
+/**
+ * `readJsonBody` for a specific public route, additionally recording an abuse-log entry when the
+ * body is rejected for being oversized (not for ordinary malformed JSON, which is normal client
+ * error traffic rather than abuse). Fire-and-forget, same as `enforceRateLimit`'s own logging -
+ * never adds latency or a new failure mode to the request itself.
+ */
+export async function readJsonBody(request: Request, route: string): Promise<ReadJsonBodyResult> {
+  const result = await readJsonBodyRaw(request);
+  if (!result.ok && result.tooLarge) {
+    void recordAbuse(route, clientKeyFromRequest(request), "body_too_large");
+  }
+  return result;
 }

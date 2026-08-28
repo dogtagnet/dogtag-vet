@@ -1,0 +1,20 @@
+dogtag-vet is deployed.
+
+Web service: {{ include "dogtag-vet.fullname" . }}-web (port {{ .Values.web.service.port }})
+Worker: {{ include "dogtag-vet.fullname" . }}-worker (background process, no service)
+
+{{- if .Values.ingress.enabled }}
+Once DNS and TLS are in place, the app is reachable at:
+  https://{{ .Values.ingress.host }}
+{{- else }}
+No Ingress is enabled. Reach the web service from inside the cluster, or port-forward it:
+  kubectl port-forward svc/{{ include "dogtag-vet.fullname" . }}-web 3000:{{ .Values.web.service.port }}
+Then open http://localhost:3000 to run the setup wizard.
+{{- end }}
+
+First run: open the app and complete the setup wizard (connect a wallet, discover this clinic's
+clone, set receiving addresses). See docs/DEPLOY.md for the full walkthrough.
+
+Check both workloads came up clean:
+  kubectl get pods -l app.kubernetes.io/instance={{ .Release.Name }}
+  kubectl logs -l app.kubernetes.io/instance={{ .Release.Name }},app.kubernetes.io/component=worker

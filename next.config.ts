@@ -19,6 +19,35 @@ const nextConfig: NextConfig = {
   // tests/unit/pdf.test.ts (which asserts a real PDF actually comes out, not just that the build
   // succeeds).
   serverExternalPackages: ["@dogtag/standard", "circomlibjs", "poseidon-lite", "pdfkit"],
+  // IMPORTANT for anyone touching the Docker build: `next build`'s standalone-output tracer
+  // (@vercel/nft) cannot fully resolve `@dogtag/standard` at runtime. It is ESM-only
+  // (`"type": "module"`, `exports["."]` has only an `import` condition, no `require`), so the
+  // tracer's CJS-require resolution against that map comes up empty - it copies only the
+  // package's `package.json` into `.next/standalone/`, none of `dist/`, and consequently never
+  // walks into its own dependencies (`circomlibjs` -> `ethers`, `ffjavascript`, `blake-hash`,
+  // `blake2b`; `poseidon-lite`). `circomlibjs` is imported at the top of `consent.js`, which
+  // `index.js` re-exports unconditionally, so this is not a narrow feature gap - it breaks
+  // `import` of `@dogtag/standard` at all, i.e. every mint and verify route.
+  //
+  // This was found by actually inspecting `.next/standalone/` after a real build (empty `dist/`,
+  // no `circomlibjs` anywhere) - a green `pnpm build` gives no signal of it, since dev and
+  // `next start` both run against the full `node_modules`, never the standalone tree.
+  //
+  // Rather than force-including this dependency graph file-by-file here (`ethers` alone pulls in
+  // enough of its own transitive tree that hand-maintaining the list would be its own ongoing
+  // source of bugs), the fix lives in `Dockerfile`: the runner stage copies the complete, really-
+  // `pnpm install`-resolved `node_modules` and `protocol/` over the standalone tracer's output,
+  // rather than trusting the trace for these two directories. See that file's comment.
+  //
+  // `pdfkit` does not have this problem (it is a normal CJS package and its own JS traces fine)
+  // except for its `.afm` font-metrics files, which it loads by constructing a filename from a
+  // font name at runtime - the tracer's static analysis cannot follow that, so those particular
+  // data files are force-included below. This one stays here rather than moving to the Dockerfile
+  // fix because it is genuinely narrow (a handful of known data files in one package) and it also
+  // fixes deployments that use `.next/standalone` directly, outside Docker.
+  outputFileTracingIncludes: {
+    "/**": ["./node_modules/pdfkit/**/*"],
+  },
   eslint: {
     ignoreDuringBuilds: false,
   },

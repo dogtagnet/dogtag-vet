@@ -1,0 +1,83 @@
+# Default values for dogtag-vet.
+#
+# This chart deploys the web app and the background worker only. It does not manage MongoDB -
+# point `env.MONGODB_URI` (or, better, a Secret - see `existingSecret` below) at either a
+# self-run Mongo in the same cluster (a namespace-local StatefulSet is outside this chart's scope;
+# `docker-compose.yml`'s `mongo` service is the one-clinic answer for that) or a managed Mongo
+# (Atlas, etc.). See docs/DEPLOY.md's "managed Mongo" section.
+
+image:
+  # Set both repository values to wherever you pushed the two images this chart deploys -
+  # `docker build -f Dockerfile .` and `docker build -f Dockerfile.worker .` respectively. There
+  # is no public image for this app; every clinic builds and hosts its own.
+  web:
+    repository: dogtag-vet-web
+    tag: latest
+    pullPolicy: IfNotPresent
+  worker:
+    repository: dogtag-vet-worker
+    tag: latest
+    pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+
+web:
+  replicaCount: 1
+  service:
+    type: ClusterIP
+    port: 80
+    targetPort: 3000
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      memory: 512Mi
+
+worker:
+  replicaCount: 1
+  resources:
+    requests:
+      cpu: 50m
+      memory: 192Mi
+    limits:
+      memory: 384Mi
+
+# Non-secret environment variables, shared by both the web and worker containers - anything from
+# .env.example that is not a credential. PUBLIC_BASE_URL and MONGODB_URI are the two values every
+# deployment MUST set; everything else has the same defaults `.env.example` documents.
+env:
+  PUBLIC_BASE_URL: ""
+  MONGODB_URI: ""
+  NODE_ENV: production
+
+# Secrets (AUTH_SECRET, SMTP credentials, OAuth client secret, ...) - never put real values here in
+# a values.yaml that gets committed or lives in `helm history`. Prefer `existingSecret`: create the
+# Secret yourself (`kubectl create secret generic dogtag-vet-secrets --from-env-file=.env.secrets`)
+# and reference it by name. `secretEnv` exists for local/throwaway deployments where that extra
+# step is not worth it (e.g. a first try against a scratch cluster) - the chart will render a
+# Secret from it directly.
+existingSecret: ""
+secretEnv: {}
+  # AUTH_SECRET: ""
+  # EMAIL_SERVER: ""
+  # AUTH_GOOGLE_SECRET: ""
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  host: ""
+  tls: []
+  # - secretName: dogtag-vet-tls
+  #   hosts:
+  #     - vet.example.com
+
+serviceAccount:
+  create: true
+  name: ""
+
+podAnnotations: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}

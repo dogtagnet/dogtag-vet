@@ -38,7 +38,7 @@ export async function POST(request: Request) {
   const rateLimit = enforceRateLimit(request, "verify-consent", 20, 60_000);
   if (rateLimit.limited) return rateLimit.response;
 
-  const parsedBody = await readJsonBody(request);
+  const parsedBody = await readJsonBody(request, "verify-consent");
   if (!parsedBody.ok) {
     return jsonWithHeaders(
       errorBody("invalid_input", parsedBody.tooLarge ? "Request body is too large." : "Malformed consent request."),

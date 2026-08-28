@@ -34,6 +34,11 @@ pnpm test:e2e     # Playwright smoke (needs a running docker mongo)
 pnpm worker       # the background worker process
 ```
 
+## Deployment
+
+`docker compose up -d` after copying `.env.example` to `.env` and filling in the values it marks REQUIRED is the fastest path to a running clinic instance.
+See `docs/DEPLOY.md` for the full quickstart, the Kubernetes path (`helm/dogtag-vet/`), a managed-Mongo option, a `cloudflared` tunnel option for clinics with no static IP, Cloudflare and nginx rate-limiting guides for the public API surface, and backup guidance.
+
 ## Protocol sync
 
 `protocol/` is vendored, read-only.
@@ -52,6 +57,16 @@ wp4-vet.md asks for a choice between `pdfkit` and `@react-pdf/renderer`, justifi
 
 `pdfkit` loads its font metrics from disk at runtime rather than at bundle time, so it is marked in `next.config.ts`'s `serverExternalPackages` (alongside the vendored crypto packages) rather than left for webpack to inline - inlining it would relocate that file lookup away from the package's real directory and break PDF generation at request time with the build still green.
 `tests/unit/pdf.test.ts` guards against exactly that regression by asserting a real, non-trivial PDF buffer comes out, not just that the code compiles.
+
+### Why the web Docker image copies a full `node_modules`, not just the standalone output
+
+Next's `output: "standalone"` traces each route's dependencies and copies only the files it finds into `.next/standalone/`, which is normally a large size win.
+It cannot fully resolve `@dogtag/standard`, though: that package is ESM-only (`"type": "module"`, no `require` export condition), so the tracer's static analysis gives up after finding its `package.json` and never copies `dist/` or walks into its own dependencies (`circomlibjs`, in turn depending on `ethers` and others).
+That is not a narrow gap - `circomlibjs` is imported at the top of `consent.js`, which the package's entry point re-exports unconditionally, so it would break `import` of `@dogtag/standard` entirely, i.e. every mint and verify route, in any container built from the standalone output alone.
+This was caught by actually inspecting `.next/standalone/` after a real build and by running the built image against a real Mongo container (see the Definition of Done's Docker-build step) - a green `pnpm build` gives no signal of it, since `pnpm dev` and `pnpm start` both run against the full local `node_modules`, never the standalone tree.
+
+`Dockerfile`'s runner stage works around this by copying the complete, really-`pnpm install`-resolved `node_modules` and `protocol/` directories over whatever the standalone tracer produced at those two paths, rather than trying to hand-list `ethers`'s own transitive dependency closure in `next.config.ts`.
+It costs image size in exchange for being unconditionally correct; `next.config.ts` carries the fuller explanation and `pdfkit`'s narrower, unrelated version of the same class of problem (its `.afm` font-metrics files, fixed there with `outputFileTracingIncludes` instead, since that gap is self-contained and also affects non-Docker deployments of the standalone output).
 
 ### Payment-view vs. receipt tokens
 

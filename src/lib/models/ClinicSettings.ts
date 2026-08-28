@@ -15,12 +15,37 @@ export interface ReceivingAddress {
   address: string;
 }
 
+export interface BusinessAddress {
+  line1?: string;
+  line2?: string;
+  city?: string;
+  region?: string;
+  postalCode?: string;
+  /** ISO 3166-1 alpha-2, per `specs/vet-public-api.yaml`'s `EntityCard.address.country`. */
+  country?: string;
+}
+
+export interface BusinessCoordinates {
+  lat: number;
+  lng: number;
+}
+
 export interface BusinessProfile {
   name?: string;
   logoUrl?: string;
   /** Where public-booking notifications ("a client just booked/cancelled") are sent. Distinct
    * from `EMAIL_FROM` (the outgoing SMTP identity) - this is a destination, not a sender. */
   contactEmail?: string;
+  /** Public contact phone, shown on the entity card (`GET /v1/entity`'s `contact.phone`). */
+  phone?: string;
+  /** Accent color for the entity card's `branding.primaryColor` - a design token this deployment
+   * chooses for its own public-facing card, not one of this app's own UI tokens. */
+  primaryColor?: string;
+  address?: BusinessAddress;
+  /** Required by `EntityCard.coordinates`; unset until the operator supplies real coordinates in
+   * Settings, at which point `GET /v1/entity` starts reporting them instead of the 0,0 default -
+   * see `src/lib/entityCard.ts`. */
+  coordinates?: BusinessCoordinates;
 }
 
 export interface RpcOverrides {
@@ -70,6 +95,20 @@ const clinicSettingsSchema = new Schema<ClinicSettingsDoc>(
       name: String,
       logoUrl: String,
       contactEmail: String,
+      phone: String,
+      primaryColor: String,
+      address: {
+        line1: String,
+        line2: String,
+        city: String,
+        region: String,
+        postalCode: String,
+        country: String,
+      },
+      coordinates: {
+        lat: Number,
+        lng: Number,
+      },
     },
     rpcOverrides: {
       roax: String,

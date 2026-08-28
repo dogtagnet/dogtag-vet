@@ -1,0 +1,62 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "dogtag-vet.fullname" . }}-worker
+  labels:
+    {{- include "dogtag-vet.labels" . | nindent 4 }}
+    app.kubernetes.io/component: worker
+spec:
+  # Exactly one replica, always - the chain-activity follower and payment watcher each keep a
+  # single cursor in Mongo (ClinicSettings.activityCursorBlock, PaymentChainCursor); two workers
+  # racing the same cursor would double-process blocks, not add throughput. Scale this clinic's
+  # load by tuning ACTIVITY_POLL_MS / PAYMENT_WATCHER_POLL_MS, never by replica count.
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "dogtag-vet.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: worker
+  template:
+    metadata:
+      labels:
+        {{- include "dogtag-vet.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: worker
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "dogtag-vet.serviceAccountName" . }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: worker
+          image: "{{ .Values.image.worker.repository }}:{{ .Values.image.worker.tag }}"
+          imagePullPolicy: {{ .Values.image.worker.pullPolicy }}
+          env:
+            {{- range $key, $value := .Values.env }}
+            - name: {{ $key }}
+              value: {{ $value | quote }}
+            {{- end }}
+          {{- if or .Values.existingSecret .Values.secretEnv }}
+          envFrom:
+            - secretRef:
+                name: {{ include "dogtag-vet.secretName" . }}
+          {{- end }}
+          resources:
+            {{- toYaml .Values.worker.resources | nindent 12 }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

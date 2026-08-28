@@ -23,7 +23,7 @@ export async function POST(request: Request) {
   // `vet-public-api.yaml` documents only 400/409/429/5XX for this route (no 413), so an oversized
   // body is reported the same way as any other malformed request rather than introducing a status
   // code the wire contract does not define.
-  const parsedBody = await readJsonBody(request);
+  const parsedBody = await readJsonBody(request, "booking-book");
   if (!parsedBody.ok) {
     return jsonWithHeaders(
       errorBody("invalid_input", parsedBody.tooLarge ? "Request body is too large." : "Malformed booking request."),

@@ -20,6 +20,18 @@ export function SettingsForm({initial}: {initial: ClinicSettingsDoc}) {
   const [businessName, setBusinessName] = useState(initial.businessProfile?.name ?? "");
   const [logoUrl, setLogoUrl] = useState(initial.businessProfile?.logoUrl ?? "");
   const [contactEmail, setContactEmail] = useState(initial.businessProfile?.contactEmail ?? "");
+  const [phone, setPhone] = useState(initial.businessProfile?.phone ?? "");
+  const [primaryColor, setPrimaryColor] = useState(initial.businessProfile?.primaryColor ?? "");
+  const [address, setAddress] = useState({
+    line1: initial.businessProfile?.address?.line1 ?? "",
+    line2: initial.businessProfile?.address?.line2 ?? "",
+    city: initial.businessProfile?.address?.city ?? "",
+    region: initial.businessProfile?.address?.region ?? "",
+    postalCode: initial.businessProfile?.address?.postalCode ?? "",
+    country: initial.businessProfile?.address?.country ?? "",
+  });
+  const [lat, setLat] = useState(initial.businessProfile?.coordinates?.lat?.toString() ?? "");
+  const [lng, setLng] = useState(initial.businessProfile?.coordinates?.lng?.toString() ?? "");
   const [receiving, setReceiving] = useState<Record<PaymentChainKey, string>>(() => {
     const map: Record<PaymentChainKey, string> = {ethereum: "", base: "", sepolia: "", baseSepolia: ""};
     for (const entry of initial.receivingAddresses ?? []) map[entry.chainKey] = entry.address;
@@ -48,6 +60,19 @@ export function SettingsForm({initial}: {initial: ClinicSettingsDoc}) {
             name: businessName || undefined,
             logoUrl: logoUrl || undefined,
             contactEmail: contactEmail || undefined,
+            phone: phone || undefined,
+            primaryColor: primaryColor || undefined,
+            address: Object.values(address).some(Boolean)
+              ? {
+                  line1: address.line1 || undefined,
+                  line2: address.line2 || undefined,
+                  city: address.city || undefined,
+                  region: address.region || undefined,
+                  postalCode: address.postalCode || undefined,
+                  country: address.country || undefined,
+                }
+              : undefined,
+            coordinates: lat && lng ? {lat: Number(lat), lng: Number(lng)} : undefined,
           },
           receivingAddresses,
           rpcOverrides: {
@@ -88,6 +113,60 @@ export function SettingsForm({initial}: {initial: ClinicSettingsDoc}) {
             value={contactEmail}
             onChange={(e) => setContactEmail(e.target.value)}
           />
+        </FormField>
+        <FormField label="Public phone" htmlFor="business-phone" helperText="Shown on the public entity card.">
+          <Input id="business-phone" value={phone} onChange={(e) => setPhone(e.target.value)} />
+        </FormField>
+        <FormField
+          label="Brand color"
+          htmlFor="primary-color"
+          helperText="Accent color for the public entity card, e.g. #2563eb."
+        >
+          <Input
+            id="primary-color"
+            value={primaryColor}
+            onChange={(e) => setPrimaryColor(e.target.value)}
+            placeholder="#2563eb"
+          />
+        </FormField>
+      </FormSection>
+
+      <FormSection
+        title="Address and location"
+        helperText="Shown on the public entity card. Coordinates default to 0,0 until set - enter real ones before going live."
+      >
+        <FormField label="Address line 1" htmlFor="address-line1">
+          <Input id="address-line1" value={address.line1} onChange={(e) => setAddress((p) => ({...p, line1: e.target.value}))} />
+        </FormField>
+        <FormField label="Address line 2" htmlFor="address-line2">
+          <Input id="address-line2" value={address.line2} onChange={(e) => setAddress((p) => ({...p, line2: e.target.value}))} />
+        </FormField>
+        <FormField label="City" htmlFor="address-city">
+          <Input id="address-city" value={address.city} onChange={(e) => setAddress((p) => ({...p, city: e.target.value}))} />
+        </FormField>
+        <FormField label="Region or state" htmlFor="address-region">
+          <Input id="address-region" value={address.region} onChange={(e) => setAddress((p) => ({...p, region: e.target.value}))} />
+        </FormField>
+        <FormField label="Postal code" htmlFor="address-postal">
+          <Input
+            id="address-postal"
+            value={address.postalCode}
+            onChange={(e) => setAddress((p) => ({...p, postalCode: e.target.value}))}
+          />
+        </FormField>
+        <FormField label="Country" htmlFor="address-country" helperText="ISO 3166-1 alpha-2, e.g. US.">
+          <Input
+            id="address-country"
+            value={address.country}
+            maxLength={2}
+            onChange={(e) => setAddress((p) => ({...p, country: e.target.value.toUpperCase()}))}
+          />
+        </FormField>
+        <FormField label="Latitude" htmlFor="address-lat">
+          <Input id="address-lat" value={lat} onChange={(e) => setLat(e.target.value)} placeholder="0" />
+        </FormField>
+        <FormField label="Longitude" htmlFor="address-lng">
+          <Input id="address-lng" value={lng} onChange={(e) => setLng(e.target.value)} placeholder="0" />
         </FormField>
       </FormSection>
 
