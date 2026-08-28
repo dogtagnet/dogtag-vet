@@ -36,6 +36,15 @@ export interface BusinessProfile {
   /** Where public-booking notifications ("a client just booked/cancelled") are sent. Distinct
    * from `EMAIL_FROM` (the outgoing SMTP identity) - this is a destination, not a sender. */
   contactEmail?: string;
+  /**
+   * This clinic's stable DNS-domain issuer identity - `protocol/specs/issuer-attestation.md`'s
+   * `issuerDomain` message field and `dogtag-standard-ts`'s `IssuerMeta.domain`. A `did:web`-style
+   * IDENTITY, not a contact address: it need not resolve or serve anything (a verifier's offline
+   * DNS-TXT identity check reads it, but that is the only consumer). Deliberately distinct from
+   * `contactEmail` (an inbox, not a domain, and semantically the wrong value for a field a
+   * verifier resolves as DNS) - see the C3 attestation route's own doc comment for why signing an
+   * email address here was a bug, not a placeholder choice. */
+  domain?: string;
   /** Public contact phone, shown on the entity card (`GET /v1/entity`'s `contact.phone`). */
   phone?: string;
   /** Accent color for the entity card's `branding.primaryColor` - a design token this deployment
@@ -95,6 +104,7 @@ const clinicSettingsSchema = new Schema<ClinicSettingsDoc>(
       name: String,
       logoUrl: String,
       contactEmail: String,
+      domain: String,
       phone: String,
       primaryColor: String,
       address: {

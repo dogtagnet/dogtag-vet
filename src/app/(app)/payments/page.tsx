@@ -6,6 +6,7 @@ import {StatusBadge} from "@/components/ui/StatusBadge";
 import {formatUnixSeconds} from "@/lib/format";
 import {paymentStatusLabel, paymentStatusTone} from "@/lib/paymentTone";
 import {connectToDatabase} from "@/lib/db";
+import {getBookingSettings} from "@/lib/models/Availability";
 import {Payment, type PaymentDoc} from "@/lib/models/Payment";
 import {addAmounts} from "@/lib/payments/money";
 import {PaymentFilters} from "@/app/(app)/payments/PaymentFilters";
@@ -17,6 +18,7 @@ interface PaymentsSearchParams {
 export default async function PaymentsPage({searchParams}: {searchParams: Promise<PaymentsSearchParams>}) {
   const {status} = await searchParams;
   await connectToDatabase();
+  const {timezone: timeZone} = await getBookingSettings();
 
   const filter: Record<string, unknown> = {};
   if (status) filter.status = status;
@@ -79,12 +81,12 @@ export default async function PaymentsPage({searchParams}: {searchParams: Promis
           {
             key: "due",
             header: "Due",
-            render: (p: PaymentDoc) => (p.dueAt ? formatUnixSeconds(p.dueAt) : "-"),
+            render: (p: PaymentDoc) => (p.dueAt ? formatUnixSeconds(p.dueAt, timeZone) : "-"),
           },
           {
             key: "created",
             header: "Created",
-            render: (p: PaymentDoc) => formatUnixSeconds(Math.floor(new Date(p.createdAt).getTime() / 1000)),
+            render: (p: PaymentDoc) => formatUnixSeconds(Math.floor(new Date(p.createdAt).getTime() / 1000), timeZone),
           },
         ]}
         rows={payments}

@@ -10,7 +10,7 @@ import {Topbar} from "@/components/shell/Topbar";
  * email/role to the shell. */
 export default async function AppLayout({children}: {children: ReactNode}) {
   const session = await auth();
-  if (!session?.user?.email) {
+  if (!session?.user?.email || !session.user.staffId) {
     redirect("/sign-in");
   }
 

@@ -15,12 +15,15 @@ export interface TimelineEntry {
 
 export interface TimelineProps {
   entries: TimelineEntry[];
+  /** IANA timezone every entry's timestamp renders in - the clinic's own (`BookingSettings.timezone`),
+   * never the rendering process's. */
+  timeZone: string;
   emptyMessage?: string;
 }
 
 /** On-chain event history and audit trails: timestamp, actor chip, event name, tx link -
  * design-system.md's Timeline. */
-export function Timeline({entries, emptyMessage}: TimelineProps) {
+export function Timeline({entries, timeZone, emptyMessage}: TimelineProps) {
   if (entries.length === 0) {
     return <p className="text-body text-ink-faint">{emptyMessage ?? "No activity yet."}</p>;
   }
@@ -32,7 +35,7 @@ export function Timeline({entries, emptyMessage}: TimelineProps) {
           <span className="absolute -left-[25px] top-1.5 h-2.5 w-2.5 rounded-full border-2 border-surface bg-brand" />
           <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
             <span className="text-body font-medium text-ink">{entry.eventName}</span>
-            <span className="text-caption text-ink-faint">{formatUnixSeconds(entry.timestamp)}</span>
+            <span className="text-caption text-ink-faint">{formatUnixSeconds(entry.timestamp, timeZone)}</span>
           </div>
           <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1">
             {entry.actor && <AddressChip address={entry.actor} chain={entry.chain} label="actor" />}

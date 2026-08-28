@@ -30,9 +30,9 @@ export function calendarRangeFor(startDateStr: string, days: number, timeZone: s
 
 /** Local midnight, DST-gap-tolerant: on the vanishingly rare date/zone where midnight itself
  * falls inside a spring-forward gap, nudges forward a few minutes at a time until it lands on a
- * real instant. Only used for calendar display range boundaries, never for a specific slot's
- * correctness. */
-function robustLocalMidnightUtc(dateStr: string, timeZone: string): number {
+ * real instant. Used for calendar and appointment-list display range boundaries, never for a
+ * specific slot's correctness. */
+export function robustLocalMidnightUtc(dateStr: string, timeZone: string): number {
   for (let minute = 0; minute < 60; minute++) {
     const utc = localDateMinuteToUtcSeconds(dateStr, minute, timeZone);
     if (utc !== null) return utc - minute * 60;

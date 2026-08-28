@@ -2,6 +2,7 @@ import {NextResponse} from "next/server";
 import {connectToDatabase} from "@/lib/db";
 import {Payment, type PaymentDoc} from "@/lib/models/Payment";
 import {getClinicSettings} from "@/lib/models/ClinicSettings";
+import {getBookingSettings} from "@/lib/models/Availability";
 import {emailPaymentSchema} from "@/lib/schemas/payment";
 import {badRequest, notFound, requireStaffSession} from "@/lib/staffApi";
 import {sendInvoiceEmail} from "@/lib/payments/emails";
@@ -20,8 +21,8 @@ export async function POST(request: Request, {params}: {params: Promise<{id: str
   const payment = await Payment.findOne({paymentId: id}).lean<PaymentDoc>();
   if (!payment) return notFound("Payment not found.");
 
-  const settings = await getClinicSettings();
-  await sendInvoiceEmail(payment, settings.businessProfile, parsed.data.email);
+  const [settings, bookingSettings] = await Promise.all([getClinicSettings(), getBookingSettings()]);
+  await sendInvoiceEmail(payment, settings.businessProfile, parsed.data.email, bookingSettings.timezone);
   await Payment.updateOne({paymentId: id}, {$push: {emailedTo: {email: parsed.data.email, at: new Date()}}});
 
   return NextResponse.json({ok: true});

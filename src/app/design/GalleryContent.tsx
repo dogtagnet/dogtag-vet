@@ -83,6 +83,7 @@ export function GalleryContent() {
       <section>
         <h2 className="mb-3 text-section-title">Timeline</h2>
         <Timeline
+          timeZone={Intl.DateTimeFormat().resolvedOptions().timeZone}
           entries={[
             {
               id: "1",

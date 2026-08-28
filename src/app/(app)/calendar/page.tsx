@@ -1,16 +1,11 @@
 import {PageHeader} from "@/components/shell/PageHeader";
 import {calendarRangeFor, startOfWeek} from "@/lib/booking/calendarRange";
+import {todayInTimeZone} from "@/lib/booking/dst";
 import {getBookingSettings, AvailabilityRule, type AvailabilityRuleDoc} from "@/lib/models/Availability";
 import {connectToDatabase} from "@/lib/db";
 import {Appointment, type AppointmentDoc} from "@/lib/models/Appointment";
 import {Service, type ServiceDoc} from "@/lib/models/Service";
 import {CalendarView} from "@/components/calendar/CalendarView";
-
-function todayInTimeZone(timeZone: string): string {
-  return new Intl.DateTimeFormat("en-CA", {timeZone, year: "numeric", month: "2-digit", day: "2-digit"}).format(
-    new Date(),
-  );
-}
 
 export default async function CalendarPage({
   searchParams,

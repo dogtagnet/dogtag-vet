@@ -312,11 +312,11 @@ export function TagIssueWizard() {
   async function handleSignAttestation() {
     if (!session?.sessionId || !address) return;
     const payloadRes = await fetch(`/api/tags/issue/${session.sessionId}/attestation`);
+    const payload = await payloadRes.json().catch(() => null);
     if (!payloadRes.ok) {
-      snackbar.show("Could not build the attestation payload", "danger");
+      snackbar.show(payload?.error?.message ?? "Could not build the attestation payload", "danger");
       return;
     }
-    const payload = await payloadRes.json();
     try {
       const signature = await signTypedDataAsync({
         domain: payload.domain,
@@ -324,11 +324,16 @@ export function TagIssueWizard() {
         primaryType: "IssuerAttestation",
         message: payload.message,
       });
-      await fetch(`/api/tags/issue/${session.sessionId}/attestation`, {
+      const storeRes = await fetch(`/api/tags/issue/${session.sessionId}/attestation`, {
         method: "POST",
         headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({signature, issuerSigner: address}),
+        body: JSON.stringify({signature}),
       });
+      const storeBody = await storeRes.json().catch(() => null);
+      if (!storeRes.ok) {
+        snackbar.show(storeBody?.error?.message ?? "Could not store the signed attestation", "danger");
+        return;
+      }
       snackbar.show("Issuer attestation signed and stored", "ok");
     } catch (err) {
       snackbar.show(err instanceof Error ? err.message : "Signature was rejected", "danger");

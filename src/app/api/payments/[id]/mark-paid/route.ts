@@ -2,6 +2,7 @@ import {NextResponse} from "next/server";
 import {connectToDatabase} from "@/lib/db";
 import {Client, type ClientDoc} from "@/lib/models/Client";
 import {getClinicSettings} from "@/lib/models/ClinicSettings";
+import {getBookingSettings} from "@/lib/models/Availability";
 import {markPaidSchema} from "@/lib/schemas/payment";
 import {badRequest, notFound, requireStaffSession} from "@/lib/staffApi";
 import {markPaymentPaidManually} from "@/lib/payments/markPaid";
@@ -23,11 +24,12 @@ export async function POST(request: Request, {params}: {params: Promise<{id: str
   const updated = await markPaymentPaidManually(id, parsed.data.note);
   if (!updated) return notFound("Payment not found or not pending.");
 
-  const [settings, client] = await Promise.all([
+  const [settings, bookingSettings, client] = await Promise.all([
     getClinicSettings(),
+    getBookingSettings(),
     updated.clientId ? Client.findOne({clientId: updated.clientId}).lean<ClientDoc>() : Promise.resolve(null),
   ]);
-  await sendPaymentPaidEmails(updated, settings.businessProfile, client?.email);
+  await sendPaymentPaidEmails(updated, settings.businessProfile, client?.email, bookingSettings.timezone);
 
   return NextResponse.json(updated);
 }

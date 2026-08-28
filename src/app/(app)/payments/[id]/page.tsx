@@ -8,6 +8,7 @@ import {PaymentRailTabs} from "@/components/payments/PaymentRailTabs";
 import {formatUnixSeconds} from "@/lib/format";
 import {paymentStatusLabel, paymentStatusTone} from "@/lib/paymentTone";
 import {connectToDatabase} from "@/lib/db";
+import {getBookingSettings} from "@/lib/models/Availability";
 import {Payment, type PaymentDoc, type LineItem} from "@/lib/models/Payment";
 import {Client, type ClientDoc} from "@/lib/models/Client";
 import {Pet, type PetDoc} from "@/lib/models/Pet";
@@ -20,10 +21,12 @@ export default async function PaymentDetailPage({params}: {params: Promise<{id: 
   const payment = await Payment.findOne({paymentId: id}).lean<PaymentDoc>();
   if (!payment) notFound();
 
-  const [client, pet] = await Promise.all([
+  const [client, pet, bookingSettings] = await Promise.all([
     payment.clientId ? Client.findOne({clientId: payment.clientId}).lean<ClientDoc>() : Promise.resolve(null),
     payment.petId ? Pet.findOne({petId: payment.petId}).lean<PetDoc>() : Promise.resolve(null),
+    getBookingSettings(),
   ]);
+  const timeZone = bookingSettings.timezone;
 
   const baseUrl = getServerEnv().PUBLIC_BASE_URL ?? "";
   const viewUrl = `${baseUrl.replace(/\/$/, "")}/pay/${payment.paymentId}?token=${payment.viewToken}`;
@@ -57,7 +60,7 @@ export default async function PaymentDetailPage({params}: {params: Promise<{id: 
                 ? [{key: "tax", label: `${payment.tax.label} (${payment.tax.rate})`, value: `${payment.tax.amount} ${payment.currency}`}]
                 : []),
               {key: "total", label: "Total", value: `${payment.total} ${payment.currency}`},
-              ...(payment.dueAt ? [{key: "due", label: "Due", value: formatUnixSeconds(payment.dueAt)}] : []),
+              ...(payment.dueAt ? [{key: "due", label: "Due", value: formatUnixSeconds(payment.dueAt, timeZone)}] : []),
             ]}
           />
 
@@ -95,7 +98,7 @@ export default async function PaymentDetailPage({params}: {params: Promise<{id: 
               title="Emailed to"
               rows={payment.emailedTo.map((e, i) => ({
                 key: `${e.email}-${i}`,
-                label: formatUnixSeconds(Math.floor(new Date(e.at).getTime() / 1000)),
+                label: formatUnixSeconds(Math.floor(new Date(e.at).getTime() / 1000), timeZone),
                 value: e.email,
               }))}
             />

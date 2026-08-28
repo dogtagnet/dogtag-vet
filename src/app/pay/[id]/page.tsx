@@ -2,6 +2,7 @@ import {notFound} from "next/navigation";
 import {connectToDatabase} from "@/lib/db";
 import {Payment, type PaymentDoc} from "@/lib/models/Payment";
 import {getClinicSettings} from "@/lib/models/ClinicSettings";
+import {getBookingSettings} from "@/lib/models/Availability";
 import {StatusBadge} from "@/components/ui/StatusBadge";
 import {HashCell} from "@/components/ui/HashCell";
 import {PaymentRailTabs} from "@/components/payments/PaymentRailTabs";
@@ -34,7 +35,7 @@ export default async function PublicPaymentPage({
   const payment = await Payment.findOne({paymentId: id}).lean<PaymentDoc>();
   if (!payment || !token || payment.viewToken !== token) notFound();
 
-  const settings = await getClinicSettings();
+  const [settings, bookingSettings] = await Promise.all([getClinicSettings(), getBookingSettings()]);
   const paid = payment.status === "paid";
 
   return (
@@ -51,7 +52,9 @@ export default async function PublicPaymentPage({
         <p className="text-hero text-ink">
           {payment.total} <span className="text-body text-ink-muted">{payment.currency}</span>
         </p>
-        {payment.dueAt && !paid && <p className="mt-1 text-body text-ink-muted">Due {formatUnixSeconds(payment.dueAt)}</p>}
+        {payment.dueAt && !paid && (
+          <p className="mt-1 text-body text-ink-muted">Due {formatUnixSeconds(payment.dueAt, bookingSettings.timezone, true)}</p>
+        )}
       </div>
 
       {paid && (

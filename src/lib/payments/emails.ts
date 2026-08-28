@@ -16,12 +16,14 @@ export async function sendInvoiceEmail(
   payment: PaymentDoc,
   businessProfile: BusinessProfile,
   toEmail: string,
+  timeZone: string,
 ): Promise<void> {
   const baseUrl = getServerEnv().PUBLIC_BASE_URL ?? "";
   const pdf = await generateInvoicePdf({
     payment,
     businessProfile,
     publicBaseUrl: baseUrl,
+    timeZone,
     stamped: payment.status === "paid",
   });
   await sendMail({
@@ -40,11 +42,12 @@ export async function sendPaymentPaidEmails(
   payment: PaymentDoc,
   businessProfile: BusinessProfile,
   clientEmail: string | undefined,
+  timeZone: string,
 ): Promise<void> {
   const baseUrl = getServerEnv().PUBLIC_BASE_URL ?? "";
 
   if (clientEmail) {
-    const pdf = await generateInvoicePdf({payment, businessProfile, publicBaseUrl: baseUrl, stamped: true});
+    const pdf = await generateInvoicePdf({payment, businessProfile, publicBaseUrl: baseUrl, timeZone, stamped: true});
     await sendMail({
       to: clientEmail,
       subject: `Receipt for invoice ${payment.invoiceNumber}`,

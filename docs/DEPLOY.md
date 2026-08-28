@@ -93,7 +93,8 @@ If you switch to a managed Mongo under Docker Compose, you can also drop the `mo
 
 ## Public API protection
 
-Every public route (`/p/`, `/x/`, `/v1/booking/*`, `/v1/verify/consent`, `/v1/payments/*/public`, `/v1/entity`, `/r/pay/*`, `/profiles/issue/custodial-bind`) already rate-limits and caps request body size at the application layer (`src/lib/rateLimit.ts`, `src/lib/bodyLimit.ts`) and records rejected requests to an abuse log visible on the Settings page.
+Every public API route (`/p/`, `/x/`, `/v1/booking/*`, `/v1/verify/consent`, `/v1/payments/*/public`, `/v1/entity`, `/r/pay/*`, `/profiles/issue/custodial-bind`) already rate-limits and caps request body size at the application layer (`src/lib/rateLimit.ts`, `src/lib/bodyLimit.ts`) and records rejected requests to an abuse log visible on the Settings page.
+The client-facing HTML pages that front those routes - `/book` (the booking form) and `/booking/*` (the status/cancel page a confirmation email links to) - carry no application-layer rate limit of their own; they are static-ish page renders, and every write or lookup they trigger goes through the limited API routes above, so the exposure is the same page-load cost any public page has.
 That log keys each entry by the requester's IP address (read from `X-Forwarded-For`, so it is only as accurate as whatever reverse proxy you put in front of this app - see the `X-Forwarded-For` note below) and self-prunes after 14 days, which is the entirety of this deployment's retention policy for that data.
 A reverse proxy in front of the app is still worth having, both to absorb traffic before it reaches this single Node process at all and for TLS termination.
 
@@ -103,7 +104,8 @@ If you are proxying through Cloudflare (orange-clouded DNS record, which the clo
 
 1. **Rate limiting rules** (Security > WAF > Rate limiting rules) - add a rule per sensitive path group, tighter than the application's own limits so abusive traffic is stopped at the edge instead of reaching this process at all:
    - `/v1/booking/book`, `/profiles/issue/custodial-bind`, `/v1/verify/consent` (the write/session-start endpoints): a low limit, e.g. 5 requests per minute per IP.
-   - `/p/*`, `/x/*` (token-guessing surface): a moderate limit, e.g. 20 requests per minute per IP - these are also where a rotating, unguessable 32-hex token is the real defense; the rate limit is defense in depth, not the only control.
+   - `/p/*`, `/x/*`, `/booking/*` (token-guessing surface): a moderate limit, e.g. 20 requests per minute per IP - these are also where a rotating, unguessable token is the real defense; the rate limit is defense in depth, not the only control.
+   - `/book` (the public booking form page itself, as opposed to the `/v1/booking/*` API it calls): Cloudflare's default rate limiting is usually sufficient - it is a page render, not a write.
    - Everything else under `/v1/*` and `/r/*`: Cloudflare's default rate limiting is usually sufficient; add a rule only if you see abuse in the logs.
 2. **Bot Fight Mode** (Security > Bots) - turn it on.
    It challenges automated traffic hitting the public mint/verify/booking pages without affecting the DogTag mobile app or a browser filling out the booking form normally.

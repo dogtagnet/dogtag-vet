@@ -102,3 +102,13 @@ export function utcSecondsToLocalMinuteOfDay(utcSeconds: number, timeZone: strin
   const zoned = toZonedTime(new Date(utcSeconds * 1000), timeZone);
   return zoned.getHours() * 60 + zoned.getMinutes();
 }
+
+/** Today's ISO calendar date in the clinic's timezone, read directly off `Intl` rather than via
+ * `toZonedTime` + local getters (both work; this is the simpler of the two for "right now" since
+ * there is no instant to convert back from). Shared by `/calendar` and `/dashboard` so "today"
+ * means the same clinic-local day on both. */
+export function todayInTimeZone(timeZone: string): string {
+  return new Intl.DateTimeFormat("en-CA", {timeZone, year: "numeric", month: "2-digit", day: "2-digit"}).format(
+    new Date(),
+  );
+}

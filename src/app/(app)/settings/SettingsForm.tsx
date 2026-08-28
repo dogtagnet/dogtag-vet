@@ -20,6 +20,7 @@ export function SettingsForm({initial}: {initial: ClinicSettingsDoc}) {
   const [businessName, setBusinessName] = useState(initial.businessProfile?.name ?? "");
   const [logoUrl, setLogoUrl] = useState(initial.businessProfile?.logoUrl ?? "");
   const [contactEmail, setContactEmail] = useState(initial.businessProfile?.contactEmail ?? "");
+  const [domain, setDomain] = useState(initial.businessProfile?.domain ?? "");
   const [phone, setPhone] = useState(initial.businessProfile?.phone ?? "");
   const [primaryColor, setPrimaryColor] = useState(initial.businessProfile?.primaryColor ?? "");
   const [address, setAddress] = useState({
@@ -60,6 +61,7 @@ export function SettingsForm({initial}: {initial: ClinicSettingsDoc}) {
             name: businessName || undefined,
             logoUrl: logoUrl || undefined,
             contactEmail: contactEmail || undefined,
+            domain: domain || undefined,
             phone: phone || undefined,
             primaryColor: primaryColor || undefined,
             address: Object.values(address).some(Boolean)
@@ -113,6 +115,13 @@ export function SettingsForm({initial}: {initial: ClinicSettingsDoc}) {
             value={contactEmail}
             onChange={(e) => setContactEmail(e.target.value)}
           />
+        </FormField>
+        <FormField
+          label="Issuer domain"
+          htmlFor="business-domain"
+          helperText="This clinic's stable DNS-domain identity, e.g. acmevet.com - signed into every issued DogTag's C3 attestation. Not a URL and not required to resolve to anything; distinct from the notification email above."
+        >
+          <Input id="business-domain" value={domain} onChange={(e) => setDomain(e.target.value)} placeholder="acmevet.com" />
         </FormField>
         <FormField label="Public phone" htmlFor="business-phone" helperText="Shown on the public entity card.">
           <Input id="business-phone" value={phone} onChange={(e) => setPhone(e.target.value)} />

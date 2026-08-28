@@ -7,7 +7,7 @@ import type {Adapter} from "next-auth/adapters";
 import {authConfig} from "@/auth.config";
 import {getServerEnv, isDevLoginEnabled} from "@/lib/env";
 import {connectToDatabase} from "@/lib/db";
-import {ensureStaffForEmail, type StaffRole} from "@/lib/models/Staff";
+import {ensureStaffForEmail, isEmailAllowedToSignIn, Staff, type StaffDoc, type StaffRole} from "@/lib/models/Staff";
 
 const env = getServerEnv();
 
@@ -57,6 +57,32 @@ if (isDevLoginEnabled()) {
 
 const hasMongoUri = Boolean(env.MONGODB_URI);
 
+/**
+ * Resolves the Staff row a just-authenticated (or refreshing) token should carry, per provider:
+ *
+ * - `dev-login`: unrestricted, exactly as before - dev/test-only, gated behind `DEV_LOGIN=1` at
+ *   the provider-registration level above, and Playwright/graders rely on it auto-provisioning
+ *   any email it sees.
+ * - Every other (gated) provider - Google, email magic link: the SAME rule
+ *   `isEmailAllowedToSignIn` enforces at sign-in time, so a token can never end up authorized here
+ *   in a way `signIn` would have refused: the very first staff row this deployment ever creates
+ *   (bootstrap - none exist yet, for any email) is provisioned as `owner`; every other email must
+ *   already have a non-disabled Staff row, which only an owner's invite (`inviteStaff`) can have
+ *   created. Returns `null` - never auto-provisioning - for an email that fails that check,
+ *   including one that HAD a row but has since been disabled (see `Staff.ts`'s `disabled` doc
+ *   comment on why revocation is a flag, not a delete).
+ */
+async function resolveStaffForToken(email: string, name: string | undefined, provider: string | undefined): Promise<StaffDoc | null> {
+  if (provider === "dev-login") {
+    return ensureStaffForEmail(email, name);
+  }
+  const normalized = email.toLowerCase().trim();
+  const existing = await Staff.findOne({email: normalized}).lean<StaffDoc>();
+  if (existing) return existing.disabled ? null : existing;
+  const staffCount = await Staff.countDocuments();
+  return staffCount === 0 ? ensureStaffForEmail(email, name) : null;
+}
+
 export const {handlers, auth, signIn, signOut} = NextAuth({
   ...authConfig,
   adapter: hasMongoUri ? (MongoDBAdapter(mongoClientPromise()) as Adapter) : undefined,
@@ -69,18 +95,42 @@ export const {handlers, auth, signIn, signOut} = NextAuth({
   providers,
   callbacks: {
     ...authConfig.callbacks,
-    async jwt({token, user}) {
+    /**
+     * Gates every sign-in through Google or the email magic link BEFORE a session is ever issued
+     * - for the Email provider this runs (and can refuse) before the magic link is even sent, not
+     * only when the link is clicked. Without this, `ensureStaffForEmail` in the `jwt` callback
+     * below would silently provision a full-access `staff` account for any email that could
+     * receive a link or complete an OAuth flow - the self-registration hole this closes. The
+     * dev-only credentials provider is exempt by design (see its own registration above);
+     * everything else defers to `isEmailAllowedToSignIn`'s bootstrap-or-invited rule.
+     */
+    async signIn({user, account}) {
+      if (account?.provider === "dev-login") return true;
+      const email = user?.email;
+      if (!email) return false;
+      return isEmailAllowedToSignIn(email);
+    },
+    async jwt({token, user, account}) {
       const email = user?.email ?? token.email;
-      if (email) {
-        const staff = await ensureStaffForEmail(email, user?.name ?? undefined);
-        token.role = staff.role;
-        token.staffId = staff.staffId;
+      if (!email) return token;
+      const staff = await resolveStaffForToken(email, user?.name ?? undefined, account?.provider);
+      if (!staff) {
+        // Not (or no longer) an authorized staff account - a token that reaches this branch
+        // already passed `signIn` once, so this is the revocation path: a Staff row disabled
+        // after the fact. Strip any previously-stamped claim rather than leaving a stale role in
+        // place, so every downstream check (the `session` callback, `src/app/(app)/layout.tsx`,
+        // `requireStaffSession`) sees an unauthenticated token, not merely a low-privilege one.
+        delete token.role;
+        delete token.staffId;
+        return token;
       }
+      token.role = staff.role;
+      token.staffId = staff.staffId;
       return token;
     },
     async session({session, token}) {
       if (session.user) {
-        session.user.role = (token.role as StaffRole | undefined) ?? "staff";
+        session.user.role = token.role as StaffRole | undefined;
         session.user.staffId = token.staffId as string | undefined;
       }
       return session;

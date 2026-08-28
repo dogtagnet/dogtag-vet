@@ -1,8 +1,10 @@
 import "server-only";
 import {buildIcs, icsToBase64} from "@/lib/ics";
 import {sendMail} from "@/lib/mailer";
+import {formatUnixSeconds} from "@/lib/format";
 import {getServerEnv} from "@/lib/env";
 import {getClinicSettings} from "@/lib/models/ClinicSettings";
+import {getBookingSettings} from "@/lib/models/Availability";
 import type {AppointmentDoc} from "@/lib/models/Appointment";
 
 /** Builds the confirmation ics (used both as the client email attachment and the wire response's
@@ -17,7 +19,7 @@ export async function sendBookingConfirmation(params: {
   notes?: string;
 }): Promise<string> {
   const env = getServerEnv();
-  const settings = await getClinicSettings();
+  const [settings, bookingSettings] = await Promise.all([getClinicSettings(), getBookingSettings()]);
   const clinicName = settings.businessProfile?.name || "the clinic";
 
   const ics = buildIcs({
@@ -30,11 +32,13 @@ export async function sendBookingConfirmation(params: {
   });
   const base64Ics = icsToBase64(ics);
 
+  // A client-facing HTML page, not the wire-spec JSON endpoint (`/v1/booking/appointments/:id`) -
+  // see `src/app/booking/[id]/page.tsx`'s doc comment for the split between the two.
   const manageUrl = env.PUBLIC_BASE_URL
-    ? `${env.PUBLIC_BASE_URL.replace(/\/$/, "")}/v1/booking/appointments/${params.appointment.appointmentId}?token=${params.appointment.cancelToken}`
+    ? `${env.PUBLIC_BASE_URL.replace(/\/$/, "")}/booking/${params.appointment.appointmentId}?token=${params.appointment.cancelToken}`
     : undefined;
 
-  const when = new Date(params.appointment.startAt * 1000).toUTCString();
+  const when = formatUnixSeconds(params.appointment.startAt, bookingSettings.timezone, true);
   const clientLines = [
     `Your appointment for ${params.petName ?? "your pet"} is confirmed.`,
     `Service: ${params.serviceName}`,

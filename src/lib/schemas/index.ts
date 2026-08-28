@@ -9,3 +9,4 @@ export * from "@/lib/schemas/payment";
 export * from "@/lib/schemas/mintSession";
 export * from "@/lib/schemas/verifySession";
 export * from "@/lib/schemas/settings";
+export * from "@/lib/schemas/staff";

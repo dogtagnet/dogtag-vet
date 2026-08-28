@@ -23,6 +23,9 @@ pnpm dev
 Set `DEV_LOGIN=1` to enable the dev-only credentials sign-in (first user becomes `owner`, later ones `staff`).
 This provider is documented as dev/test-only and must never be enabled in a production deployment.
 
+Google and email-magic-link sign-in are invite-gated: the very first person to sign in on a fresh deployment becomes `owner`, and every email after that must be invited from Settings > Staff access by an existing owner before it can sign in at all.
+An uninvited email is refused outright, not silently granted a `staff` account.
+
 ## Test commands
 
 ```

@@ -5,6 +5,7 @@ import {Banner} from "@/components/ui/Banner";
 import {connectToDatabase} from "@/lib/db";
 import {ChainActivity, type ChainActivityDoc} from "@/lib/models/ChainActivity";
 import {getClinicSettings} from "@/lib/models/ClinicSettings";
+import {getBookingSettings} from "@/lib/models/Availability";
 import {roaxPublicClient} from "@/lib/chainRead";
 import {reasonCodeLabel} from "@/lib/reasonCodes";
 
@@ -28,12 +29,13 @@ function StatTile({label, value, hint}: {label: string; value: string; hint?: st
  */
 export default async function Page() {
   await connectToDatabase();
-  const [entries, settings] = await Promise.all([
+  const [entries, settings, bookingSettings] = await Promise.all([
     ChainActivity.find({})
       .sort({blockNumber: -1, logIndex: -1})
       .limit(200)
       .lean<ChainActivityDoc[]>(),
     getClinicSettings(),
+    getBookingSettings(),
   ]);
 
   let balance: bigint | null = null;
@@ -73,7 +75,11 @@ export default async function Page() {
         <StatTile label="Refunds skipped" value={String(refundSkippedCount)} hint="Low balance at issuance time" />
         <StatTile label="Events tracked" value={String(entries.length)} />
       </div>
-      <Timeline entries={timelineEntries} emptyMessage="No on-chain activity yet - issue a tag or run the worker to start following this clone." />
+      <Timeline
+        entries={timelineEntries}
+        timeZone={bookingSettings.timezone}
+        emptyMessage="No on-chain activity yet - issue a tag or run the worker to start following this clone."
+      />
     </>
   );
 }

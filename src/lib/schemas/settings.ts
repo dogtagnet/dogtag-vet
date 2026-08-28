@@ -16,6 +16,14 @@ export const clinicSettingsInputSchema = z.object({
       name: z.string().trim().optional(),
       logoUrl: z.string().url().optional(),
       contactEmail: z.string().trim().email().optional(),
+      // A bare DNS domain (host, not a URL) - `issuerDomain` in the C3 attestation message and
+      // `IssuerMeta.domain` in every wrapped credential envelope (protocol/specs/issuer-attestation.md).
+      domain: z
+        .string()
+        .trim()
+        .toLowerCase()
+        .regex(/^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/, "Enter a bare domain, e.g. acmevet.com")
+        .optional(),
       phone: z.string().trim().optional(),
       primaryColor: z.string().trim().optional(),
       address: z

@@ -3,9 +3,20 @@ import PDFDocument from "pdfkit";
 import QRCode from "qrcode";
 import type {CryptoRail, PaymentDoc} from "@/lib/models/Payment";
 import type {BusinessProfile} from "@/lib/models/ClinicSettings";
-import {formatUnixSeconds, truncateMiddle} from "@/lib/format";
+import {formatTokenAmount, formatUnixSeconds, truncateMiddle} from "@/lib/format";
 import {explorerUrl} from "@/lib/explorer";
 import {chainKeyToWireChain} from "@/lib/payments/wireChain";
+import {paymentChainByKey} from "@/lib/chains";
+
+/** Page geometry (LETTER, 50pt margins): every block below is positioned against these constants
+ * rather than left to drift from wherever `pdfkit`'s cursor happened to land after the previous
+ * call - `doc.text(x, y)` only affects that one call's start position, not the running `doc.x` a
+ * later width-less call inherits, and inheriting a narrow x from an unrelated block above (the line
+ * items table's right-hand numeric columns, in the version this replaces) is exactly what produced
+ * the wrapped totals and the cramped single-column rails list this file's own round-2 review
+ * flagged. Every block that follows explicitly resets `doc.x` to `PAGE.left` and passes its own
+ * `width`, so nothing downstream can inherit a stale cursor position. */
+const PAGE = {left: 50, right: 562, width: 512};
 
 /**
  * Print-medium colors mirroring design-system.md's light-theme token values. PDFKit has no CSS
@@ -26,6 +37,10 @@ export interface InvoicePdfInput {
   payment: PaymentDoc;
   businessProfile: BusinessProfile;
   publicBaseUrl: string;
+  /** Clinic IANA timezone (`BookingSettings.timezone`) - the Issued/Due lines render in this zone,
+   * never the rendering process's, with the zone abbreviation shown since this document leaves the
+   * clinic and is read by clients in any timezone. */
+  timeZone: string;
   /** Whether to render the PAID stamp and paid-with details. Callers pass
    * `payment.status === "paid"` - kept as an explicit parameter rather than re-derived here so the
    * decision is visible at every call site. */
@@ -36,15 +51,23 @@ function money(amount: string, currency: string): string {
   return `${amount} ${currency}`;
 }
 
+/** Resets the cursor to the left margin at the current line - called between every block below so
+ * a block's own column positioning (the line-items table's numeric columns, in particular) can
+ * never leak into whatever renders after it. See `PAGE`'s doc comment. */
+function resetX(doc: PDFKit.PDFDocument): void {
+  doc.x = PAGE.left;
+}
+
 /**
- * Renders the invoice PDF: clinic header, line items, totals, accepted crypto rails, and a receipt
- * QR linking `/r/pay/{receiptToken}` (per wp4-vet.md's payments section) - stamped PAID with a tx
- * link once `stamped` is true. Used by both the staff/public invoice-download route (any time) and
- * the wire-spec `GET /r/pay/{receiptToken}` route (always `stamped: true`, since that endpoint
- * only ever serves an already-paid invoice).
+ * Renders the invoice PDF: clinic header, line items, totals, accepted crypto rails (unpaid only -
+ * a stamped receipt is no longer a request for payment, so it drops the rails list and shows only
+ * what was actually paid with), and a receipt QR linking `/r/pay/{receiptToken}` (per
+ * wp4-vet.md's payments section) - stamped PAID with a tx link once `stamped` is true. Used by both
+ * the staff/public invoice-download route (any time) and the wire-spec `GET /r/pay/{receiptToken}`
+ * route (always `stamped: true`, since that endpoint only ever serves an already-paid invoice).
  */
 export async function generateInvoicePdf(input: InvoicePdfInput): Promise<Buffer> {
-  const {payment, businessProfile, publicBaseUrl, stamped} = input;
+  const {payment, businessProfile, publicBaseUrl, timeZone, stamped} = input;
   const receiptUrl = `${publicBaseUrl.replace(/\/$/, "")}/r/pay/${payment.receiptToken}`;
   const qrPngBuffer = await QRCode.toBuffer(receiptUrl, {margin: 2, width: 200});
 
@@ -54,80 +77,134 @@ export async function generateInvoicePdf(input: InvoicePdfInput): Promise<Buffer
   const done = new Promise<Buffer>((resolve) => doc.on("end", () => resolve(Buffer.concat(chunks))));
 
   // Header
-  doc.fillColor(PDF_COLOR.ink).fontSize(20).font("Helvetica-Bold").text(businessProfile.name ?? "Invoice");
+  doc.fillColor(PDF_COLOR.ink).fontSize(20).font("Helvetica-Bold").text(businessProfile.name ?? "Invoice", PAGE.left, doc.y, {width: PAGE.width});
   if (businessProfile.contactEmail) {
-    doc.fillColor(PDF_COLOR.inkMuted).fontSize(10).font("Helvetica").text(businessProfile.contactEmail);
+    resetX(doc);
+    doc.fillColor(PDF_COLOR.inkMuted).fontSize(10).font("Helvetica").text(businessProfile.contactEmail, {width: PAGE.width});
   }
   doc.moveDown(1);
+  resetX(doc);
 
-  doc.fillColor(PDF_COLOR.ink).fontSize(16).font("Helvetica-Bold").text(`Invoice ${payment.invoiceNumber}`);
+  doc.fillColor(PDF_COLOR.ink).fontSize(16).font("Helvetica-Bold").text(`Invoice ${payment.invoiceNumber}`, {width: PAGE.width});
+  resetX(doc);
   doc.fillColor(PDF_COLOR.inkMuted).fontSize(10).font("Helvetica");
-  doc.text(`Issued ${formatUnixSeconds(Math.floor(new Date(payment.createdAt).getTime() / 1000))}`);
-  if (payment.dueAt) doc.text(`Due ${formatUnixSeconds(payment.dueAt)}`);
+  doc.text(`Issued ${formatUnixSeconds(Math.floor(new Date(payment.createdAt).getTime() / 1000), timeZone, true)}`, {width: PAGE.width});
+  if (payment.dueAt) {
+    resetX(doc);
+    doc.text(`Due ${formatUnixSeconds(payment.dueAt, timeZone, true)}`, {width: PAGE.width});
+  }
 
   if (stamped) {
     doc.moveDown(0.5);
-    doc.fillColor(PDF_COLOR.ok).fontSize(14).font("Helvetica-Bold").text("PAID");
+    resetX(doc);
+    doc.fillColor(PDF_COLOR.ok).fontSize(14).font("Helvetica-Bold").text("PAID", {width: PAGE.width});
     if (payment.paidWith) {
+      resetX(doc);
       doc.fillColor(PDF_COLOR.inkMuted).fontSize(9).font("Helvetica");
-      doc.text(`Transaction: ${payment.paidWith.txHash}`);
+      const displayHash = truncateMiddle(payment.paidWith.txHash);
       const link = explorerUrl(payment.paidWith.chainKey, "tx", payment.paidWith.txHash);
-      if (link) doc.fillColor(PDF_COLOR.brand).text(link, {link});
+      // Printed once, as the (optionally clickable) hash itself - never both the raw hash text
+      // and a second, untruncated explorer URL line, and always middle-truncated per
+      // design-system.md's hash-display rule.
+      doc.text("Transaction: ", PAGE.left, doc.y, {continued: true});
+      if (link) {
+        doc.fillColor(PDF_COLOR.brand).text(displayHash, {link, underline: true});
+      } else {
+        doc.fillColor(PDF_COLOR.inkMuted).text(displayHash);
+      }
     } else if (payment.manualPaidNote) {
-      doc.fillColor(PDF_COLOR.inkMuted).fontSize(9).font("Helvetica").text(`Marked paid: ${payment.manualPaidNote}`);
+      resetX(doc);
+      doc.fillColor(PDF_COLOR.inkMuted).fontSize(9).font("Helvetica").text(`Marked paid: ${payment.manualPaidNote}`, {width: PAGE.width});
     }
   }
   doc.moveDown(1);
+  resetX(doc);
 
-  // Line items table
-  doc.fillColor(PDF_COLOR.ink).fontSize(11).font("Helvetica-Bold");
+  // Line items table. Every row's next `y` is computed explicitly from the row's own content
+  // height (`doc.heightOfString`) rather than trusted to whatever `doc.y` a multi-column run of
+  // same-row `.text()` calls happens to leave behind - PDFKit advances `y` by one line after each
+  // call unless `continued: true` chains it, so four independent column calls at a shared `rowY`
+  // otherwise compound into an ever-growing gap between rows. Explicit `y` assignment after each
+  // row sidesteps that entirely and additionally lets a long, wrapped description grow its own row
+  // rather than overlap the next one.
   const colX = {desc: 50, qty: 320, unit: 380, amount: 470};
-  doc.text("Description", colX.desc, doc.y, {continued: false});
-  doc.text("Qty", colX.qty, doc.y - doc.currentLineHeight());
-  doc.text("Unit", colX.unit, doc.y - doc.currentLineHeight());
-  doc.text("Amount", colX.amount, doc.y - doc.currentLineHeight());
-  doc.moveTo(50, doc.y + 2).lineTo(562, doc.y + 2).strokeColor(PDF_COLOR.border).stroke();
-  doc.moveDown(0.5);
+  const colWidth = {desc: 260, qty: 50, unit: 80, amount: 92};
+  doc.fillColor(PDF_COLOR.ink).fontSize(11).font("Helvetica-Bold");
+  const headerY = doc.y;
+  doc.text("Description", colX.desc, headerY, {width: colWidth.desc});
+  doc.text("Qty", colX.qty, headerY, {width: colWidth.qty});
+  doc.text("Unit", colX.unit, headerY, {width: colWidth.unit});
+  doc.text("Amount", colX.amount, headerY, {width: colWidth.amount});
+  doc.y = headerY + doc.currentLineHeight() + 4;
+  resetX(doc);
+  doc.moveTo(PAGE.left, doc.y).lineTo(PAGE.right, doc.y).strokeColor(PDF_COLOR.border).stroke();
+  doc.y += 8;
+  resetX(doc);
 
   doc.font("Helvetica").fontSize(10).fillColor(PDF_COLOR.ink);
+  const rowLineHeight = doc.currentLineHeight();
   for (const item of payment.lineItems) {
     const rowY = doc.y;
-    doc.text(item.description, colX.desc, rowY, {width: 260});
-    doc.text(String(item.qty), colX.qty, rowY);
-    doc.text(item.unitAmount, colX.unit, rowY);
-    doc.text(item.amount, colX.amount, rowY);
-    doc.moveDown(0.75);
+    const rowHeight = Math.max(rowLineHeight, doc.heightOfString(item.description, {width: colWidth.desc}));
+    doc.text(item.description, colX.desc, rowY, {width: colWidth.desc});
+    doc.text(String(item.qty), colX.qty, rowY, {width: colWidth.qty});
+    doc.text(item.unitAmount, colX.unit, rowY, {width: colWidth.unit});
+    doc.text(item.amount, colX.amount, rowY, {width: colWidth.amount});
+    doc.y = rowY + rowHeight + 6;
+    resetX(doc);
   }
 
-  doc.moveTo(50, doc.y + 4).lineTo(562, doc.y + 4).strokeColor(PDF_COLOR.border).stroke();
-  doc.moveDown(0.75);
+  doc.moveTo(PAGE.left, doc.y).lineTo(PAGE.right, doc.y).strokeColor(PDF_COLOR.border).stroke();
+  doc.y += 10;
+  resetX(doc);
 
+  // Totals - explicit full-page width on every line, right-aligned, so a currency code can never
+  // wrap onto its own line for want of horizontal room (the bug this replaces: a stale narrow `x`
+  // inherited from the line-items table's `amount` column above made `align: "right"` compute its
+  // available width from x=470 rather than the page's actual 512pt content width).
   doc.font("Helvetica").fontSize(10).fillColor(PDF_COLOR.inkMuted);
-  doc.text(`Subtotal: ${money(payment.subtotal, payment.currency)}`, {align: "right"});
+  doc.text(`Subtotal: ${money(payment.subtotal, payment.currency)}`, PAGE.left, doc.y, {width: PAGE.width, align: "right"});
+  resetX(doc);
   if (payment.tax) {
-    doc.text(`${payment.tax.label} (${payment.tax.rate}): ${money(payment.tax.amount, payment.currency)}`, {
+    doc.text(`${payment.tax.label} (${payment.tax.rate}): ${money(payment.tax.amount, payment.currency)}`, PAGE.left, doc.y, {
+      width: PAGE.width,
       align: "right",
     });
+    resetX(doc);
   }
   doc.font("Helvetica-Bold").fontSize(12).fillColor(PDF_COLOR.ink);
-  doc.text(`Total: ${money(payment.total, payment.currency)}`, {align: "right"});
+  doc.text(`Total: ${money(payment.total, payment.currency)}`, PAGE.left, doc.y, {width: PAGE.width, align: "right"});
   doc.moveDown(1);
+  resetX(doc);
 
-  // Accepted crypto rails
-  if (payment.crypto.length > 0) {
-    doc.font("Helvetica-Bold").fontSize(11).fillColor(PDF_COLOR.ink).text("Accepted crypto payment rails");
+  // Accepted crypto rails - a paid, PAID-stamped receipt is no longer a request for payment (and
+  // may still list a since-expired testnet rail if shown), so this section is unpaid-only.
+  if (!stamped && payment.crypto.length > 0) {
+    doc.font("Helvetica-Bold").fontSize(11).fillColor(PDF_COLOR.ink).text("Accepted crypto payment rails", {width: PAGE.width});
+    resetX(doc);
     doc.font("Helvetica").fontSize(9).fillColor(PDF_COLOR.inkMuted);
     for (const rail of payment.crypto as CryptoRail[]) {
+      const testnet = Boolean(paymentChainByKey[rail.chainKey].testnet);
+      const chainLabel = `${chainKeyToWireChain(rail.chainKey)}${testnet ? " (testnet)" : ""}`;
+      const amount = formatTokenAmount(rail.amountBase, rail.decimals);
       doc.text(
-        `${chainKeyToWireChain(rail.chainKey)} - ${rail.token}: ${rail.amountBase} base units to ${truncateMiddle(rail.receivingAddress)} (rate ${rail.quotedRate} ${payment.currency}/${rail.token})`,
+        `${chainLabel} - ${amount} ${rail.token} to ${truncateMiddle(rail.receivingAddress)} (rate ${rail.quotedRate} ${payment.currency}/${rail.token})`,
+        PAGE.left,
+        doc.y,
+        {width: PAGE.width},
       );
+      resetX(doc);
     }
     doc.moveDown(1);
+    resetX(doc);
   }
 
-  // Receipt QR
-  doc.font("Helvetica-Bold").fontSize(10).fillColor(PDF_COLOR.ink).text("Scan to view this receipt");
-  doc.image(qrPngBuffer, 50, doc.y + 6, {width: 100, height: 100});
+  // Receipt QR - caption and code together as one block, same left margin, near the foot of the
+  // page (the bug this replaces: the caption was written from wherever the rails loop above had
+  // left the cursor, which landed it far from the QR image itself).
+  doc.font("Helvetica-Bold").fontSize(10).fillColor(PDF_COLOR.ink).text("Scan to view this receipt", {width: PAGE.width});
+  resetX(doc);
+  doc.image(qrPngBuffer, PAGE.left, doc.y + 6, {width: 100, height: 100});
 
   doc.end();
   return done;

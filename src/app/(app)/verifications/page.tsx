@@ -3,6 +3,7 @@ import {DataTable} from "@/components/ui/DataTable";
 import {HashCell} from "@/components/ui/HashCell";
 import {formatUnixSeconds} from "@/lib/format";
 import {connectToDatabase} from "@/lib/db";
+import {getBookingSettings} from "@/lib/models/Availability";
 import {VerifySession, type VerifySessionDoc} from "@/lib/models/VerifySession";
 
 /** `/verifications` - v1 VerificationLog vocabulary: disclosed keyPaths never values, never a
@@ -11,17 +12,22 @@ import {VerifySession, type VerifySessionDoc} from "@/lib/models/VerifySession";
  * elsewhere - only `relayerAddress` (the vet-side actor) and `disclosedKeyPaths` are shown. */
 export default async function Page() {
   await connectToDatabase();
-  const sessions = await VerifySession.find({status: "recorded"})
-    .sort({updatedAt: -1})
-    .limit(200)
-    .lean<VerifySessionDoc[]>();
+  const [sessions, bookingSettings] = await Promise.all([
+    VerifySession.find({status: "recorded"}).sort({updatedAt: -1}).limit(200).lean<VerifySessionDoc[]>(),
+    getBookingSettings(),
+  ]);
+  const timeZone = bookingSettings.timezone;
 
   return (
     <>
       <PageHeader title="Verification history" description="Recorded consent verifications for this clinic." />
       <DataTable
         columns={[
-          {key: "when", header: "When", render: (s: VerifySessionDoc) => formatUnixSeconds(Math.floor(new Date(s.updatedAt).getTime() / 1000))},
+          {
+            key: "when",
+            header: "When",
+            render: (s: VerifySessionDoc) => formatUnixSeconds(Math.floor(new Date(s.updatedAt).getTime() / 1000), timeZone),
+          },
           {key: "purpose", header: "Purpose", render: (s: VerifySessionDoc) => s.purpose},
           {key: "recordType", header: "Record type", render: (s: VerifySessionDoc) => s.recordType},
           {key: "dogTagId", header: "dogTagId", mono: true, render: (s: VerifySessionDoc) => s.challenge.dogTagId},

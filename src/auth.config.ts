@@ -32,10 +32,14 @@ export const authConfig = {
         "/v1/",
         "/r/",
         "/pay/",
+        "/booking/",
         "/profiles/",
         "/api/calendar/feed/",
       ];
-      const isPublic = pathname === "/" || publicPrefixes.some((p) => pathname.startsWith(p));
+      // Exact-match public pages that must NOT also make a same-prefixed staff route public -
+      // `startsWith` alone would make `/book` also cover a future `/bookkeeping` or similar.
+      const publicExactPaths = ["/", "/book"];
+      const isPublic = publicExactPaths.includes(pathname) || publicPrefixes.some((p) => pathname.startsWith(p));
       if (isPublic) return true;
       return isLoggedIn;
     },

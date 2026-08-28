@@ -3,6 +3,7 @@ import {auth} from "@/auth";
 import {connectToDatabase} from "@/lib/db";
 import {Payment, type PaymentDoc} from "@/lib/models/Payment";
 import {getClinicSettings} from "@/lib/models/ClinicSettings";
+import {getBookingSettings} from "@/lib/models/Availability";
 import {getServerEnv} from "@/lib/env";
 import {generateInvoicePdf} from "@/lib/payments/pdf";
 import {enforceRateLimit} from "@/lib/publicApi";
@@ -49,12 +50,13 @@ export async function GET(request: Request, {params}: {params: Promise<{id: stri
     );
   }
 
-  const settings = await getClinicSettings();
+  const [settings, bookingSettings] = await Promise.all([getClinicSettings(), getBookingSettings()]);
   const baseUrl = getServerEnv().PUBLIC_BASE_URL ?? new URL(request.url).origin;
   const pdf = await generateInvoicePdf({
     payment,
     businessProfile: settings.businessProfile,
     publicBaseUrl: baseUrl,
+    timeZone: bookingSettings.timezone,
     stamped: payment.status === "paid",
   });
 

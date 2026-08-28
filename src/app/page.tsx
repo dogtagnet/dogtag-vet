@@ -16,12 +16,20 @@ export default function LandingPage() {
           Clients, pets, appointments, DogTag issuance, verification, and payments - deployed and
           operated by your own clinic.
         </p>
-        <Link
-          href="/sign-in"
-          className="rounded-control bg-brand px-5 py-2.5 text-body font-medium text-white hover:opacity-90"
-        >
-          Staff sign in
-        </Link>
+        <div className="flex flex-wrap items-center justify-center gap-3">
+          <Link
+            href="/book"
+            className="rounded-control bg-brand px-5 py-2.5 text-body font-medium text-white hover:opacity-90"
+          >
+            Book an appointment
+          </Link>
+          <Link
+            href="/sign-in"
+            className="rounded-control border border-border-strong bg-surface px-5 py-2.5 text-body font-medium text-ink hover:bg-surface-2"
+          >
+            Staff sign in
+          </Link>
+        </div>
       </main>
     </div>
   );

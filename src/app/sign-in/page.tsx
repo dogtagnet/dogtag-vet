@@ -4,7 +4,8 @@ import {FormField} from "@/components/ui/FormSection";
 import {Banner} from "@/components/ui/Banner";
 import {signInWithDevLogin, signInWithEmail, signInWithGoogle} from "@/app/sign-in/actions";
 
-export default function SignInPage() {
+export default async function SignInPage({searchParams}: {searchParams: Promise<{error?: string}>}) {
+  const {error} = await searchParams;
   const env = getServerEnv();
   const googleEnabled = Boolean(env.AUTH_GOOGLE_ID && env.AUTH_GOOGLE_SECRET);
   const emailEnabled = Boolean(env.EMAIL_SERVER && env.EMAIL_FROM);
@@ -15,6 +16,14 @@ export default function SignInPage() {
       <div className="w-full max-w-sm rounded-card border border-border bg-surface p-6 shadow-card">
         <h1 className="mb-1 text-section-title text-ink">Staff sign in</h1>
         <p className="mb-6 text-body text-ink-muted">Access this clinic&apos;s dogtag-vet deployment.</p>
+
+        {error === "AccessDenied" && (
+          <div className="mb-4">
+            <Banner tone="danger" title="This email is not authorized for this deployment">
+              Ask an owner to invite this address from Settings, then try again.
+            </Banner>
+          </div>
+        )}
 
         <div className="space-y-4">
           {googleEnabled && (

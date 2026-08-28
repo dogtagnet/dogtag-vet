@@ -119,6 +119,22 @@ export async function readRecordTypeProfile(cloneAddress: Address): Promise<stri
   })) as string;
 }
 
+/** `VetIssuer.issuedBy(root)` - the operator wallet that actually anchored `root` on this clone,
+ * set to `msg.sender` inside `issueTag`/`issueRecord` (`onlyOperator`). This is the sole correct
+ * gate for accepting a C3 issuer attestation's signer (`specs/issuer-attestation.md`: "The signer
+ * MUST be the operator wallet that actually anchored merkleRoot ... at issuance"); a *current*
+ * whitelist check would be wrong here (the spec is explicit that delisting is forward-only, so a
+ * since-rotated-out operator's past anchor must still verify). Returns the zero address when
+ * `root` was never anchored on this clone. */
+export async function readIssuedBy(cloneAddress: Address, root: `0x${string}`): Promise<Address> {
+  return (await roaxPublicClient().readContract({
+    address: cloneAddress,
+    abi: vetIssuerAbi,
+    functionName: "issuedBy",
+    args: [root],
+  })) as Address;
+}
+
 /**
  * No vendored ReasonCodes or verify-purpose constant table ships with this protocol snapshot
  * (`protocol/specs/events.md` and the flattened contracts only ever name a `reasonCode`/`purpose`

@@ -24,7 +24,7 @@ interface TagsResponse {
 /** `/tags` - issued tags plus in-flight mint sessions (wp4-vet.md: "DataTable of issued tags ...
  * Actions per row: revoke, reactivate, replace"). Every chain write here goes through the
  * connected operator wallet via wagmi, then confirms with `/api/tags/:petId/lifecycle`. */
-export function TagsTable() {
+export function TagsTable({timeZone}: {timeZone: string}) {
   const {address, chainId} = useAccount();
   const {writeContractAsync} = useWriteContract();
   const snackbar = useSnackbar();
@@ -159,7 +159,11 @@ export function TagsTable() {
                   <StatusBadge tone={s.status === "error" ? "danger" : "info"} label={s.status} />
                 ),
               },
-              {key: "created", header: "Started", render: (s: MintSessionDoc) => formatUnixSeconds(Math.floor(new Date(s.createdAt).getTime() / 1000))},
+              {
+                key: "created",
+                header: "Started",
+                render: (s: MintSessionDoc) => formatUnixSeconds(Math.floor(new Date(s.createdAt).getTime() / 1000), timeZone),
+              },
               {
                 key: "resume",
                 header: "",

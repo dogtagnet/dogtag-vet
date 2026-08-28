@@ -4,6 +4,7 @@ import {Payment, type PaymentDoc} from "@/lib/models/Payment";
 import {Client, type ClientDoc} from "@/lib/models/Client";
 import {PaymentChainCursor} from "@/lib/models/PaymentChainCursor";
 import {getClinicSettings, type RpcOverrides} from "@/lib/models/ClinicSettings";
+import {getBookingSettings} from "@/lib/models/Availability";
 import {getServerEnv} from "@/lib/env";
 import {paymentPublicClient} from "@/lib/paymentChainRead";
 import {erc20Abi} from "@/lib/abi";
@@ -128,11 +129,12 @@ async function scanChain(chainKey: PaymentChainKey, rails: OpenRail[], rpcOverri
       confirmedAt: new Date(),
     });
     if (!updated) continue; // already settled by a concurrent path (manual mark-paid, another tick)
-    const [settings, clientDoc] = await Promise.all([
+    const [settings, bookingSettings, clientDoc] = await Promise.all([
       getClinicSettings(),
+      getBookingSettings(),
       updated.clientId ? Client.findOne({clientId: updated.clientId}).lean<ClientDoc>() : Promise.resolve(null),
     ]);
-    await sendPaymentPaidEmails(updated, settings.businessProfile, clientDoc?.email);
+    await sendPaymentPaidEmails(updated, settings.businessProfile, clientDoc?.email, bookingSettings.timezone);
   }
 
   // Only advance the persisted cursor to the safe (confirmed) tip, never past it - a block within
