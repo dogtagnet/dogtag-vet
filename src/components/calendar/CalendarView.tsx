@@ -1,6 +1,6 @@
 "use client";
 
-import {useMemo, useState} from "react";
+import {Fragment, useMemo, useState} from "react";
 import {useRouter} from "next/navigation";
 import {Button, Input, Select, Textarea} from "@/components/ui/controls";
 import {useSnackbar} from "@/components/ui/Snackbar";
@@ -176,9 +176,8 @@ export function CalendarView(props: CalendarViewProps) {
           ))}
 
           {rows.map((minute) => (
-            <>
+            <Fragment key={minute}>
               <div
-                key={`label-${minute}`}
                 className="border-r border-t border-border px-2 py-1 text-right text-caption text-ink-faint"
                 style={{height: ROW_HEIGHT_PX}}
               >
@@ -213,7 +212,7 @@ export function CalendarView(props: CalendarViewProps) {
                   </button>
                 );
               })}
-            </>
+            </Fragment>
           ))}
         </div>
       </div>

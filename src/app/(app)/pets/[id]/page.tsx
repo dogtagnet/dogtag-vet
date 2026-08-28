@@ -4,6 +4,7 @@ import {connectToDatabase} from "@/lib/db";
 import {Client, type ClientDoc} from "@/lib/models/Client";
 import {Pet, type PetDoc} from "@/lib/models/Pet";
 import {PetForm} from "@/app/(app)/pets/PetForm";
+import {PetTagCard} from "@/components/pets/PetTagCard";
 
 export default async function PetDetailPage({params}: {params: Promise<{id: string}>}) {
   const {id} = await params;
@@ -15,6 +16,9 @@ export default async function PetDetailPage({params}: {params: Promise<{id: stri
   return (
     <>
       <PageHeader title={pet.name} description="Pet record." />
+      <div className="mb-6">
+        <PetTagCard dogTag={pet.dogTag ?? {}} />
+      </div>
       <PetForm pet={pet} initialOwners={owners} />
     </>
   );

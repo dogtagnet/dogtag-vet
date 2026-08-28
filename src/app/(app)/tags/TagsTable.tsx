@@ -89,7 +89,15 @@ export function TagsTable({timeZone}: {timeZone: string}) {
       <DataTable
         columns={[
           {key: "id", header: "Tag id", mono: true, render: (p: PetDoc) => p.dogTag.dogTagIdDec},
-          {key: "pet", header: "Pet", render: (p: PetDoc) => p.name},
+          {
+            key: "pet",
+            header: "Pet",
+            render: (p: PetDoc) => (
+              <Link href={`/pets/${p.petId}`} className="text-link hover:underline">
+                {p.name}
+              </Link>
+            ),
+          },
           {key: "root", header: "Root", render: (p: PetDoc) => (p.dogTag.root ? <HashCell value={p.dogTag.root} kind="root" /> : "-")},
           {
             key: "status",

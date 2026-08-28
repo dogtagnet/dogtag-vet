@@ -73,7 +73,7 @@ const weightEntrySchema = new Schema<WeightEntry>(
   {_id: false},
 );
 
-const microchipSchema = new Schema<MicrochipInfo>(
+export const microchipSchema = new Schema<MicrochipInfo>(
   {
     code: String,
     standard: {type: String, enum: ["ISO11784", "ISO11785", "FDX-B", "other"]},

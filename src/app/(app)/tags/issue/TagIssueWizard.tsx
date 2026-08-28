@@ -500,7 +500,7 @@ export function TagIssueWizard() {
               <Input id="pet-name" value={petName} onChange={(e) => setPetName(e.target.value)} />
             </FormField>
           )}
-          {petId && pets.find((p) => p.petId === petId)?.dogTag.status === "active" && (
+          {petId && pets.find((p) => p.petId === petId)?.dogTag?.status === "active" && (
             <Banner tone="warn" title="This pet already has an active tag">
               Issuing a new tag is the replace flow (wp4-vet.md): once this new tag is bound, revoke the
               previous one from the Tags page with reason code &quot;Replaced by a new tag&quot;.

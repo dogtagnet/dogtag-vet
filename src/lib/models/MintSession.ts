@@ -1,6 +1,7 @@
 import {Schema} from "mongoose";
 import {getOrCreateModel} from "@/lib/models/registerModel";
 import {randomUUID} from "node:crypto";
+import {microchipSchema} from "@/lib/models/Pet";
 import type {MicrochipInfo, WeightEntry} from "@/lib/models/Pet";
 
 export type MintSessionStatus = "pending" | "ready" | "issuing" | "bound" | "error";
@@ -91,12 +92,7 @@ const mintSessionSchema = new Schema<MintSessionDoc>(
     identityLeaves: {type: [identityLeafSchema], default: []},
     petId: {type: String, index: true},
     petName: {type: String, required: true},
-    microchip: {
-      code: String,
-      standard: {type: String, enum: ["ISO11784", "ISO11785", "FDX-B", "other"]},
-      implantDate: String,
-      bodyLocation: String,
-    },
+    microchip: {type: microchipSchema, default: () => ({})},
     profile: {
       species: String,
       breedVbo: String,

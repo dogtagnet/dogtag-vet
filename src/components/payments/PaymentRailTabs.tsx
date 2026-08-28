@@ -3,6 +3,7 @@
 import {useState} from "react";
 import {QrSurface} from "@/components/ui/QrSurface";
 import {MonoValue} from "@/components/ui/MonoValue";
+import {formatTokenAmount} from "@/lib/format";
 import type {CryptoRail} from "@/lib/models/Payment";
 
 const CHAIN_LABELS: Record<CryptoRail["chainKey"], string> = {
@@ -45,7 +46,11 @@ export function PaymentRailTabs({rails, dueAt}: {rails: CryptoRail[]; dueAt?: nu
       </div>
 
       <div className="flex flex-col items-center gap-3">
-        <QrSurface data={rail.eip681} expiresAt={dueAt} caption={`${rail.amountBase} base units - ${rail.token}`} />
+        <QrSurface
+          data={rail.eip681}
+          expiresAt={dueAt}
+          caption={`${formatTokenAmount(rail.amountBase, rail.decimals)} ${rail.token}`}
+        />
         <MonoValue value={rail.receivingAddress} label="To" />
         <p className="text-caption text-ink-faint">Rate: {rail.quotedRate} per {rail.token}</p>
       </div>

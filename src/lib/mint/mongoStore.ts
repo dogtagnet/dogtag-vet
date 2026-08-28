@@ -4,16 +4,16 @@ import {BindToken, type BindTokenDoc} from "@/lib/models/BindToken";
 import type {MintFlowStore, MintSessionRow, MintTokenRow} from "@/lib/mint/flow";
 import type {OpenedLeaf} from "@dogtag/standard";
 
-function toSessionRow(doc: MintSessionDoc): MintSessionRow {
+export function toSessionRow(doc: MintSessionDoc): MintSessionRow {
   return {
     sessionId: doc.sessionId,
     dogTagIdDec: doc.dogTagIdDec,
     dogTagIdFieldDec: doc.dogTagIdField,
-    ownerIdentity: doc.ownerIdentity,
+    ownerIdentity: doc.ownerIdentity ?? {},
     identityLeaves: doc.identityLeaves,
     petName: doc.petName,
-    microchip: doc.microchip,
-    profile: doc.profile,
+    microchip: doc.microchip ?? {},
+    profile: doc.profile ?? {weightHistory: []},
     status: doc.status,
     root: doc.root,
     errorStage: doc.errorStage,
