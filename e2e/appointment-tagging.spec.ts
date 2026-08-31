@@ -381,31 +381,54 @@ test("walk-in fallback: no client record, free-text names, and the list shows pl
 });
 
 test("pet order is preserved everywhere on the detail page, and a no-op Edit-tagging save does not rewrite the stored order", async ({page}) => {
-  // Round-1 regression: Pet.find({petId: {$in: petIds}}) does not preserve petIds' order - names
-  // chosen so creation order differs from the tagged order, which is what exposes Mongo's own
-  // natural-order fetch diverging from it.
+  // Round-1 regression: Pet.find({petId: {$in: petIds}}) does not preserve petIds' order. petId is
+  // a unique-indexed, randomUUID field, so its fetch order for an $in query is neither creation
+  // order nor name order - it isn't predictable from the test at all. Rather than guess a name/
+  // creation-order combination that happens to differ from it (fragile - it could coincidentally
+  // match, silently making this test pass whether the fix is present or not), this measures Mongo's
+  // own natural fetch order for these exact three pets directly, then deliberately tags them in the
+  // REVERSE of that order - guaranteed to differ, since three distinct ids can never equal their
+  // own reversal.
   const client = await createClient(page, {name: "Order Probe Client", email: "order-probe@example.com", phone: "555-0801"});
   const zuluId = await createPet(page, "Zulu", [client.clientId]);
   const alphaId = await createPet(page, "Alpha", [client.clientId]);
   const mikeId = await createPet(page, "Mike", [client.clientId]);
+  const nameByPetId: Record<string, string> = {[zuluId]: "Zulu", [alphaId]: "Alpha", [mikeId]: "Mike"};
+
+  const mongoClient = new MongoClient(E2E_MONGO_URI);
+  await mongoClient.connect();
+  let taggedOrder: string[];
+  try {
+    const naturalOrderDocs = await mongoClient
+      .db()
+      .collection("pets")
+      .find({petId: {$in: [zuluId, alphaId, mikeId]}})
+      .toArray();
+    const naturalOrder = naturalOrderDocs.map((doc) => doc.petId as string);
+    taggedOrder = [...naturalOrder].reverse();
+  } finally {
+    await mongoClient.close();
+  }
+  const taggedNames = taggedOrder.map((petId) => nameByPetId[petId]);
+  const taggedNamesJoined = taggedNames.join(", ");
 
   const appointmentId = await createAppointmentApi(page, {
     clientId: client.clientId,
-    petIds: [zuluId, alphaId, mikeId],
+    petIds: taggedOrder,
     startAt: Math.floor(Date.now() / 1000) + 55 * 86_400,
   });
   const created = await getAppointment(page, appointmentId);
-  expect(created.petName).toBe("Zulu, Alpha, Mike");
+  expect(created.petName).toBe(taggedNamesJoined);
 
   await page.goto(`/appointments/${appointmentId}`);
 
   // The PageHeader subtitle is built straight from the stored petName string.
-  await expect(page.getByText("Order Probe Client - Zulu, Alpha, Mike")).toBeVisible();
+  await expect(page.getByText(`Order Probe Client - ${taggedNamesJoined}`)).toBeVisible();
 
   // "Tagged to" -> Pets must show the SAME order, not whatever order the $in fetch happened to
   // return the documents in.
   const petsRow = page.locator("dl > div", {has: page.getByText("Pets", {exact: true})});
-  await expect(petsRow.getByRole("link")).toHaveText(["Zulu", "Alpha", "Mike"]);
+  await expect(petsRow.getByRole("link")).toHaveText(taggedNames);
 
   // Edit-tagging's chips (seeded from the same fetched array) must match too. Each chip's visible
   // text is just "x" (the remove glyph) - the name lives in aria-label - so order is asserted via
@@ -414,14 +437,14 @@ test("pet order is preserved everywhere on the detail page, and a no-op Edit-tag
   const petRemoveButtons = editSection.getByRole("button", {name: /^Remove (Zulu|Alpha|Mike)$/});
   await expect(petRemoveButtons).toHaveCount(3);
   const petChipLabels = await petRemoveButtons.evaluateAll((buttons) => buttons.map((b) => b.getAttribute("aria-label")));
-  expect(petChipLabels).toEqual(["Remove Zulu", "Remove Alpha", "Remove Mike"]);
+  expect(petChipLabels).toEqual(taggedNames.map((name) => `Remove ${name}`));
 
   // Saving with ZERO actual edits must not silently rewrite petName into a different order.
   await editSection.getByRole("button", {name: "Save tagging"}).click();
   await expect(page.getByText("Tagging saved")).toBeVisible();
   const afterNoOpSave = await getAppointment(page, appointmentId);
-  expect(afterNoOpSave.petIds).toEqual([zuluId, alphaId, mikeId]);
-  expect(afterNoOpSave.petName).toBe("Zulu, Alpha, Mike");
+  expect(afterNoOpSave.petIds).toEqual(taggedOrder);
+  expect(afterNoOpSave.petName).toBe(taggedNamesJoined);
 });
 
 test("public booking still creates a confirmed appointment (unchanged flow, regression)", async ({request}) => {
