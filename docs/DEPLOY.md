@@ -94,7 +94,7 @@ If you switch to a managed Mongo under Docker Compose, you can also drop the `mo
 ## Protecting your deployment
 
 This code is open source and the APIs are known to everyone - a self-hosting vet (git clone + setup) needs perimeter protection beyond the in-process fixed-window limiter described below, because the booking/registration endpoints are open by design (the QR-based flows carry one-time tokens, but nothing gates who can even attempt to start one).
-This section is also referenced from `plans/MANUAL-E2E.md` (the manual UAT runbook) as the deployment-hardening step that runbook assumes is done before any real client traffic reaches a clinic's instance.
+Treat everything in this section as a checklist to complete before pointing any real client traffic at a fresh deployment, not just background reading.
 
 Every public API route (`/p/`, `/x/`, `/w/`, `/v1/booking/*`, `/v1/verify/consent`, `/v1/payments/*/public`, `/v1/entity`, `/r/pay/*`, `/profiles/issue/custodial-bind`) already rate-limits and caps request body size at the application layer (`src/lib/rateLimit.ts`, `src/lib/bodyLimit.ts`) and records rejected requests to an abuse log visible on the Settings page.
 The client-facing HTML pages that front those routes - `/book` (the booking form) and `/booking/*` (the status/cancel page a confirmation email links to) - carry no application-layer rate limit of their own; they are static-ish page renders, and every write or lookup they trigger goes through the limited API routes above, so the exposure is the same page-load cost any public page has.

@@ -31,7 +31,6 @@ interface StartSessionResponse {
 
 interface ActiveSession extends StartSessionResponse {
   status: RegistrationStatus;
-  registeredWallet?: string;
 }
 
 /** Small text field bound to one wallet's label, saving on blur only when the trimmed value
@@ -239,12 +238,19 @@ export function WalletsPanel({clientId, wallets, timeZone}: {clientId: string; w
       const res = await fetch(`/api/clients/${clientId}/wallet-registrations/${registrationId}`);
       if (!res.ok) return;
       const body = (await res.json()) as {status: RegistrationStatus; wallet?: string};
-      setSession((prev) => (prev ? {...prev, status: body.status, registeredWallet: body.wallet} : prev));
+      setSession((prev) => (prev ? {...prev, status: body.status} : prev));
       if (body.status === "registered") {
         stopPolling();
         snackbar.show(`Wallet ${body.wallet} registered`, "ok");
         router.refresh();
-        setTimeout(() => setSession(null), 1800);
+        // Clears immediately, not after a delay: this panel's OWN success feedback is the
+        // snackbar (the same pattern every other save in this app uses - status actions, notes,
+        // tagging - none of them ALSO leave a second, separate in-panel confirmation lingering).
+        // A lingering in-panel "Wallet 0x... registered" message used to double up with the
+        // DataTable row `router.refresh()` adds for the very same address - two on-screen
+        // elements sharing the identical accessible title for as long as the message lingered,
+        // reproduced live as a real (if brief) duplicate, not just a test artifact.
+        setSession(null);
       } else if (body.status === "failed" || body.status === "expired") {
         stopPolling();
       }
@@ -374,12 +380,10 @@ export function WalletsPanel({clientId, wallets, timeZone}: {clientId: string; w
               <StatusBadge tone={registrationStatusTone.waiting} label={registrationStatusLabel.waiting} />
             </>
           )}
-
-          {session.status === "registered" && (
-            <p className="text-body text-ok">
-              Wallet <AddressChip address={session.registeredWallet ?? ""} /> registered
-            </p>
-          )}
+          {/* No separate "registered" confirmation panel here (see startPolling's own doc
+           * comment): `session` clears the instant that status is reached, so this component
+           * never actually renders one - the snackbar is this action's only success feedback,
+           * same as every other save in this app. */}
 
           {(session.status === "failed" || session.status === "expired") && (
             <Banner tone="danger" title={registrationStatusLabel[session.status]}>

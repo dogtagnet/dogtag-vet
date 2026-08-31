@@ -308,7 +308,12 @@ function ProvenanceBox({appointment, onSaved}: {appointment: AppointmentDoc; onS
                   tone={identity.tagResolution === "local" && !identity.needsReview ? "ok" : identity.tagResolution === "unknown" ? "neutral" : "info"}
                   label={tagResolutionLabel[identity.tagResolution]}
                 />
-                {identity.tagResolution === "external" && (
+                {/* Q4's level ladder is specifically about CHAIN-corroborated tag claims (docs/
+                 * mobile-booking.md's Assurance levels table: "exists, active, issuer known") -
+                 * tiers 3/4 read the chain, tier 1 (local) never does (it matches this clinic's
+                 * own already-trusted client/pet records instead, a different kind of assurance
+                 * the level ladder doesn't describe), and "unknown" has no assurance to label. */}
+                {(identity.tagResolution === "issued_here_unlinked" || identity.tagResolution === "external") && (
                   <StatusBadge tone="neutral" label="Level 1" />
                 )}
                 {identity.tagResolution === "external" && identity.dataVerified && (
