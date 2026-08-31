@@ -34,22 +34,39 @@ function toValues(client?: ClientDoc): ClientFormValues {
  * two cards (round-6 grader finding - see `clients/[id]/page.tsx`, which used to wrap this
  * component's own `max-w-2xl` div in a SECOND, outer one just to add a Pets card after it).
  */
+type FieldErrors = Partial<Record<keyof ClientFormValues, string>>;
+
+/** The API's 400 shape: error.details is a zod flatten() - fieldErrors keyed by payload field. */
+function parseFieldErrors(body: unknown): {message?: string; fields: FieldErrors} {
+  const error = (body as {error?: {message?: string; details?: {fieldErrors?: Record<string, string[]>}}} | null)?.error;
+  const fields: FieldErrors = {};
+  for (const [key, messages] of Object.entries(error?.details?.fieldErrors ?? {})) {
+    if (messages?.[0]) fields[key as keyof ClientFormValues] = messages[0];
+  }
+  return {message: error?.message, fields};
+}
+
 export function ClientForm({client, children}: {client?: ClientDoc; children?: ReactNode}) {
   const router = useRouter();
   const snackbar = useSnackbar();
   const [values, setValues] = useState<ClientFormValues>(toValues(client));
   const [saving, setSaving] = useState(false);
+  const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
 
   function set<K extends keyof ClientFormValues>(key: K, value: ClientFormValues[K]) {
     setValues((prev) => ({...prev, [key]: value}));
+    // Editing a field retires its stale error; the next save revalidates.
+    setFieldErrors((prev) => (prev[key] ? {...prev, [key]: undefined} : prev));
   }
 
   async function handleSave() {
     if (!values.name.trim()) {
+      setFieldErrors({name: "Name is required"});
       snackbar.show("Name is required", "danger");
       return;
     }
     setSaving(true);
+    setFieldErrors({});
     const payload = {
       name: values.name.trim(),
       email: values.email.trim() || undefined,
@@ -63,7 +80,21 @@ export function ClientForm({client, children}: {client?: ClientDoc; children?: R
         headers: {"Content-Type": "application/json"},
         body: JSON.stringify(payload),
       });
-      if (!res.ok) throw new Error("Save failed");
+      if (!res.ok) {
+        // Surface WHICH field the server rejected instead of a generic retry
+        // toast (a space in an email once produced only "Could not save
+        // client - try again", hiding the server's own "Invalid email").
+        const {message, fields} = parseFieldErrors(await res.json().catch(() => null));
+        setFieldErrors(fields);
+        const firstField = Object.entries(fields).find((entry): entry is [string, string] => Boolean(entry[1]));
+        snackbar.show(
+          firstField
+            ? `${firstField[0].charAt(0).toUpperCase()}${firstField[0].slice(1)}: ${firstField[1]}`
+            : (message ?? "Could not save client - try again"),
+          "danger",
+        );
+        return;
+      }
       const saved = await res.json();
       snackbar.show(client ? "Client updated" : "Client created", "ok");
       if (!client) router.push(`/clients/${saved.clientId}`);
@@ -78,10 +109,10 @@ export function ClientForm({client, children}: {client?: ClientDoc; children?: R
   return (
     <div className="max-w-2xl space-y-6">
       <FormSection title="Contact details">
-        <FormField label="Name" htmlFor="client-name">
+        <FormField label="Name" htmlFor="client-name" error={fieldErrors.name}>
           <Input id="client-name" value={values.name} onChange={(e) => set("name", e.target.value)} required />
         </FormField>
-        <FormField label="Email" htmlFor="client-email">
+        <FormField label="Email" htmlFor="client-email" error={fieldErrors.email} helperText="e.g. marly@example.com">
           <Input
             id="client-email"
             type="email"
@@ -89,10 +120,10 @@ export function ClientForm({client, children}: {client?: ClientDoc; children?: R
             onChange={(e) => set("email", e.target.value)}
           />
         </FormField>
-        <FormField label="Phone" htmlFor="client-phone">
+        <FormField label="Phone" htmlFor="client-phone" error={fieldErrors.phone}>
           <Input id="client-phone" value={values.phone} onChange={(e) => set("phone", e.target.value)} />
         </FormField>
-        <FormField label="Address" htmlFor="client-address">
+        <FormField label="Address" htmlFor="client-address" error={fieldErrors.address}>
           <Input id="client-address" value={values.address} onChange={(e) => set("address", e.target.value)} />
         </FormField>
         <FormField label="Notes" htmlFor="client-notes">
