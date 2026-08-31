@@ -1208,10 +1208,21 @@ components:
       properties:
         dogTagIdDec:
           type: string
-          description: The raw decimal handle, if known. At least one of dogTagIdDec/dogTagIdField is required.
+          pattern: "^\\d+$"
+          description: |-
+            The raw decimal handle, if known - base-10 digits only (the server enforces this
+            pattern), NEVER hex and never 0x-prefixed. At least one of dogTagIdDec/dogTagIdField
+            is required.
         dogTagIdField:
           type: string
-          description: The canonical on-chain field-form id, if known (the app "holds both id forms locally").
+          pattern: "^\\d+$"
+          description: |-
+            The canonical on-chain dogTagId as a decimal uint256 string, if known -
+            `dogTagIdField(dogTagIdDec)` from `packages/dogtag-standard-ts`, exactly like
+            `onchainDogTagId` in `CustodialBindResponse`: base-10 digits only (the server enforces
+            this pattern), NEVER hex and never 0x-prefixed (the app "holds both id forms
+            locally"). When both id forms are sent the server recomputes this from dogTagIdDec and
+            rejects the claim on any mismatch, so the two must genuinely be the same tag's forms.
         name:
           type: string
           description: Off-chain display hint only - never chain-verified by itself.
