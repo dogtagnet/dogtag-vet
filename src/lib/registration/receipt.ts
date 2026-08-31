@@ -9,6 +9,7 @@ import {
   fromWireMessage,
   type ClientRegistrationDomain,
   type ClientRegistrationMessageWire,
+  type ClientRegistrationPayload,
 } from "@/lib/registration/eip712";
 
 /**
@@ -33,6 +34,28 @@ export function canonicalReceiptEncoding(receipt: ReceiptRecord): string {
 
 export function computeReceiptHash(receipt: ReceiptRecord): Hex {
   return keccak256(toBytes(canonicalReceiptEncoding(receipt)));
+}
+
+/**
+ * Parses a receipt's `payloadJson` back into its structured `{domain, message}` for on-screen
+ * display - the Wallets panel's expanded receipt view (plans/wp4.2-client-wallet-registration.md
+ * section 6's "receipt view", round-1 frontendDesignMatch fix: decoded fields through
+ * AddressChip/HashCell rather than a raw JSON dump squeezed into a table cell). Tolerant of
+ * malformed input (returns `null` rather than throwing) since this only feeds a read-only display -
+ * never a security check, unlike `verifyReceiptExport`'s use of the same schema. A legitimately
+ * persisted wallet's `payloadJson` always decodes (the server only ever writes what
+ * `canonicalPayloadJson` produces); `null` is a defensive fallback for data that predates a schema
+ * change or was hand-edited, not an expected path.
+ */
+export function decodeReceiptPayload(payloadJson: string): ClientRegistrationPayload | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(payloadJson);
+  } catch {
+    return null;
+  }
+  const result = clientRegistrationPayloadSchema.safeParse(parsed);
+  return result.success ? result.data : null;
 }
 
 /**

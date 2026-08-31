@@ -10,7 +10,7 @@ import {
   fromWireMessage,
   toWireMessage,
 } from "@/lib/registration/eip712";
-import {computeReceiptHash, receiptExportJson, verifyReceiptExport, type ReceiptExport} from "@/lib/registration/receipt";
+import {computeReceiptHash, decodeReceiptPayload, receiptExportJson, verifyReceiptExport, type ReceiptExport} from "@/lib/registration/receipt";
 
 /** A real, fully-signed receipt export built from scratch (no fakes anywhere in the crypto path)
  * so `receipt.test.ts` and `scripts/verify-receipt.ts` exercise the exact same shape a real
@@ -74,6 +74,25 @@ describe("computeReceiptHash", () => {
 
   it("returns a 0x-prefixed 32-byte hex value", () => {
     expect(computeReceiptHash({payloadJson: "{}", signature: "0x00", recoveredAt: 0})).toMatch(/^0x[0-9a-f]{64}$/);
+  });
+});
+
+describe("decodeReceiptPayload - the Wallets panel's expanded receipt view decodes payloadJson back into its domain/message fields (plans/wp4.2-client-wallet-registration.md, round-1 frontendDesignMatch fix: on-screen fields render through AddressChip/HashCell, never a raw JSON dump)", () => {
+  it("decodes a real signed payload back into its exact domain and wire-message fields", async () => {
+    const {entry} = await buildSignedReceiptExport();
+    const decoded = decodeReceiptPayload(entry.receipt.payloadJson);
+    expect(decoded).not.toBeNull();
+    const expected = JSON.parse(entry.receipt.payloadJson);
+    expect(decoded).toEqual(expected);
+  });
+
+  it("returns null (never throws) for a payloadJson that is not valid JSON", () => {
+    expect(decodeReceiptPayload("{not json")).toBeNull();
+  });
+
+  it("returns null (never throws) for well-formed JSON that is not a ClientRegistration payload shape", () => {
+    expect(decodeReceiptPayload(JSON.stringify({not: "a payload"}))).toBeNull();
+    expect(decodeReceiptPayload(JSON.stringify({domain: {}, message: {}}))).toBeNull();
   });
 });
 
