@@ -409,7 +409,17 @@ test("pet order is preserved everywhere on the detail page, and a no-op Edit-tag
   } finally {
     await mongoClient.close();
   }
-  const taggedNames = taggedOrder.map((petId) => nameByPetId[petId]);
+  // A total, loud lookup rather than a plain index (nameByPetId[petId] alone types as
+  // `string | undefined` under noUncheckedIndexedAccess, and `.filter(Boolean)`-ing away the
+  // `undefined` case would silently shrink the array on a lookup miss - defeating the very
+  // toHaveText(array) length check this test exists to make discriminating in the first place).
+  // Every petId in taggedOrder came straight from these three just-created pets, so a miss here
+  // can only mean a bug in this test itself, and should fail loudly, not disappear.
+  const taggedNames = taggedOrder.map((petId) => {
+    const name = nameByPetId[petId];
+    if (!name) throw new Error(`petId ${petId} is not one of the three seeded pets`);
+    return name;
+  });
   const taggedNamesJoined = taggedNames.join(", ");
 
   const appointmentId = await createAppointmentApi(page, {
