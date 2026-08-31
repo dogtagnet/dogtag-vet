@@ -9,6 +9,7 @@ import {FormField, FormSection} from "@/components/ui/FormSection";
 import {QrSurface} from "@/components/ui/QrSurface";
 import {StatusBadge} from "@/components/ui/StatusBadge";
 import {HashCell} from "@/components/ui/HashCell";
+import {ClientPicker} from "@/components/pickers/ClientPicker";
 import {WeightHistoryEditor} from "@/components/pets/WeightHistoryEditor";
 import {useSnackbar} from "@/components/ui/Snackbar";
 import {vetIssuerAbi} from "@/lib/abi";
@@ -68,8 +69,6 @@ export function TagIssueWizard() {
   const {signTypedDataAsync} = useSignTypedData();
   const snackbar = useSnackbar();
 
-  const [clientQuery, setClientQuery] = useState("");
-  const [clientResults, setClientResults] = useState<ClientDoc[]>([]);
   const [selectedClient, setSelectedClient] = useState<ClientDoc | null>(null);
   const [pets, setPets] = useState<PetDoc[]>([]);
   const [petId, setPetId] = useState<string>("");
@@ -98,18 +97,6 @@ export function TagIssueWizard() {
   const searchParams = useSearchParams();
   const resumeSessionId = searchParams.get("session");
   const replacePetId = searchParams.get("replace");
-
-  useEffect(() => {
-    if (!clientQuery.trim()) {
-      setClientResults([]);
-      return;
-    }
-    const t = setTimeout(async () => {
-      const res = await fetch(`/api/clients?q=${encodeURIComponent(clientQuery.trim())}`);
-      if (res.ok) setClientResults(await res.json());
-    }, 250);
-    return () => clearTimeout(t);
-  }, [clientQuery]);
 
   useEffect(() => {
     if (!selectedClient) {
@@ -455,34 +442,7 @@ export function TagIssueWizard() {
   return (
     <div className="max-w-2xl space-y-6">
       <FormSection title="1. Client" helperText="Search for an existing client who owns this pet.">
-        <div className="relative">
-          <Input
-            value={selectedClient ? selectedClient.name : clientQuery}
-            onChange={(e) => {
-              setSelectedClient(null);
-              setClientQuery(e.target.value);
-            }}
-            placeholder="Search clients"
-          />
-          {!selectedClient && clientResults.length > 0 && (
-            <ul className="absolute z-10 mt-1 w-full rounded-control border border-border bg-surface shadow-raised">
-              {clientResults.map((c) => (
-                <li key={c.clientId}>
-                  <button
-                    type="button"
-                    className="block w-full px-3 py-2 text-left text-body hover:bg-surface-2"
-                    onClick={() => {
-                      setSelectedClient(c);
-                      setClientResults([]);
-                    }}
-                  >
-                    {c.name} {c.email && <span className="text-ink-faint">({c.email})</span>}
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
+        <ClientPicker value={selectedClient} onChange={setSelectedClient} placeholder="Search clients" />
       </FormSection>
 
       {selectedClient && (

@@ -1,7 +1,7 @@
 "use client";
 
 import {useEffect, useRef, useState} from "react";
-import {Input} from "@/components/ui/controls";
+import {Combobox} from "@/components/pickers/Combobox";
 import type {ClientDoc} from "@/lib/models/Client";
 
 export interface OwnerPickerProps {
@@ -9,13 +9,22 @@ export interface OwnerPickerProps {
   onChange: (next: {clientId: string; name: string}[]) => void;
 }
 
+function clientSecondaryLine(client: ClientDoc): string {
+  return [client.email, client.phone].filter(Boolean).join(" · ") || "No email or phone on file";
+}
+
 /** Many-to-many owners UI (wp4-vet.md): a chip list of currently-selected owners plus a
  * type-ahead search against `/api/clients` to add more. Client-side only - the actual link/unlink
- * write happens server-side (`setPetOwners`) when the pet form saves. */
+ * write happens server-side (`setPetOwners`) when the pet form saves.
+ *
+ * Built on the same accessible `Combobox` primitive `ClientPicker` uses (WP4.3 B4) - dropdown rows
+ * show name + email + phone (the same disambiguation requirement ClientPicker's rows serve) and
+ * gain real combobox keyboard/ARIA semantics this component previously had none of. The external
+ * contract (`{clientId, name}[]` chips, no email carried) is unchanged, so `PetForm.tsx` needs no
+ * changes. */
 export function OwnerPicker({value, onChange}: OwnerPickerProps) {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<ClientDoc[]>([]);
-  const [open, setOpen] = useState(false);
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   useEffect(() => {
@@ -32,13 +41,12 @@ export function OwnerPicker({value, onChange}: OwnerPickerProps) {
   }, [query]);
 
   const selectedIds = new Set(value.map((v) => v.clientId));
+  const options = results.filter((c) => !selectedIds.has(c.clientId));
 
   function addOwner(client: ClientDoc) {
-    if (selectedIds.has(client.clientId)) return;
     onChange([...value, {clientId: client.clientId, name: client.name}]);
     setQuery("");
     setResults([]);
-    setOpen(false);
   }
 
   function removeOwner(clientId: string) {
@@ -67,32 +75,22 @@ export function OwnerPicker({value, onChange}: OwnerPickerProps) {
           ))}
         </div>
       )}
-      <div className="relative">
-        <Input
-          value={query}
-          onChange={(e) => {
-            setQuery(e.target.value);
-            setOpen(true);
-          }}
-          onFocus={() => setOpen(true)}
-          placeholder="Search clients to add as an owner"
-        />
-        {open && results.length > 0 && (
-          <ul className="absolute z-10 mt-1 w-full rounded-control border border-border bg-surface shadow-raised">
-            {results.map((client) => (
-              <li key={client.clientId}>
-                <button
-                  type="button"
-                  onClick={() => addOwner(client)}
-                  className="block w-full px-3 py-2 text-left text-body hover:bg-surface-2"
-                >
-                  {client.name} {client.email && <span className="text-ink-faint">({client.email})</span>}
-                </button>
-              </li>
-            ))}
-          </ul>
+      <Combobox<ClientDoc>
+        ariaLabel="Search clients to add as an owner"
+        placeholder="Search clients to add as an owner"
+        query={query}
+        onQueryChange={setQuery}
+        options={options}
+        onSelect={addOwner}
+        getOptionKey={(client) => client.clientId}
+        renderOption={(client) => (
+          <div>
+            <div className="font-medium text-ink">{client.name}</div>
+            <div className="text-caption text-ink-faint">{clientSecondaryLine(client)}</div>
+          </div>
         )}
-      </div>
+        emptyHint="No matching clients"
+      />
     </div>
   );
 }
