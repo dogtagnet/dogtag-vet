@@ -78,6 +78,10 @@ export function Combobox<T>({
       if (open) {
         e.preventDefault();
         setOpen(false);
+        // Otherwise aria-activedescendant keeps pointing at an <li id> that no longer exists once
+        // the listbox unmounts (`select()` below already clears it on Enter/click-select for the
+        // same reason) - a dangling reference a screen reader would resolve to nothing.
+        setActiveIndex(-1);
       }
     }
   }
@@ -120,8 +124,13 @@ export function Combobox<T>({
         }}
         onBlur={() => {
           // Delayed so a mousedown on an option (which fires before this blur's click) still
-          // registers - see each option's own onMouseDown below.
-          window.setTimeout(() => setOpen(false), 120);
+          // registers - see each option's own onMouseDown below. Clears activeIndex along with
+          // `open` for the same dangling-aria-activedescendant reason as the Escape branch above -
+          // blurring away is another path that unmounts the listbox without going through `select()`.
+          window.setTimeout(() => {
+            setOpen(false);
+            setActiveIndex(-1);
+          }, 120);
         }}
         onKeyDown={handleKeyDown}
       />

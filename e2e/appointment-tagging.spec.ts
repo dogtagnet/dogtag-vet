@@ -264,6 +264,55 @@ test.describe.serial("two Johns: tag with disambiguation, navigate, retag, untag
   });
 });
 
+test("ClientPicker keyboard nav: ArrowDown/ArrowUp move aria-activedescendant among options, Escape closes and clears it without selecting", async ({page}) => {
+  // WP4.3 B3's combobox a11y requirement, the half of it the disambiguation test above doesn't
+  // reach (that test only drives Enter-selection): ArrowUp and Escape, and that
+  // aria-activedescendant tracks the active option throughout - including being cleared again once
+  // the listbox closes, so it never dangles pointing at an option element that no longer exists in
+  // the DOM.
+  const alpha = await createClient(page, {name: "Keyboard Nav Alpha", email: "kb-alpha@example.com", phone: "555-0601"});
+  const beta = await createClient(page, {name: "Keyboard Nav Beta", email: "kb-beta@example.com", phone: "555-0602"});
+  const date = futureDate(33);
+  await openCreateDialogOnEmptySlot(page, date);
+
+  const clientCombobox = page.getByRole("combobox", {name: "Search clients"});
+  await clientCombobox.fill("Keyboard Nav");
+  await expect(page.getByRole("option").filter({hasText: alpha.email})).toBeVisible();
+  await expect(page.getByRole("option").filter({hasText: beta.email})).toBeVisible();
+  await expect(clientCombobox).toHaveAttribute("aria-expanded", "true");
+  expect(await clientCombobox.getAttribute("aria-activedescendant")).toBeNull();
+
+  await clientCombobox.press("ArrowDown");
+  const firstId = await clientCombobox.getAttribute("aria-activedescendant");
+  expect(firstId).toBeTruthy();
+  await expect(page.locator(`[id="${firstId}"]`)).toHaveAttribute("aria-selected", "true");
+
+  // A second ArrowDown moves activedescendant on to the OTHER option - never the same one twice.
+  await clientCombobox.press("ArrowDown");
+  const secondId = await clientCombobox.getAttribute("aria-activedescendant");
+  expect(secondId).toBeTruthy();
+  expect(secondId).not.toBe(firstId);
+  await expect(page.locator(`[id="${secondId}"]`)).toHaveAttribute("aria-selected", "true");
+  await expect(page.locator(`[id="${firstId}"]`)).toHaveAttribute("aria-selected", "false");
+
+  // ArrowUp moves back exactly one step, not all the way to "nothing active".
+  await clientCombobox.press("ArrowUp");
+  expect(await clientCombobox.getAttribute("aria-activedescendant")).toBe(firstId);
+
+  // Escape closes without selecting - neither client's chip appears - and clears
+  // aria-activedescendant along with the now-unmounted listbox, rather than leaving it pointing at
+  // an option id no longer in the DOM.
+  await clientCombobox.press("Escape");
+  await expect(page.getByRole("listbox")).not.toBeVisible();
+  await expect(clientCombobox).toHaveAttribute("aria-expanded", "false");
+  expect(await clientCombobox.getAttribute("aria-activedescendant")).toBeNull();
+  await expect(page.getByText(` - ${alpha.email}`)).not.toBeVisible();
+  await expect(page.getByText(` - ${beta.email}`)).not.toBeVisible();
+  await expect(clientCombobox).toHaveValue("Keyboard Nav");
+
+  await page.getByRole("button", {name: "Cancel"}).click();
+});
+
 test("open slot still creates after the chip-click fix (regression, on a day with no appointments)", async ({page}) => {
   const date = futureDate(31);
   await openCreateDialogOnEmptySlot(page, date);
