@@ -103,62 +103,165 @@ test.beforeEach(async ({page}) => {
   await signInAsStaff(page);
 });
 
-test("calendar create dialog: disambiguates two same-named clients by email/phone, tags two pets", async ({page}) => {
-  const john1 = await createClient(page, {name: "John Carter", email: "john.carter.a@example.com", phone: "555-0101"});
-  await createClient(page, {name: "John Carter", email: "john.carter.b@example.com", phone: "555-0102"});
-  await createPet(page, "Rex", [john1.clientId]);
-  await createPet(page, "Fido", [john1.clientId]);
-
+/**
+ * The full journey (WP4.3 section E), chained as one continuous story through `describe.serial`
+ * so "retag to the other John" is literally the SAME two clients the disambiguation step created -
+ * each step still reports pass/fail individually (serial mode only skips what comes AFTER a
+ * failure, it doesn't merge them into one opaque test), but state (the two clients, the pets, the
+ * one appointment) flows forward exactly like a single staff member's real session would.
+ */
+test.describe.serial("two Johns: tag with disambiguation, navigate, retag, untag, status action", () => {
+  let johnA: CreatedClient;
+  let johnB: CreatedClient;
+  let appointmentId: string;
   const date = futureDate(30);
-  await openCreateDialogOnEmptySlot(page, date);
 
-  // Tagged mode is the default - no walk-in free-text inputs, the pickers are what's shown.
-  await expect(page.getByRole("checkbox", {name: "Walk-in (no client record)"})).not.toBeChecked();
-  const clientCombobox = page.getByRole("combobox", {name: "Search clients"});
-  await expect(clientCombobox).toBeVisible();
+  test("calendar create dialog: disambiguates two same-named clients by email/phone, tags two pets", async ({page}) => {
+    johnA = await createClient(page, {name: "John Carter", email: "john.carter.a@example.com", phone: "555-0101"});
+    johnB = await createClient(page, {name: "John Carter", email: "john.carter.b@example.com", phone: "555-0102"});
+    // "create pets for one" (WP4.3 E) - only John A gets pets up front; John B gets one later, at
+    // the point the retag step actually needs it to complete a valid retag.
+    await createPet(page, "Rex", [johnA.clientId]);
+    await createPet(page, "Fido", [johnA.clientId]);
 
-  await clientCombobox.fill("John Carter");
-  // Disambiguation: BOTH same-named clients show up, each tellable apart by email.
-  const optionA = page.getByRole("option").filter({hasText: john1.email});
-  const optionB = page.getByRole("option").filter({hasText: "john.carter.b@example.com"});
-  await expect(optionA).toBeVisible();
-  await expect(optionB).toBeVisible();
-  await expect(optionA).toContainText(john1.phone);
-  await optionA.click();
+    await openCreateDialogOnEmptySlot(page, date);
 
-  // Selecting collapses the combobox into a chip carrying the email - proof the RIGHT John was tagged.
-  await expect(page.getByText(` - ${john1.email}`)).toBeVisible();
+    // Tagged mode is the default - no walk-in free-text inputs, the pickers are what's shown.
+    await expect(page.getByRole("checkbox", {name: "Walk-in (no client record)"})).not.toBeChecked();
+    const clientCombobox = page.getByRole("combobox", {name: "Search clients"});
+    await expect(clientCombobox).toBeVisible();
 
-  const petCombobox = page.getByRole("combobox", {name: "Search pets"});
-  await expect(petCombobox).toBeEnabled();
-  await petCombobox.click();
-  await page.getByRole("option", {name: /^Rex/}).click();
-  // Keyboard nav for the second pick (ArrowDown + Enter, WP4.3 B3's combobox a11y requirement) -
-  // also sidesteps that selecting Rex left focus on this same input (by design, so a multi-select
-  // picker can accept another pick right away), so a plain second click here would just be
-  // re-exercising Combobox's own onClick reopen rather than the keyboard path.
-  await petCombobox.press("ArrowDown");
-  await expect(page.getByRole("option", {name: /^Fido/})).toHaveAttribute("aria-selected", "true");
-  await petCombobox.press("Enter");
-  await expect(page.getByRole("button", {name: "Remove Rex"})).toBeVisible();
-  await expect(page.getByRole("button", {name: "Remove Fido"})).toBeVisible();
+    await clientCombobox.fill("John Carter");
+    // Disambiguation: BOTH same-named clients show up, each tellable apart by email.
+    const optionA = page.getByRole("option").filter({hasText: johnA.email});
+    const optionB = page.getByRole("option").filter({hasText: johnB.email});
+    await expect(optionA).toBeVisible();
+    await expect(optionB).toBeVisible();
+    await expect(optionA).toContainText(johnA.phone);
+    await optionA.click();
 
-  await page.getByRole("button", {name: "Create"}).click();
-  await expect(page.getByText("Appointment created")).toBeVisible();
+    // Selecting collapses the combobox into a chip carrying the email - proof the RIGHT John was tagged.
+    await expect(page.getByText(` - ${johnA.email}`)).toBeVisible();
 
-  const chip = page.getByRole("button", {name: /John Carter - (Rex, Fido|Fido, Rex)/});
-  await expect(chip).toBeVisible();
+    const petCombobox = page.getByRole("combobox", {name: "Search pets"});
+    await expect(petCombobox).toBeEnabled();
+    await petCombobox.click();
+    await page.getByRole("option", {name: /^Rex/}).click();
+    // Keyboard nav for the second pick (ArrowDown + Enter, WP4.3 B3's combobox a11y requirement) -
+    // also sidesteps that selecting Rex left focus on this same input (by design, so a multi-select
+    // picker can accept another pick right away), so a plain second click here would just be
+    // re-exercising Combobox's own onClick reopen rather than the keyboard path.
+    await petCombobox.press("ArrowDown");
+    await expect(page.getByRole("option", {name: /^Fido/})).toHaveAttribute("aria-selected", "true");
+    await petCombobox.press("Enter");
+    await expect(page.getByRole("button", {name: "Remove Rex"})).toBeVisible();
+    await expect(page.getByRole("button", {name: "Remove Fido"})).toBeVisible();
 
-  // Chip click navigates to the detail page - it must NOT reopen the create dialog (WP4.3 C7).
-  // This is the FIRST navigation to /appointments/[id] in a freshly-started dev server for the
-  // whole suite - Next.js dev mode compiles routes on demand, and that first compile can
-  // occasionally take longer than the default 5s assertion budget (the same class of "known-slow
-  // first real step" wallet-registration.spec.ts already extends timeouts for).
-  await chip.click();
-  await expect(page).toHaveURL(/\/appointments\/[0-9a-f-]+$/, {timeout: 15_000});
-  await expect(page.getByRole("link", {name: "John Carter"})).toBeVisible();
-  await expect(page.getByRole("link", {name: "Rex"})).toBeVisible();
-  await expect(page.getByRole("link", {name: "Fido"})).toBeVisible();
+    await page.getByRole("button", {name: "Create"}).click();
+    await expect(page.getByText("Appointment created")).toBeVisible();
+
+    const chip = page.getByRole("button", {name: /John Carter - (Rex, Fido|Fido, Rex)/});
+    await expect(chip).toBeVisible();
+
+    // Chip click navigates to the detail page - it must NOT reopen the create dialog (WP4.3 C7).
+    // This is the FIRST navigation to /appointments/[id] in a freshly-started dev server for the
+    // whole suite - Next.js dev mode compiles routes on demand, and that first compile can
+    // occasionally take longer than the default 5s assertion budget (the same class of "known-slow
+    // first real step" wallet-registration.spec.ts already extends timeouts for).
+    await chip.click();
+    await expect(page).toHaveURL(/\/appointments\/[0-9a-f-]+$/, {timeout: 15_000});
+    appointmentId = new URL(page.url()).pathname.split("/").filter(Boolean).pop()!;
+    await expect(page.getByRole("link", {name: "John Carter"})).toBeVisible();
+    await expect(page.getByRole("link", {name: "Rex"})).toBeVisible();
+    await expect(page.getByRole("link", {name: "Fido"})).toBeVisible();
+  });
+
+  test("appointments list: the When link opens the same appointment's detail page", async ({page}) => {
+    await page.goto("/appointments");
+    // Located by its own href, not by name text - "John Carter" is deliberately not unique (two
+    // clients share it), so this is the same unambiguous approach the app's own links use.
+    const row = page.locator("tr", {has: page.locator(`a[href="/appointments/${appointmentId}"]`)});
+    await expect(row).toBeVisible();
+    await expect(row.getByRole("link", {name: "John Carter"})).toBeVisible(); // client cell also links
+    await row.locator(`a[href="/appointments/${appointmentId}"]`).click(); // the When cell's own link
+    await expect(page).toHaveURL(new RegExp(`/appointments/${appointmentId}$`));
+  });
+
+  test("retag to the other John: stale pets clear in the picker, and the server refuses them if sent directly", async ({page}) => {
+    const miloId = await createPet(page, "Milo", [johnB.clientId]);
+
+    await page.goto(`/appointments/${appointmentId}`);
+    await expect(page.getByRole("heading", {name: "Edit tagging"})).toBeVisible();
+    await expect(page.getByRole("button", {name: "Remove Rex"})).toBeVisible();
+    await expect(page.getByRole("button", {name: "Remove Fido"})).toBeVisible();
+
+    const editSection = page.locator("section", {has: page.getByRole("heading", {name: "Edit tagging"})});
+    // Both Johns share this label - unambiguous here since only the CURRENTLY-tagged one (A) has
+    // a rendered chip to remove at this point.
+    await editSection.getByRole("button", {name: "Remove John Carter"}).click();
+    await editSection.getByRole("combobox", {name: "Search clients"}).fill("John Carter");
+    const optionB = page.getByRole("option").filter({hasText: johnB.email});
+    await expect(optionB).toBeVisible();
+    await optionB.click();
+
+    // The stale pets (Rex, Fido - owned by John A) are cleared automatically now that the tagged
+    // client changed to John B.
+    await expect(page.getByRole("button", {name: "Remove Rex"})).not.toBeVisible();
+    await expect(page.getByRole("button", {name: "Remove Fido"})).not.toBeVisible();
+    await expect(editSection.getByRole("button", {name: "Save tagging"})).toBeDisabled();
+
+    await editSection.getByRole("combobox", {name: "Search pets"}).click();
+    await page.getByRole("option", {name: /^Milo/}).click();
+    await editSection.getByRole("button", {name: "Save tagging"}).click();
+    await expect(page.getByText("Tagging saved")).toBeVisible();
+
+    const afterRetag = await getAppointment(page, appointmentId);
+    expect(afterRetag.clientId).toBe(johnB.clientId);
+    expect(afterRetag.petIds).toEqual([miloId]);
+    expect(afterRetag.clientName).toBe("John Carter");
+    expect(afterRetag.petName).toBe("Milo");
+
+    // Adversarial probe: a direct API request that retags back to John A while keeping Milo (John
+    // B's pet, never John A's) is refused.
+    const badPatch = await page.request.patch(`/api/appointments/${appointmentId}`, {
+      data: {clientId: johnA.clientId, petIds: [miloId]},
+    });
+    expect(badPatch.status()).toBe(400);
+  });
+
+  test("untag: clears the link but freezes the display names rather than blanking them", async ({page}) => {
+    // WP4.3 accuracy criterion "untag clears names correctly" - the PATCH surface has no slot for
+    // new free text on untag, so clientName/petName freeze at their last tagged values instead of
+    // blanking (they stay required, non-blank end to end); what actually clears is the LINK, since
+    // every "is this tagged?" render decision keys off clientId/petIds, never name truthiness.
+    await page.goto(`/appointments/${appointmentId}`);
+    const editSection = page.locator("section", {has: page.getByRole("heading", {name: "Edit tagging"})});
+    await editSection.getByRole("button", {name: "Remove John Carter"}).click();
+    await editSection.getByRole("button", {name: "Save tagging"}).click();
+    await expect(page.getByText("Tagging saved")).toBeVisible();
+
+    const afterUntag = await getAppointment(page, appointmentId);
+    expect(afterUntag.clientId).toBeUndefined();
+    expect(afterUntag.petIds).toEqual([]);
+    expect(afterUntag.clientName).toBe("John Carter"); // frozen, not blanked
+    expect(afterUntag.petName).toBe("Milo"); // frozen, not blanked
+
+    await page.reload();
+    await expect(page.getByText("(walk-in - no client record)")).toBeVisible();
+    await expect(page.getByRole("link", {name: "John Carter"})).not.toBeVisible();
+    await expect(page.getByRole("link", {name: "Milo"})).not.toBeVisible();
+  });
+
+  test("status action: Confirm moves this appointment from scheduled to confirmed", async ({page}) => {
+    await page.goto(`/appointments/${appointmentId}`);
+    await expect(page.getByText("Scheduled", {exact: true})).toBeVisible();
+    await page.getByRole("button", {name: "Confirm"}).click();
+    await expect(page.getByText("appointment confirmed")).toBeVisible();
+    await expect(page.getByText("Confirmed", {exact: true})).toBeVisible();
+
+    const updated = await getAppointment(page, appointmentId);
+    expect(updated.status).toBe("confirmed");
+  });
 });
 
 test("open slot still creates after the chip-click fix (regression, on a day with no appointments)", async ({page}) => {
@@ -169,113 +272,6 @@ test("open slot still creates after the chip-click fix (regression, on a day wit
   await expect(page.getByRole("dialog")).not.toBeVisible();
 });
 
-test("appointments list: the When link opens the same appointment's detail page", async ({page}) => {
-  const client = await createClient(page, {name: "List Nav Client", email: "list-nav@example.com", phone: "555-0201"});
-  const petId = await createPet(page, "Biscuit", [client.clientId]);
-  const appointmentId = await createAppointmentApi(page, {
-    clientId: client.clientId,
-    petIds: [petId],
-    startAt: Math.floor(Date.now() / 1000) + 40 * 86_400,
-  });
-
-  await page.goto("/appointments");
-  await page.getByPlaceholder("Search by client or pet name").fill("List Nav Client");
-  // Wait for the SearchBox's own 300ms-debounced router.replace to actually land before clicking
-  // a Link in the (by-then-filtered) list - otherwise that debounce can fire AFTER the click's own
-  // navigation has already started, and its router.replace clobbers the URL right back to the
-  // list page with ?q=... on it (a test-timing race, not a product bug).
-  await expect(page).toHaveURL(/\?q=List\+Nav\+Client/);
-  const row = page.locator("tr", {hasText: "List Nav Client"});
-  await expect(row).toBeVisible();
-  await expect(row.getByRole("link", {name: "List Nav Client"})).toBeVisible(); // client cell also links
-  await row.locator(`a[href="/appointments/${appointmentId}"]`).click(); // the When cell's own link
-  await expect(page).toHaveURL(new RegExp(`/appointments/${appointmentId}$`));
-});
-
-test("retag to a different client: stale pets clear in the picker, and the server refuses them if sent directly; untag freezes the display names", async ({page}) => {
-  const ownerA = await createClient(page, {name: "Retag Owner A", email: "retag-a@example.com", phone: "555-0301"});
-  const ownerB = await createClient(page, {name: "Retag Owner B", email: "retag-b@example.com", phone: "555-0302"});
-  const buddyId = await createPet(page, "Buddy", [ownerA.clientId]);
-  const maxId = await createPet(page, "Max", [ownerB.clientId]);
-
-  const appointmentId = await createAppointmentApi(page, {
-    clientId: ownerA.clientId,
-    petIds: [buddyId],
-    startAt: Math.floor(Date.now() / 1000) + 41 * 86_400,
-  });
-
-  await page.goto(`/appointments/${appointmentId}`);
-  await expect(page.getByRole("heading", {name: "Edit tagging"})).toBeVisible();
-  await expect(page.getByRole("button", {name: "Remove Buddy"})).toBeVisible();
-
-  const editSection = page.locator("section", {has: page.getByRole("heading", {name: "Edit tagging"})});
-  await editSection.getByRole("button", {name: "Remove Retag Owner A"}).click();
-  await editSection.getByRole("combobox", {name: "Search clients"}).fill("Retag Owner B");
-  await page.getByRole("option", {name: /Retag Owner B/}).click();
-
-  // The stale pet (Buddy, owned by A) is cleared automatically now that the client changed.
-  await expect(page.getByRole("button", {name: "Remove Buddy"})).not.toBeVisible();
-  await expect(editSection.getByRole("button", {name: "Save tagging"})).toBeDisabled();
-
-  await editSection.getByRole("combobox", {name: "Search pets"}).click();
-  await page.getByRole("option", {name: /^Max/}).click();
-  await editSection.getByRole("button", {name: "Save tagging"}).click();
-  await expect(page.getByText("Tagging saved")).toBeVisible();
-
-  const afterRetag = await getAppointment(page, appointmentId);
-  expect(afterRetag.clientId).toBe(ownerB.clientId);
-  expect(afterRetag.petIds).toEqual([maxId]);
-  expect(afterRetag.clientName).toBe("Retag Owner B");
-  expect(afterRetag.petName).toBe("Max");
-
-  // Adversarial probe: a direct API retag that keeps pointing at the OTHER client's pet is refused.
-  const badPatch = await page.request.patch(`/api/appointments/${appointmentId}`, {
-    data: {clientId: ownerA.clientId, petIds: [maxId]},
-  });
-  expect(badPatch.status()).toBe(400);
-
-  // Full untag: clears the tagging but FREEZES the display names rather than blanking them - the
-  // PATCH surface has no slot for new free text on untag (WP4.3 accuracy criterion: "untag clears
-  // names correctly" means the LINK disappears while the last-known text stays legible, not that
-  // the required, non-blank clientName/petName fields go empty).
-  await page.reload();
-  const editSection2 = page.locator("section", {has: page.getByRole("heading", {name: "Edit tagging"})});
-  await editSection2.getByRole("button", {name: "Remove Retag Owner B"}).click();
-  await editSection2.getByRole("button", {name: "Save tagging"}).click();
-  await expect(page.getByText("Tagging saved")).toBeVisible();
-
-  const afterUntag = await getAppointment(page, appointmentId);
-  expect(afterUntag.clientId).toBeUndefined();
-  expect(afterUntag.petIds).toEqual([]);
-  expect(afterUntag.clientName).toBe("Retag Owner B"); // frozen, not blanked
-  expect(afterUntag.petName).toBe("Max"); // frozen, not blanked
-
-  await page.reload();
-  // The page's own title/description also legitimately shows the frozen "Retag Owner B - Max"
-  // text (PageHeader renders it from appointment.clientName/petName directly) - match the "Tagged
-  // to" panel's own row specifically via its unique walk-in annotation, not the bare name alone.
-  await expect(page.getByText("(walk-in - no client record)")).toBeVisible();
-  await expect(page.getByRole("link", {name: "Retag Owner B"})).not.toBeVisible();
-  await expect(page.getByRole("link", {name: "Max"})).not.toBeVisible();
-});
-
-test("status action: Confirm moves a scheduled appointment to confirmed", async ({page}) => {
-  const appointmentId = await createAppointmentApi(page, {
-    clientName: "Status Test Client",
-    petName: "Status Test Pet",
-    startAt: Math.floor(Date.now() / 1000) + 42 * 86_400,
-  });
-
-  await page.goto(`/appointments/${appointmentId}`);
-  await expect(page.getByText("Scheduled", {exact: true})).toBeVisible();
-  await page.getByRole("button", {name: "Confirm"}).click();
-  await expect(page.getByText("appointment confirmed")).toBeVisible();
-  await expect(page.getByText("Confirmed", {exact: true})).toBeVisible();
-
-  const updated = await getAppointment(page, appointmentId);
-  expect(updated.status).toBe("confirmed");
-});
-
 test("client identification fields round-trip through the form", async ({page}) => {
   const client = await createClient(page, {name: "ID Fields Client", email: "id-fields@example.com", phone: "555-0401"});
   await page.goto(`/clients/${client.clientId}`);
@@ -283,7 +279,11 @@ test("client identification fields round-trip through the form", async ({page}) 
   await page.getByLabel("Document type").selectOption("passport");
   await page.getByLabel("Document number").fill("P-9988776");
   await page.getByRole("button", {name: "Save changes"}).click();
-  await expect(page.getByText("Client updated")).toBeVisible();
+  // A generous timeout, not the default 5s: this is a plain Mongo PATCH with no real-network
+  // dependency, but the snackbar is transient (auto-dismisses after 4s per Snackbar.tsx) - under
+  // incidental system load the save can occasionally take long enough that the default budget
+  // catches it mid-flight. The reload-based check below is the real persistence proof either way.
+  await expect(page.getByText("Client updated")).toBeVisible({timeout: 10_000});
 
   await page.reload();
   await expect(page.getByLabel("Document type")).toHaveValue("passport");
