@@ -81,6 +81,22 @@ export async function POST(request: Request, {params}: {params: Promise<{id: str
   const pet = await Pet.findOne({petId: parsed.data.petId}).lean<PetDoc>();
   if (!pet) return notFound("Pet not found.");
 
+  // Review finding 2 (duplicate guard): one physical tag maps to at most ONE local pet record -
+  // `resolveTagClaim`'s tier-1 lookup is a findOne over `dogTag.dogTagIdDec`/`dogTagIdField`, so
+  // a second pet carrying the same tag would make every future resolution of this tag
+  // nondeterministic. Relinking onto the SAME pet again (petId equal) is resolution, not
+  // duplication - e.g. a second appointment carrying the same claim being pointed at the pet that
+  // already holds the tag - and stays allowed; only a DIFFERENT pet already holding this tag
+  // rejects. Checked before any write, per the validate-everything-before-any-write idiom this
+  // route already follows.
+  const conflicting = await Pet.findOne({
+    petId: {$ne: pet.petId},
+    $or: [{"dogTag.dogTagIdField": dogTagIdFieldDec}, {"dogTag.dogTagIdDec": bookingIdentity.dogTagIdDec}],
+  }).lean<Pick<PetDoc, "petId" | "name">>();
+  if (conflicting) {
+    return badRequest(`This tag is already linked to another pet record ("${conflicting.name}") - a tag can only belong to one pet.`);
+  }
+
   await linkPetDogTag(pet.petId, {
     dogTagIdDec: bookingIdentity.dogTagIdDec,
     dogTagIdField: dogTagIdFieldDec,
@@ -90,8 +106,15 @@ export async function POST(request: Request, {params}: {params: Promise<{id: str
 
   // Ties the appointment - and, when it has one, its resolved client - to the now-relinked pet:
   // the practical point of relinking from this appointment's own provenance box in the first
-  // place, not just sealing the chain data in isolation.
-  await Appointment.updateOne({appointmentId: id}, {$set: {petIds: [pet.petId], petName: pet.name}});
+  // place, not just sealing the chain data in isolation. Review finding 2: the provenance
+  // resolution flips to "local" in the same write - the tag now genuinely matches a pet on file
+  // (a fresh resolveTagClaim would say exactly that), so the "issued here but not linked" banner
+  // and its Relink control retire instead of staying live and offering to write the same tag onto
+  // a second pet.
+  await Appointment.updateOne(
+    {appointmentId: id},
+    {$set: {petIds: [pet.petId], petName: pet.name, "bookingIdentity.tagResolution": "local"}},
+  );
   if (appointment.clientId) {
     await Promise.all([
       Pet.updateOne({petId: pet.petId}, {$addToSet: {ownerClientIds: appointment.clientId}}),

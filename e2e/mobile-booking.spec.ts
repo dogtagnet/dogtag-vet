@@ -562,6 +562,94 @@ test.describe("section 3: tag-claim tiers", () => {
     expect(pet.dogTag.cloneAddress).toBe(OUR_CLONE);
   });
 
+  test("review finding 2a: a successful relink flips the provenance to local - the tier-3 banner and Relink control retire", async ({page}) => {
+    const dogTagIdDec = "555006";
+    const fieldDec = dogTagIdField(dogTagIdDec).toString(10);
+    const root = `0x${"a1".repeat(32)}`;
+    await setRpcScenario("profileRoot", SBT_ADDRESS, [fieldDec], root);
+    await setRpcScenario("rootIssuer", FACTORY_ADDRESS, [root], OUR_CLONE);
+
+    const clientId = await createClientApi(page, "Relink Flip Owner", "relink-flip@example.com");
+    const service = await getCheckupService(page);
+    const startAt = await openSlot(page, service, 21);
+    const result = await book(page, {
+      serviceId: service.id,
+      startAt: new Date(startAt * 1000).toISOString(),
+      client: {name: "Relink Flip Owner", email: "relink-flip@example.com"},
+      mobile: {source: "dogtag_app", pet: {dogTagIdDec}},
+    });
+    expect(result.status).toBe(201);
+    const petA = await createPetApi(page, "Relink Flip Pet", [clientId]);
+    const relink = await page.request.post(`/api/appointments/${result.body.appointmentId}/relink-dogtag`, {data: {petId: petA}});
+    expect(relink.ok()).toBe(true);
+
+    // The provenance flips to a truthful "local" (a fresh resolution would say exactly that) -
+    // the tier-3 banner and its Relink control retire instead of staying live on an appointment
+    // whose tag is now linked.
+    const appointment = await getAppointmentDirect(page, result.body.appointmentId!);
+    expect(appointment.bookingIdentity.tagResolution).toBe("local");
+    expect(appointment.petIds).toEqual([petA]);
+    await page.goto(`/appointments/${result.body.appointmentId}`);
+    const provenanceBox = page.getByTestId("provenance-box");
+    await expect(provenanceBox).toBeVisible();
+    await expect(provenanceBox.getByText("Matched an existing pet on file")).toBeVisible();
+    await expect(provenanceBox.getByText("This clinic issued this tag, but no pet record here is linked to it")).toHaveCount(0);
+    await expect(provenanceBox.getByRole("button", {name: "Relink"})).toHaveCount(0);
+  });
+
+  test("review finding 2b: one tag can never be relinked onto two pets - a second pet rejects, the tag's own pet stays allowed", async ({page}) => {
+    const dogTagIdDec = "555007";
+    const fieldDec = dogTagIdField(dogTagIdDec).toString(10);
+    const root = `0x${"a2".repeat(32)}`;
+    await setRpcScenario("profileRoot", SBT_ADDRESS, [fieldDec], root);
+    await setRpcScenario("rootIssuer", FACTORY_ADDRESS, [root], OUR_CLONE);
+
+    const clientId = await createClientApi(page, "Relink Twice Owner", "relink-twice@example.com");
+    const service = await getCheckupService(page);
+
+    // TWO appointments carrying the same tier-3 claim - both booked BEFORE any relink, so both
+    // resolve issued_here_unlinked (once a pet is linked, a later booking would resolve tier 1).
+    const startAt1 = await openSlot(page, service, 22);
+    const first = await book(page, {
+      serviceId: service.id,
+      startAt: new Date(startAt1 * 1000).toISOString(),
+      client: {name: "Relink Twice Owner", email: "relink-twice@example.com"},
+      mobile: {source: "dogtag_app", pet: {dogTagIdDec}},
+    });
+    expect(first.status).toBe(201);
+    const startAt2 = await openSlot(page, service, 26);
+    const second = await book(page, {
+      serviceId: service.id,
+      startAt: new Date(startAt2 * 1000).toISOString(),
+      client: {name: "Relink Twice Owner", email: "relink-twice@example.com"},
+      mobile: {source: "dogtag_app", pet: {dogTagIdDec}},
+    });
+    expect(second.status).toBe(201);
+
+    const petA = await createPetApi(page, "Relink Target A", [clientId]);
+    const petB = await createPetApi(page, "Relink Target B", [clientId]);
+
+    const relinkA = await page.request.post(`/api/appointments/${first.body.appointmentId}/relink-dogtag`, {data: {petId: petA}});
+    expect(relinkA.ok()).toBe(true);
+
+    // The SAME tag cannot be relinked onto a DIFFERENT pet from another appointment - one
+    // physical tag, at most one local pet record.
+    const relinkB = await page.request.post(`/api/appointments/${second.body.appointmentId}/relink-dogtag`, {data: {petId: petB}});
+    expect(relinkB.status()).toBe(400);
+    const petBDoc = await (await page.request.get(`/api/pets/${petB}`)).json();
+    expect(petBDoc.dogTag?.dogTagIdField).toBeUndefined();
+    const petADoc = await (await page.request.get(`/api/pets/${petA}`)).json();
+    expect(petADoc.dogTag.dogTagIdField).toBe(fieldDec);
+
+    // Relinking the second appointment onto the pet that ALREADY holds the tag is resolution, not
+    // duplication - still allowed, and it flips that appointment's provenance too.
+    const relinkSame = await page.request.post(`/api/appointments/${second.body.appointmentId}/relink-dogtag`, {data: {petId: petA}});
+    expect(relinkSame.ok()).toBe(true);
+    const secondAppointment = await getAppointmentDirect(page, second.body.appointmentId!);
+    expect(secondAppointment.petIds).toEqual([petA]);
+    expect(secondAppointment.bookingIdentity.tagResolution).toBe("local");
+  });
+
   test("tier 4 (external, appointment-only): no verification data sent - issuer identified, no pet imported", async ({page}) => {
     const dogTagIdDec = "555004";
     const fieldDec = dogTagIdField(dogTagIdDec).toString(10);
