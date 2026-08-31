@@ -18,6 +18,7 @@
     "test:tz": "TZ=America/New_York vitest run tests/unit/dst.test.ts tests/unit/availability.test.ts",
     "test:e2e": "playwright test",
     "seed": "tsx --conditions=react-server scripts/seed.ts",
+    "verify-receipt": "tsx scripts/verify-receipt.ts",
     "worker": "tsx --conditions=react-server src/worker/index.ts"
   },
   "dependencies": {
