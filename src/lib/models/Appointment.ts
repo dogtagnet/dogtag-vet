@@ -34,8 +34,16 @@ export interface BookingIdentity {
   walletAddress?: string;
   walletVerified: boolean;
   /** keccak256 over the canonical booking content (`lib/booking/bookingHash.ts`) - the signed
-   * claim's replay-protection anchor. Present only when a wallet claim was verified. */
+   * claim's replay-protection anchor. Present only when a wallet claim was verified AND this
+   * appointment is still in a non-terminal status - see `releasedBookingHash` below. */
   bookingHash?: string;
+  /** Review finding 1: where `bookingHash` moves when this appointment goes terminal
+   * (`setAppointmentTerminalStatus`'s `$rename` - cancelled/no_show release the signed claim
+   * along with the capacity buckets, so the same configuration can be legitimately re-booked).
+   * Kept rather than deleted so the provenance trail of WHICH signed claim booked this
+   * appointment survives its cancellation. Never carries a unique index - two attempts of the
+   * same claim can both end up cancelled over time, and that is fine. */
+  releasedBookingHash?: string;
   dogTagIdDec?: string;
   tagResolution: TagResolution;
   /** Lowercased 0x address - the clone that issued the claimed tag. Present for
@@ -93,6 +101,7 @@ const bookingIdentitySchema = new Schema<BookingIdentity>(
     walletAddress: String,
     walletVerified: {type: Boolean, required: true},
     bookingHash: String,
+    releasedBookingHash: String,
     dogTagIdDec: String,
     tagResolution: {type: String, enum: ["local", "issued_here_unlinked", "external", "unknown", "none"], required: true},
     issuerClone: String,

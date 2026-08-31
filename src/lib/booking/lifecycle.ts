@@ -71,6 +71,18 @@ export async function createAppointment(
  * The single chokepoint every cancellation/no-show goes through, releasing the capacity the
  * appointment held so the slot reopens for booking. Flipping between the two capacity-releasing
  * terminal statuses (e.g. cancelled -> no_show after the fact) does not double-release.
+ *
+ * Review finding 1: releasing the slot must also release the SIGNED CLAIM that booked it.
+ * `bookingIdentity.bookingHash` is the mobile wallet claim's replay anchor (the booking route's
+ * pre-check and the partial unique index both match on it - `models/Appointment.ts`), and it
+ * covers only booking CONTENT (service, slot, client fields, tag id - `bookingHash.ts`), so a
+ * client who cancels and then legitimately re-books the exact same configuration re-signs to the
+ * identical hash and would be told "already used" forever. The `$rename` below moves the hash
+ * aside to `bookingIdentity.releasedBookingHash` the moment an appointment goes terminal - kept
+ * for audit, never deleted - so replay protection is scoped to NON-TERMINAL appointments by
+ * construction: both enforcement layers only ever see the live field. `$rename` is a no-op when
+ * the source field is absent (staff appointments with no bookingIdentity, pet-only mobile
+ * bookings, or a second terminal flip like cancelled -> no_show), so this needs no guard.
  */
 export async function setAppointmentTerminalStatus(
   appointmentId: string,
@@ -79,7 +91,10 @@ export async function setAppointmentTerminalStatus(
   const appointment = await Appointment.findOne({appointmentId}).lean<AppointmentDoc>();
   if (!appointment) return null;
 
-  await Appointment.updateOne({appointmentId}, {$set: {status}});
+  await Appointment.updateOne(
+    {appointmentId},
+    {$set: {status}, $rename: {"bookingIdentity.bookingHash": "bookingIdentity.releasedBookingHash"}},
+  );
 
   if (CAPACITY_RELEASING_STATUSES.includes(appointment.status)) {
     return {...appointment, status};

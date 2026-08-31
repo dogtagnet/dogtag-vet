@@ -397,6 +397,54 @@ test.describe("section 2: the signed wallet claim", () => {
     expect(matchingWallets[0].via).toBe("booking");
     expect(matchingWallets[0].bookingId).toBe(first.body.appointmentId);
   });
+
+  test("review finding 1: cancelling releases the signed claim - the same configuration re-books cleanly, while an ACTIVE booking still rejects replays", async ({page}) => {
+    const service = await getCheckupService(page);
+    const startAt = await openSlot(page, service, 20);
+    const client = {name: "Cancel Rebook Case", email: "cancel-rebook@example.com"};
+    const now = Math.floor(Date.now() / 1000);
+    const bookingHash = computeBookingHash({serviceId: service.id, startAt, clientName: client.name, clientEmail: client.email});
+    const signer = privateKeyToAccount(generatePrivateKey());
+    const {address, signature} = await signWalletClaim({chainId: 135, clinic: OUR_CLONE, bookingHash, issuedAt: now, deadline: now + 300, signer});
+    const requestBody = {
+      serviceId: service.id,
+      startAt: new Date(startAt * 1000).toISOString(),
+      client,
+      mobile: {source: "dogtag_app", wallet: {address, signature, issuedAt: now, deadline: now + 300}},
+    };
+
+    const first = await book(page, requestBody);
+    expect(first.status).toBe(201);
+    // Guard sanity while ACTIVE: an immediate replay is still rejected.
+    const activeReplay = await book(page, requestBody);
+    expect(activeReplay.status).toBe(400);
+    expect(activeReplay.body.error?.code).toBe("wallet_claim_replayed");
+
+    const cancelRes = await page.request.post(`/v1/booking/appointments/${first.body.appointmentId}/cancel?token=${first.body.token}`);
+    expect(cancelRes.ok()).toBe(true);
+
+    // The exact same signed configuration books again after the cancellation - the point of the
+    // fix: the replay guard is scoped to non-terminal appointments, not a permanent tombstone
+    // (the hash covers only booking CONTENT, so a legitimate "cancel, then changed my mind"
+    // re-book of the same slot re-signs to the identical hash).
+    const rebooked = await book(page, requestBody);
+    expect(rebooked.status).toBe(201);
+    expect(rebooked.body.appointmentId).not.toBe(first.body.appointmentId);
+
+    // The cancelled appointment moved its hash aside (kept for audit, never deleted); the
+    // re-booked appointment holds the live hash.
+    const cancelled = await getAppointmentDirect(page, first.body.appointmentId!);
+    expect(cancelled.status).toBe("cancelled");
+    expect(cancelled.bookingIdentity.bookingHash).toBeUndefined();
+    expect(cancelled.bookingIdentity.releasedBookingHash).toBe(bookingHash);
+    const active = await getAppointmentDirect(page, rebooked.body.appointmentId!);
+    expect(active.bookingIdentity.bookingHash).toBe(bookingHash);
+
+    // And the guard is live again for the REBOOKED appointment.
+    const replayAgain = await book(page, requestBody);
+    expect(replayAgain.status).toBe(400);
+    expect(replayAgain.body.error?.code).toBe("wallet_claim_replayed");
+  });
 });
 
 test.describe("section 3: tag-claim tiers", () => {

@@ -74,6 +74,8 @@ If the clinic has not yet discovered its own on-chain clone (`ClinicSettings.clo
 
 **Replay protection**: the server dedupes on `bookingHash` - a signed claim that already produced an appointment is rejected outright (`error.code: wallet_claim_replayed`) on a second attempt, whether that is a genuine replay or an accidental client retry with identical content.
 A partial unique index on `Appointment.bookingIdentity.bookingHash` backstops the (deliberately checked-first, for a clean error message) application-level pre-check against a genuine race between two concurrent replays of the identical claim.
+Replay protection is scoped to non-terminal appointments: cancelling (or marking no-show) moves the hash aside to `bookingIdentity.releasedBookingHash` - kept for audit, never deleted - so the exact same signed configuration can be legitimately re-booked after a cancellation, while replays against a still-active appointment keep rejecting.
+Because the pre-check and the partial unique index both match on the live `bookingIdentity.bookingHash` field itself, the two enforcement layers agree with this scoping by construction.
 
 ## Client resolution (Q1)
 
