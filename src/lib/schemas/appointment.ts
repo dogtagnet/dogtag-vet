@@ -86,6 +86,15 @@ export const listAppointmentsQuerySchema = z.object({
   clientId: z.string().optional(),
   petId: z.string().optional(),
   status: appointmentStatusEnum.optional(),
+  source: z.enum(["staff", "public_booking", "mobile"]).optional(),
   from: unixSeconds.optional(),
   to: unixSeconds.optional(),
 });
+
+/** `POST /api/appointments/:id/relink-dogtag` (WP4.4 tier 3, "issued_here_unlinked") - staff
+ * picks which pet a tag this clinic issued (but has no local Pet record linking it, typically
+ * after a database restore) actually belongs to. */
+export const relinkDogTagSchema = z.object({
+  petId: z.string().min(1),
+});
+export type RelinkDogTagInput = z.infer<typeof relinkDogTagSchema>;

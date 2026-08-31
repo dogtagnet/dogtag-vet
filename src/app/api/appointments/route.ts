@@ -21,6 +21,7 @@ export async function GET(request: Request) {
     clientId: url.searchParams.get("clientId") ?? undefined,
     petId: url.searchParams.get("petId") ?? undefined,
     status: url.searchParams.get("status") ?? undefined,
+    source: url.searchParams.get("source") ?? undefined,
     from: url.searchParams.get("from") ? Number(url.searchParams.get("from")) : undefined,
     to: url.searchParams.get("to") ? Number(url.searchParams.get("to")) : undefined,
   });
@@ -33,6 +34,7 @@ export async function GET(request: Request) {
   // wire param name stays singular; only the field it filters changed shape).
   if (parsed.data.petId) filter.petIds = parsed.data.petId;
   if (parsed.data.status) filter.status = parsed.data.status;
+  if (parsed.data.source) filter.source = parsed.data.source;
   if (parsed.data.from !== undefined || parsed.data.to !== undefined) {
     filter.startAt = {
       ...(parsed.data.from !== undefined ? {$gte: parsed.data.from} : {}),

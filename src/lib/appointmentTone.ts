@@ -1,4 +1,4 @@
-import type {AppointmentStatus} from "@/lib/models/Appointment";
+import type {AppointmentSource, AppointmentStatus} from "@/lib/models/Appointment";
 import type {StatusTone} from "@/components/ui/StatusBadge";
 
 /**
@@ -33,3 +33,14 @@ export const appointmentStatuses: AppointmentStatus[] = [
   "cancelled",
   "no_show",
 ];
+
+/** WP4.4 - the appointments list's `source` filter. Same display transform the list's own
+ * DataTable cell already used (`source.replace("_", " ")`) before this filter existed, kept here
+ * as the one place both the dropdown's option labels and that cell could share it. */
+export const appointmentSources: AppointmentSource[] = ["staff", "public_booking", "mobile"];
+
+export const appointmentSourceLabel: Record<AppointmentSource, string> = {
+  staff: "Staff",
+  public_booking: "Public booking",
+  mobile: "Mobile app",
+};

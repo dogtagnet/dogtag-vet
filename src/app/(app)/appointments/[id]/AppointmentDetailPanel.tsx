@@ -1,9 +1,12 @@
 "use client";
 
-import {useState} from "react";
+import {useEffect, useRef, useState} from "react";
 import Link from "next/link";
 import {useRouter} from "next/navigation";
+import {AddressChip} from "@/components/ui/AddressChip";
+import {Banner} from "@/components/ui/Banner";
 import {Button, Textarea} from "@/components/ui/controls";
+import {Combobox} from "@/components/pickers/Combobox";
 import {FormSection} from "@/components/ui/FormSection";
 import {KeyValuePanel, type KeyValueRow} from "@/components/ui/KeyValuePanel";
 import {StatusBadge} from "@/components/ui/StatusBadge";
@@ -11,9 +14,9 @@ import {useSnackbar} from "@/components/ui/Snackbar";
 import {ClientPicker} from "@/components/pickers/ClientPicker";
 import {PetMultiPicker} from "@/components/pickers/PetMultiPicker";
 import {formatUnixSeconds} from "@/lib/format";
-import {appointmentStatusLabel, appointmentStatusTone} from "@/lib/appointmentTone";
+import {appointmentSourceLabel, appointmentStatusLabel, appointmentStatusTone} from "@/lib/appointmentTone";
 import {availableStatusActions} from "@/lib/booking/appointmentStatusGuard";
-import type {AppointmentDoc, AppointmentStatus} from "@/lib/models/Appointment";
+import type {AppointmentDoc, AppointmentStatus, TagResolution} from "@/lib/models/Appointment";
 import type {ClientDoc} from "@/lib/models/Client";
 import type {PetDoc} from "@/lib/models/Pet";
 
@@ -164,6 +167,209 @@ function EditTaggingSection({
   );
 }
 
+/** Staff-facing label + assurance level per `TagResolution` - docs/mobile-booking.md's "Assurance
+ * levels" table (Q4): appointment annotation is level 1 (asserted + chain-corroborated - ownership
+ * NOT proven, level 3's consent-ZKP is a later upgrade); Q3's pet-record import (the "external" +
+ * `dataVerified` case) is level 2 (a holder of the real profile data produced it). */
+const tagResolutionLabel: Record<TagResolution, string> = {
+  local: "Matched an existing pet on file",
+  issued_here_unlinked: "Issued by this clinic, not linked to a pet record",
+  external: "Issued by another clinic",
+  unknown: "No tag found",
+  none: "No tag claim",
+};
+
+/** Single-select pet search, scoped globally (not to one client) - `PetMultiPicker` is
+ * client-scoped by design and wrong for this: the whole point of "issued_here_unlinked" is that no
+ * local pet record is known to be linked to this claim at all, so staff must search every pet, not
+ * one client's pets. Mirrors `ClientPicker`'s own debounced-global-search shape. */
+function PetSearchPicker({onSelect}: {onSelect: (pet: PetDoc) => void}) {
+  const [query, setQuery] = useState("");
+  const [results, setResults] = useState<PetDoc[]>([]);
+  const timeoutRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+
+  useEffect(() => {
+    clearTimeout(timeoutRef.current);
+    if (!query.trim()) {
+      setResults([]);
+      return;
+    }
+    timeoutRef.current = setTimeout(async () => {
+      const res = await fetch(`/api/pets?q=${encodeURIComponent(query.trim())}`);
+      if (res.ok) setResults(await res.json());
+    }, 250);
+    return () => clearTimeout(timeoutRef.current);
+  }, [query]);
+
+  return (
+    <Combobox<PetDoc>
+      ariaLabel="Search pets to relink"
+      placeholder="Search pets by name"
+      query={query}
+      onQueryChange={setQuery}
+      options={results}
+      onSelect={(pet) => {
+        onSelect(pet);
+        setQuery("");
+        setResults([]);
+      }}
+      getOptionKey={(pet) => pet.petId}
+      renderOption={(pet) => (
+        <div>
+          <div className="font-medium text-ink">{pet.name}</div>
+          {pet.species && <div className="text-caption text-ink-faint">{pet.species}</div>}
+        </div>
+      )}
+      emptyHint="No matching pets"
+    />
+  );
+}
+
+/** Tier 3's one-click relink: staff picks the pet this clinic-issued (but locally unlinked) tag
+ * actually belongs to - `POST /api/appointments/:id/relink-dogtag` re-verifies on chain before
+ * writing (see that route's own doc comment) and, on success, tags this appointment to the chosen
+ * pet directly. */
+function RelinkDogTagAction({appointmentId, onSaved}: {appointmentId: string; onSaved: () => void}) {
+  const [selectedPet, setSelectedPet] = useState<PetDoc | null>(null);
+  const [saving, setSaving] = useState(false);
+  const snackbar = useSnackbar();
+
+  async function handleRelink() {
+    if (!selectedPet) return;
+    setSaving(true);
+    const res = await fetch(`/api/appointments/${appointmentId}/relink-dogtag`, {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({petId: selectedPet.petId}),
+    });
+    setSaving(false);
+    if (!res.ok) {
+      const body = await res.json().catch(() => null);
+      snackbar.show(body?.error?.message ?? "Could not relink this tag", "danger");
+      return;
+    }
+    snackbar.show(`Tag relinked to ${selectedPet.name}`, "ok");
+    setSelectedPet(null);
+    onSaved();
+  }
+
+  return (
+    <div className="mt-3 flex flex-wrap items-center gap-2">
+      {selectedPet ? (
+        <span className="inline-flex items-center gap-1.5 rounded-badge bg-brand-soft px-2.5 py-1 text-caption font-medium text-brand">
+          {selectedPet.name}
+          <button type="button" onClick={() => setSelectedPet(null)} aria-label={`Remove ${selectedPet.name}`} className="text-brand hover:opacity-70">
+            x
+          </button>
+        </span>
+      ) : (
+        <div className="w-64">
+          <PetSearchPicker onSelect={setSelectedPet} />
+        </div>
+      )}
+      <Button size="sm" onClick={handleRelink} disabled={!selectedPet || saving}>
+        {saving ? "Relinking..." : "Relink"}
+      </Button>
+    </div>
+  );
+}
+
+/**
+ * WP4.4's provenance box - `bookingIdentity`, only present on `source: "mobile"` appointments.
+ * Renders the wallet claim (verified/unverified) and the tag-claim tier's resolved outcome, with
+ * the staff action each tier calls for: tier 1's ownership-mismatch review flag, tier 3's relink,
+ * tier 4's issuer/validity/import status.
+ */
+function ProvenanceBox({appointment, onSaved}: {appointment: AppointmentDoc; onSaved: () => void}) {
+  const identity = appointment.bookingIdentity;
+  if (!identity) return null;
+
+  return (
+    <section className="rounded-card border border-border bg-surface p-5 shadow-card">
+      <h3 className="mb-4 text-section-title text-ink">Provenance</h3>
+      <dl className="grid grid-cols-1 gap-4">
+        {identity.walletAddress && (
+          <div>
+            <dt className="text-caption text-ink-faint">Wallet</dt>
+            <dd className="flex flex-wrap items-center gap-2">
+              <AddressChip address={identity.walletAddress} chain="roax" />
+              <StatusBadge tone={identity.walletVerified ? "ok" : "danger"} label={identity.walletVerified ? "Verified" : "Unverified"} />
+            </dd>
+          </div>
+        )}
+
+        {identity.tagResolution !== "none" && (
+          <div>
+            <dt className="text-caption text-ink-faint">Tag claim</dt>
+            <dd className="space-y-1">
+              <div className="flex flex-wrap items-center gap-2">
+                {identity.dogTagIdDec && <span className="font-mono text-body text-ink">{identity.dogTagIdDec}</span>}
+                <StatusBadge
+                  tone={identity.tagResolution === "local" && !identity.needsReview ? "ok" : identity.tagResolution === "unknown" ? "neutral" : "info"}
+                  label={tagResolutionLabel[identity.tagResolution]}
+                />
+                {identity.tagResolution === "external" && (
+                  <StatusBadge tone="neutral" label="Level 1" />
+                )}
+                {identity.tagResolution === "external" && identity.dataVerified && (
+                  <StatusBadge tone="ok" label="Level 2 - data verified" />
+                )}
+              </div>
+
+              {identity.tagResolution === "local" && identity.needsReview && (
+                <Banner tone="warn" title="Needs review before treating this booking as related to that pet">
+                  <p>
+                    This claim named{" "}
+                    <Link href={`/pets/${identity.candidatePetId}`} className="text-link hover:underline">
+                      an existing pet
+                    </Link>
+                    , but the client this booking resolved to is not one of that pet&apos;s registered owners.
+                    The pet has NOT been linked to this appointment.
+                  </p>
+                </Banner>
+              )}
+
+              {identity.tagResolution === "issued_here_unlinked" && (
+                <Banner tone="warn" title="This clinic issued this tag, but no pet record here is linked to it">
+                  <p className="mb-1">This can happen after a database restore. Pick the pet it belongs to to relink it.</p>
+                  <RelinkDogTagAction appointmentId={appointment.appointmentId} onSaved={onSaved} />
+                </Banner>
+              )}
+
+              {identity.tagResolution === "external" && (
+                <div className="space-y-1">
+                  {identity.issuerClone && (
+                    <div className="flex items-center gap-2">
+                      <span className="text-caption text-ink-faint">Issuer:</span>
+                      <AddressChip address={identity.issuerClone} chain="roax" />
+                      <StatusBadge tone={identity.issuerValid ? "ok" : "danger"} label={identity.issuerValid ? "Valid" : "Not currently valid"} />
+                    </div>
+                  )}
+                  <p className="text-caption text-ink-faint">
+                    {identity.dataVerified
+                      ? "Verified pet data was imported into a pet record for this clinic."
+                      : identity.dataVerificationAttempted
+                        ? "The sent pet data did not verify against the on-chain record - appointment only. A pet record can be created at arrival."
+                        : "No pet data was sent to verify - appointment only. A pet record can be created at arrival."}
+                  </p>
+                </div>
+              )}
+
+              {identity.tagResolution === "unknown" && (
+                <p className="text-caption text-ink-faint">
+                  {identity.verificationError
+                    ? "Could not verify this tag on chain - the chain may have been unreachable. Try refreshing later."
+                    : "No tag was found on chain for this id."}
+                </p>
+              )}
+            </dd>
+          </div>
+        )}
+      </dl>
+    </section>
+  );
+}
+
 export function AppointmentDetailPanel({
   appointment,
   client,
@@ -188,7 +394,7 @@ export function AppointmentDetailPanel({
     {key: "when", label: "When", value: formatUnixSeconds(appointment.startAt, timeZone)},
     {key: "duration", label: "Duration", value: `${durationMinutes} min`},
     {key: "service", label: "Service", value: serviceName ?? "No specific service"},
-    {key: "source", label: "Source", value: appointment.source.replace("_", " ")},
+    {key: "source", label: "Source", value: appointmentSourceLabel[appointment.source]},
     {
       key: "status",
       label: "Status",
@@ -240,6 +446,7 @@ export function AppointmentDetailPanel({
       <StatusActions appointmentId={appointment.appointmentId} status={appointment.status} onSaved={refresh} />
       <NotesSection appointmentId={appointment.appointmentId} notes={appointment.notes} onSaved={refresh} />
       <KeyValuePanel title="Tagged to" rows={taggingRows} />
+      {appointment.source === "mobile" && <ProvenanceBox appointment={appointment} onSaved={refresh} />}
       <EditTaggingSection
         key={`${client?.clientId ?? "none"}:${pets.map((p) => p.petId).sort().join(",")}`}
         appointmentId={appointment.appointmentId}

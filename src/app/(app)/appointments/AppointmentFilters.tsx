@@ -3,10 +3,10 @@
 import {useRouter, useSearchParams, usePathname} from "next/navigation";
 import {Input, Select} from "@/components/ui/controls";
 import {SearchBox} from "@/components/ui/SearchBox";
-import {appointmentStatusLabel, appointmentStatuses} from "@/lib/appointmentTone";
+import {appointmentSourceLabel, appointmentSources, appointmentStatusLabel, appointmentStatuses} from "@/lib/appointmentTone";
 
-/** Filter bar for `/appointments`'s v1 query vocabulary (`q, status, from, to`) - all state lives
- * in the URL so the list page stays a plain server component. */
+/** Filter bar for `/appointments`'s query vocabulary (`q, status, source, from, to` - `source`
+ * added WP4.4) - all state lives in the URL so the list page stays a plain server component. */
 export function AppointmentFilters() {
   const router = useRouter();
   const pathname = usePathname();
@@ -32,6 +32,19 @@ export function AppointmentFilters() {
         {appointmentStatuses.map((status) => (
           <option key={status} value={status}>
             {appointmentStatusLabel[status]}
+          </option>
+        ))}
+      </Select>
+      <Select
+        value={searchParams.get("source") ?? ""}
+        onChange={(e) => setParam("source", e.target.value)}
+        className="w-auto"
+        aria-label="Filter by source"
+      >
+        <option value="">All sources</option>
+        {appointmentSources.map((source) => (
+          <option key={source} value={source}>
+            {appointmentSourceLabel[source]}
           </option>
         ))}
       </Select>
