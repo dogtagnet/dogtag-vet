@@ -98,14 +98,19 @@ export default async function ClientDetailPage({params}: {params: Promise<{id: s
               {
                 key: "pet",
                 header: "Pet",
-                render: (a: AppointmentDoc) =>
-                  a.petId ? (
-                    <Link href={`/pets/${a.petId}`} className="text-link hover:underline">
+                render: (a: AppointmentDoc) => {
+                  // Only link when the appointment is tagged to exactly one pet - the joined
+                  // display string (petName) is ambiguous to link for two-plus pets, and the
+                  // appointments list page (per WP4.3 C8) shows this same joined text unlinked.
+                  const petIds = a.petIds ?? [];
+                  return petIds.length === 1 ? (
+                    <Link href={`/pets/${petIds[0]}`} className="text-link hover:underline">
                       {a.petName}
                     </Link>
                   ) : (
                     a.petName
-                  ),
+                  );
+                },
               },
               {
                 key: "status",

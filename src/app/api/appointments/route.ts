@@ -1,5 +1,6 @@
 import {NextResponse} from "next/server";
 import {randomUUID} from "node:crypto";
+import {resolveTagging} from "@/lib/booking/appointmentTagging";
 import {createAppointment} from "@/lib/booking/lifecycle";
 import type {AppointmentDraft} from "@/lib/booking/mongoStore";
 import {connectToDatabase} from "@/lib/db";
@@ -27,7 +28,10 @@ export async function GET(request: Request) {
 
   const filter: Record<string, unknown> = {};
   if (parsed.data.clientId) filter.clientId = parsed.data.clientId;
-  if (parsed.data.petId) filter.petId = parsed.data.petId;
+  // `petIds` is an array field - a scalar equality filter against it matches any document whose
+  // array CONTAINS that value, which is exactly "appointments this pet is tagged on" (the `petId`
+  // wire param name stays singular; only the field it filters changed shape).
+  if (parsed.data.petId) filter.petIds = parsed.data.petId;
   if (parsed.data.status) filter.status = parsed.data.status;
   if (parsed.data.from !== undefined || parsed.data.to !== undefined) {
     filter.startAt = {
@@ -48,7 +52,13 @@ export async function GET(request: Request) {
 /** `POST /api/appointments` - staff create. Goes through the same `createAppointment` chokepoint
  * as public booking so the capacity-bucket ledger stays truthful, but with `enforceCapacity:
  * false` - staff can already see the calendar and choose to double-book deliberately (a walk-in
- * emergency, say); nothing here should silently block a staff member from doing their job. */
+ * emergency, say); nothing here should silently block a staff member from doing their job.
+ *
+ * Accepts either a tagged payload (`clientId` + at least one `petId`) or a walk-in payload (free-
+ * text `clientName`/`petName`) - `createAppointmentSchema`'s own refinement rejects a mix or a
+ * neither. When tagged, `resolveTagging` re-derives `clientName`/`petName` from the live records
+ * (never trusting client-supplied text for a tagged appointment) and validates every petId
+ * actually belongs to that client. */
 export async function POST(request: Request) {
   const {response} = await requireStaffSession();
   if (response) return response;
@@ -59,7 +69,25 @@ export async function POST(request: Request) {
   if (parsed.data.endAt <= parsed.data.startAt) return badRequest("endAt must be after startAt.");
 
   await connectToDatabase();
-  const draft: AppointmentDraft = {...parsed.data, cancelToken: parsed.data.source === "staff" ? undefined : randomUUID()};
+  const resolved = await resolveTagging(
+    {petIds: [], clientName: parsed.data.clientName ?? "", petName: parsed.data.petName ?? ""},
+    {clientId: parsed.data.clientId, petIds: parsed.data.petIds},
+  );
+  if (!resolved.ok) return badRequest(resolved.error.message);
+
+  const draft: AppointmentDraft = {
+    serviceId: parsed.data.serviceId,
+    staffName: parsed.data.staffName,
+    startAt: parsed.data.startAt,
+    endAt: parsed.data.endAt,
+    notes: parsed.data.notes,
+    source: parsed.data.source,
+    clientId: resolved.result.setClientId,
+    petIds: resolved.result.setPetIds,
+    clientName: resolved.result.clientName,
+    petName: resolved.result.petName,
+    cancelToken: parsed.data.source === "staff" ? undefined : randomUUID(),
+  };
   const result = await createAppointment(draft, {enforceCapacity: false});
   if (!result.ok) {
     // Only reachable if enforceCapacity is ever flipped on for this path in the future.

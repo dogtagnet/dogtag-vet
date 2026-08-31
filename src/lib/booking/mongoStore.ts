@@ -7,7 +7,9 @@ import type {OccupiedInterval} from "@/lib/booking/types";
 
 export interface AppointmentDraft {
   clientId?: string;
-  petId?: string;
+  /** Optional here (unlike `AppointmentDoc.petIds`, always an array once persisted) - a draft
+   * that omits it relies on the schema's own `default: []` at `Appointment.create` time. */
+  petIds?: string[];
   serviceId?: string;
   staffName?: string;
   startAt: number;
