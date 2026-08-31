@@ -43,7 +43,18 @@ export async function PATCH(request: Request, {params}: {params: Promise<{id: st
   const {setOps, unsetOps} = splitSetUnsetOps(parsed.data);
   const merged: Record<string, unknown> = {...existing, ...setOps};
   for (const key of Object.keys(unsetOps)) delete merged[key];
-  const searchKeyFields = merged as unknown as Pick<ClientDoc, "name" | "email" | "phone">;
+  // Read the three searchKey fields back out explicitly rather than asserting the whole `merged`
+  // blob is a ClientDoc: `splitSetUnsetOps` is deliberately field-agnostic (its own tests exercise
+  // `email`/`name` going through $unset too), so nothing actually guarantees these three stayed
+  // strings if a future schema change made one of them nullable - `name` falls back to `existing`
+  // since buildClientSearchKey requires it non-optional, exactly as it always has been (`name` is
+  // not nullable in updateClientSchema, so this fallback is unreachable today, but it keeps the type
+  // honest without relying on that staying true).
+  const searchKeyFields = {
+    name: (merged.name as string | undefined) ?? existing.name,
+    email: merged.email as string | undefined,
+    phone: merged.phone as string | undefined,
+  };
 
   const update: Record<string, unknown> = {$set: {...setOps, searchKey: buildClientSearchKey(searchKeyFields)}};
   if (Object.keys(unsetOps).length > 0) update.$unset = unsetOps;

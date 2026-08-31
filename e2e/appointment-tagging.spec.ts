@@ -382,11 +382,23 @@ test("client identification fields round-trip through the form", async ({page}) 
   expect(afterClear.idDocNumber).toBeUndefined();
 
   // Asymmetric clear: only the number, keeping the type - proves the two fields clear
-  // independently rather than the fix only handling "clear everything at once".
+  // independently rather than the fix only handling "clear everything at once". Each save gets its
+  // OWN reload before the next action starts, not just a shared one at the end: the success toast
+  // reads identically ("Client updated") for every save in this test, so two saves back to back
+  // with no reload in between is a real race, not just a style choice - the second click's
+  // toBeVisible() check can be satisfied by the FIRST save's toast still being on screen (Snackbar.tsx
+  // auto-dismisses after 4s, plenty long enough to still be up), before the second save's own
+  // request has even been sent, and the reload right after would then abandon that in-flight
+  // request. (Caught exactly this way: an earlier version of this test without the reload below
+  // passed the toast check but showed the number persisting as "N-555", not cleared.)
   await page.getByLabel("Document type").selectOption("national_id");
   await page.getByLabel("Document number").fill("N-555");
   await page.getByRole("button", {name: "Save changes"}).click();
   await expect(page.getByText("Client updated")).toBeVisible({timeout: 10_000});
+  await page.reload();
+  await expect(page.getByLabel("Document type")).toHaveValue("national_id");
+  await expect(page.getByLabel("Document number")).toHaveValue("N-555");
+
   await page.getByLabel("Document number").fill("");
   await page.getByRole("button", {name: "Save changes"}).click();
   await expect(page.getByText("Client updated")).toBeVisible({timeout: 10_000});
