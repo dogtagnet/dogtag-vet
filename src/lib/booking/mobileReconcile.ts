@@ -1,5 +1,6 @@
 import {dogTagIdField as computeDogTagIdField, TypeTag, verifyLeafCommitment, type OpenedLeaf} from "@dogtag/standard";
 import type {PetSex} from "@/lib/models/Pet";
+import type {BookingIdentity} from "@/lib/models/Appointment";
 
 const ZERO_HEX32 = `0x${"0".repeat(64)}`;
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
@@ -278,4 +279,46 @@ export async function resolveTagClaim(
     ...(verifiedAttributes ? {verifiedAttributes} : {}),
     ...(existingExternalPetId ? {existingExternalPetId} : {}),
   };
+}
+
+/**
+ * Maps a `TagClaimResult` plus the wallet-claim outcome onto the persisted `Appointment.
+ * bookingIdentity` shape - the ONE place this translation happens, so the booking route itself
+ * never hand-assembles this subdoc field-by-field. Pure and total: every `TagClaimResult` variant
+ * maps to exactly one `BookingIdentity`, carrying only the fields that variant's own doc comment
+ * says apply (an `"external"` result never carries `candidatePetId`, etc.).
+ */
+export function toBookingIdentity(params: {
+  walletAddress?: string;
+  walletVerified: boolean;
+  bookingHash?: string;
+  dogTagIdDec?: string;
+  tagClaim: TagClaimResult;
+}): BookingIdentity {
+  const base: BookingIdentity = {
+    walletAddress: params.walletAddress,
+    walletVerified: params.walletVerified,
+    bookingHash: params.bookingHash,
+    dogTagIdDec: params.dogTagIdDec,
+    tagResolution: params.tagClaim.tagResolution,
+  };
+  const tagClaim = params.tagClaim;
+  switch (tagClaim.tagResolution) {
+    case "local":
+      return tagClaim.needsReview ? {...base, needsReview: true, candidatePetId: tagClaim.candidatePetId} : base;
+    case "unknown":
+      return {...base, verificationError: tagClaim.verificationError};
+    case "issued_here_unlinked":
+      return {...base, issuerClone: tagClaim.issuerClone};
+    case "external":
+      return {
+        ...base,
+        issuerClone: tagClaim.issuerClone,
+        issuerValid: tagClaim.issuerValid,
+        dataVerificationAttempted: tagClaim.dataVerificationAttempted,
+        dataVerified: tagClaim.dataVerified,
+      };
+    case "none":
+      return base;
+  }
 }

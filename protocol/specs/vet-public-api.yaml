@@ -481,7 +481,13 @@ paths:
               schema:
                 $ref: '#/components/schemas/BookAppointmentResponse'
         "400":
-          description: Malformed request (missing client contact, invalid `startAt`, unknown `serviceId`).
+          description: |-
+            Malformed request (missing client contact, invalid `startAt`, unknown `serviceId`), or
+            (WP4.4) a `mobile.wallet` claim that failed verification - `error.code` is
+            `wallet_claim_invalid` (bad/expired/malformed signature, or an invalid time window;
+            `error.details.reason` names the specific check that failed) or
+            `wallet_claim_replayed` (this exact signed claim already booked something). Either way
+            the WHOLE booking is rejected, never partially processed.
           content:
             application/json:
               schema: {$ref: '#/components/schemas/Error'}
@@ -492,6 +498,11 @@ paths:
               schema: {$ref: '#/components/schemas/Error'}
         "429":
           $ref: '#/components/responses/RateLimited'
+        "503":
+          description: "(WP4.4) `error.code` is `clinic_not_configured`: the request carried a `mobile.wallet` claim but this clinic has no discovered on-chain clone to verify it against."
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
         "5XX":
           $ref: '#/components/responses/ServerError'
 
@@ -500,7 +511,7 @@ paths:
       operationId: getAppointmentStatus
       tags: [booking]
       summary: Client-facing appointment status
-      description: Requires the per-appointment `token` issued at booking time (returned as part of `BookAppointmentResponse.appointmentId`'s companion link) - this endpoint carries no staff auth.
+      description: Requires the per-appointment `token` issued at booking time - returned directly as `BookAppointmentResponse.token` (WP4.4; also still embedded in the confirmation email's manage link, which decodes to the same value) - this endpoint carries no staff auth.
       parameters:
         - name: id
           in: path
@@ -1140,10 +1151,84 @@ components:
         client: {$ref: '#/components/schemas/BookingClient'}
         petName: {type: string}
         notes: {type: string, maxLength: 2000}
+        mobile:
+          $ref: '#/components/schemas/MobileBookingBlock'
+
+    MobileBookingBlock:
+      type: object
+      description: |-
+        WP4.4 v2 - optional, backward compatible (an old client that never sends this keeps
+        booking exactly as before). Identifies the request as coming from the DogTag app, and
+        carries an optional signed wallet claim and/or an optional tag claim.
+      required: [source]
+      properties:
+        source:
+          type: string
+          enum: [dogtag_app]
+        wallet:
+          $ref: '#/components/schemas/MobileWalletClaim'
+        pet:
+          $ref: '#/components/schemas/MobilePetClaim'
+
+    MobileWalletClaim:
+      type: object
+      description: |-
+        A `MobileBooking` EIP-712 signature (`docs/mobile-booking.md`, normative struct
+        definition) over a domain/message the SERVER rebuilds itself - `clinic` (this clinic's
+        own on-chain clone address) and `bookingHash` (keccak256 over the canonical booking
+        content) are never accepted from the wire, only recomputed server-side, so this schema has
+        no field for either. An invalid signature (bad recovery, expired, replayed bookingHash)
+        rejects the WHOLE booking, not just the wallet claim.
+      required: [address, signature, issuedAt, deadline]
+      properties:
+        address:
+          type: string
+          pattern: "^0x[0-9a-fA-F]{40}$"
+          description: The claimed wallet address - the struct's `wallet` field; the recovered signer MUST equal this.
+        signature:
+          type: string
+          pattern: "^0x[0-9a-fA-F]{130}$"
+          description: 65-byte `r||s||v` ECDSA signature over the `MobileBooking` EIP-712 message.
+        issuedAt:
+          type: integer
+          description: Unix seconds - the struct's `issuedAt`.
+        deadline:
+          type: integer
+          description: Unix seconds after which this claim is no longer accepted - the struct's `deadline`. Server-enforced max window of 600s (10 minutes) from `issuedAt`, independent of whatever the app set.
+
+    MobilePetClaim:
+      type: object
+      description: |-
+        The tag claim - asserted, not itself signed (see `docs/mobile-booking.md`'s assurance-level
+        table: appointment annotation is accepted at level 1, corroborated on chain by the server's
+        own tier resolution; a hijack of someone else's LOCAL pet record is guarded by the
+        needs-review flag, never by this claim alone). `leaves`/`reservedLeafHashes` are the
+        OPTIONAL level-2 verification data (Q3): both present together, or both absent - a request
+        with only one is a malformed shape and is rejected, never silently downgraded.
+      properties:
+        dogTagIdDec:
+          type: string
+          description: The raw decimal handle, if known. At least one of dogTagIdDec/dogTagIdField is required.
+        dogTagIdField:
+          type: string
+          description: The canonical on-chain field-form id, if known (the app "holds both id forms locally").
+        name:
+          type: string
+          description: Off-chain display hint only - never chain-verified by itself.
+        leaves:
+          type: array
+          maxItems: 61
+          items: {$ref: '#/components/schemas/OpenedLeaf'}
+          description: The pet's FULL opened profile-tree leaves (not a selective subset) - required alongside reservedLeafHashes for Q3 level-2 verification.
+        reservedLeafHashes:
+          type: array
+          minItems: 3
+          maxItems: 3
+          items: {$ref: '#/components/schemas/Hex32'}
 
     BookAppointmentResponse:
       type: object
-      required: [appointmentId, status]
+      required: [appointmentId, status, token]
       properties:
         appointmentId: {type: string}
         status:
@@ -1152,6 +1237,13 @@ components:
         ics:
           type: string
           description: Base64-encoded `.ics` calendar attachment, when the vet auto-confirms on booking.
+        token:
+          type: string
+          description: |-
+            The per-appointment client access token (the `AppointmentToken` parameter every other
+            route in this section requires) - this IS the manage credential, returned directly so
+            `GET/POST /v1/booking/appointments/{id}` and its `/cancel` companion are usable without
+            ever having to fall back to parsing a confirmation email's link.
 
     AppointmentStatusResponse:
       type: object

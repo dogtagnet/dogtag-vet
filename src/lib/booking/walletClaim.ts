@@ -37,12 +37,16 @@ export interface VerifyMobileBookingWalletClaimInput {
   now: number;
 }
 
+export type MobileBookingWalletClaimInvalidReason =
+  | "deadline_before_issued_at"
+  | "window_too_long"
+  | "issued_in_future"
+  | "expired"
+  | "signature_invalid";
+
 export type VerifyMobileBookingWalletClaimResult =
   | {ok: true; wallet: string} // lowercased
-  | {
-      ok: false;
-      reason: "deadline_before_issued_at" | "window_too_long" | "issued_in_future" | "expired" | "signature_invalid";
-    };
+  | {ok: false; reason: MobileBookingWalletClaimInvalidReason};
 
 /**
  * Server verification of a `MobileBooking` signed wallet claim - plans/wp4.4-mobile-booking-

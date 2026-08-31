@@ -20,6 +20,9 @@ This is why tagging is all-or-nothing wherever it's actively enforced: a client 
 So `clientId` set with `petIds` empty is a real, permanent, continuously-produced shape on the wire, not a bug - every reader of an appointment document (the list, the detail page, a direct API consumer) needs to treat "tagged-with-a-client-but-zero-pets" as a legitimate rendering case for `source: "public_booking"` appointments specifically, alongside the two above.
 Critically, this shape must never be treated as something to *fix on sight*: a status action or a notes save on one of these appointments does not touch `clientId`/`petIds` at all and must succeed exactly as it would on any other appointment (see "The symmetric tagging invariant" below for how the server tells "untouched" apart from "being retagged into this shape").
 
+**A second exception, WP4.4**: `source: "mobile"` appointments (the DogTag app's own bookings, `POST /v1/booking/book`'s optional `mobile` block) CAN carry both `clientId` and a non-empty `petIds` set at creation - unlike public booking, the app may know a specific pet's tag claim - but they reach that shape through the tag-claim tier resolution in `lib/booking/mobileReconcile.ts`, never through `resolveTagging`'s ownership check.
+That resolver enforces its own, differently-shaped version of the same invariant (a pet is only ever linked when the resolved client is genuinely among its owners; a claim that fails that check is flagged for review rather than rejected outright) - see docs/mobile-booking.md for the full tier list and the `bookingIdentity` provenance subdoc these appointments also carry.
+
 ### Every write path funnels through the same two chokepoints
 
 Whatever creates or mutates an appointment - the staff calendar's click-to-create dialog, the generic staff API, a retag from the detail page's Edit-tagging section, public booking - ends up going through:

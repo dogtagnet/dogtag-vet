@@ -91,12 +91,23 @@ To use one: create a database, get its connection string, and set `MONGODB_URI` 
 Nothing else in this app changes - it is plain `mongoose` against a standard connection string either way.
 If you switch to a managed Mongo under Docker Compose, you can also drop the `mongo` service and its volume from `docker-compose.yml` entirely.
 
-## Public API protection
+## Protecting your deployment
 
-Every public API route (`/p/`, `/x/`, `/v1/booking/*`, `/v1/verify/consent`, `/v1/payments/*/public`, `/v1/entity`, `/r/pay/*`, `/profiles/issue/custodial-bind`) already rate-limits and caps request body size at the application layer (`src/lib/rateLimit.ts`, `src/lib/bodyLimit.ts`) and records rejected requests to an abuse log visible on the Settings page.
+This code is open source and the APIs are known to everyone - a self-hosting vet (git clone + setup) needs perimeter protection beyond the in-process fixed-window limiter described below, because the booking/registration endpoints are open by design (the QR-based flows carry one-time tokens, but nothing gates who can even attempt to start one).
+This section is also referenced from `plans/MANUAL-E2E.md` (the manual UAT runbook) as the deployment-hardening step that runbook assumes is done before any real client traffic reaches a clinic's instance.
+
+Every public API route (`/p/`, `/x/`, `/w/`, `/v1/booking/*`, `/v1/verify/consent`, `/v1/payments/*/public`, `/v1/entity`, `/r/pay/*`, `/profiles/issue/custodial-bind`) already rate-limits and caps request body size at the application layer (`src/lib/rateLimit.ts`, `src/lib/bodyLimit.ts`) and records rejected requests to an abuse log visible on the Settings page.
 The client-facing HTML pages that front those routes - `/book` (the booking form) and `/booking/*` (the status/cancel page a confirmation email links to) - carry no application-layer rate limit of their own; they are static-ish page renders, and every write or lookup they trigger goes through the limited API routes above, so the exposure is the same page-load cost any public page has.
 That log keys each entry by the requester's IP address and self-prunes after 14 days, which is the entirety of this deployment's retention policy for that data.
 A reverse proxy in front of the app is still worth having, both to absorb traffic before it reaches this single Node process at all and for TLS termination.
+
+**This limiter is per-process, in-memory, and resets on restart** - it stops a single abusive caller from overwhelming ONE running instance, but it has no visibility across multiple instances (a horizontally-scaled deployment) and no persistence.
+If you ever run more than one instance of this app behind a load balancer, the per-process limiter stops being an accurate shared count - the documented upgrade path is to move `src/lib/rateLimit.ts`'s counters into Redis (or an equivalent shared store) so every instance enforces the same limit against the same counter, rather than each instance separately allowing its own share of the traffic through.
+This is not implemented in this codebase today; it is named here so a deployment that actually needs to scale horizontally knows what to build before it does, rather than discovering the gap under load.
+A single-instance deployment (the Docker Compose quickstart this project is built around) does not need this - the in-process limiter is the right tool for it.
+
+**What an attack looks like**: a burst of requests against `/v1/booking/book`, `/profiles/issue/custodial-bind`, or a `/p/`/`/x/`/`/w/` token-guessing attempt shows up as a spike of rejected-request entries in the AbuseLog collection (Settings page), keyed by IP and reason (`rate_limited`, `body_too_large`).
+A normal clinic's traffic produces a near-empty log; a sudden run of entries from one IP (or a small rotating set, if `TRUSTED_PROXY_HOPS` is configured correctly and the attacker isn't actually behind Cloudflare) is the signal to look at Cloudflare's own analytics for the same window and consider tightening the WAF rules below or enabling Attack Mode / "I'm Under Attack" mode for the domain.
 
 ### Trusted proxy hops (X-Forwarded-For)
 
@@ -110,15 +121,21 @@ This app never trusts the leftmost entry. Instead:
 
 ### Cloudflare
 
-If you are proxying through Cloudflare (orange-clouded DNS record, which the cloudflared tunnel path above uses automatically), two settings are worth configuring:
+This is the recommended perimeter for any deployment reachable over the public internet - orange-cloud the domain (DNS record proxied through Cloudflare, which the `cloudflared` tunnel path above sets up automatically) and configure:
 
-1. **Rate limiting rules** (Security > WAF > Rate limiting rules) - add a rule per sensitive path group, tighter than the application's own limits so abusive traffic is stopped at the edge instead of reaching this process at all:
+1. **Never expose the origin IP, and firewall it to Cloudflare only.**
+   Orange-clouding a DNS record hides this app's real IP from ordinary DNS lookups, but that protection is worthless if the IP leaks another way (a stale A record from before you enabled the proxy, a server error page that reveals it, a different subdomain left un-proxied) or if the origin's own firewall still accepts connections from anywhere.
+   Configure your host's firewall (or, on the `cloudflared` tunnel path above, rely on the tunnel making only outbound connections - there is no listening inbound port to protect at all) to accept inbound traffic on the app's port ONLY from [Cloudflare's published IP ranges](https://www.cloudflare.com/ips/), and audit that no other DNS record for the same domain points at the origin directly.
+   An attacker who finds the origin IP can bypass every Cloudflare rule below entirely by connecting straight to it.
+2. **Rate limiting rules** (Security > WAF > Rate limiting rules) - add a rule per sensitive path group, tighter than the application's own limits so abusive traffic is stopped at the edge instead of reaching this process at all:
    - `/v1/booking/book`, `/profiles/issue/custodial-bind`, `/v1/verify/consent` (the write/session-start endpoints): a low limit, e.g. 5 requests per minute per IP.
-   - `/p/*`, `/x/*`, `/booking/*` (token-guessing surface): a moderate limit, e.g. 20 requests per minute per IP - these are also where a rotating, unguessable token is the real defense; the rate limit is defense in depth, not the only control.
+   - `/p/*`, `/x/*`, `/w/*`, `/booking/*` (token-guessing surface): a moderate limit, e.g. 20 requests per minute per IP - these are also where a rotating, unguessable token is the real defense; the rate limit is defense in depth, not the only control.
    - `/book` (the public booking form page itself, as opposed to the `/v1/booking/*` API it calls): Cloudflare's default rate limiting is usually sufficient - it is a page render, not a write.
    - Everything else under `/v1/*` and `/r/*`: Cloudflare's default rate limiting is usually sufficient; add a rule only if you see abuse in the logs.
-2. **Bot Fight Mode** (Security > Bots) - turn it on.
+3. **Bot Fight Mode** (Security > Bots) - turn it on.
    It challenges automated traffic hitting the public mint/verify/booking pages without affecting the DogTag mobile app or a browser filling out the booking form normally.
+4. **Challenge pages** for the same sensitive path group as the rate-limiting rules above (Security > WAF > Custom rules - a rule matching those paths with the action set to "Managed Challenge" rather than "Block") give a real browser or the DogTag app's own well-behaved traffic a chance to pass (a JS challenge / device check) while stopping a simple scripted flood outright, without permanently blocking an IP a legitimate client might later share (e.g. behind carrier-grade NAT).
+   Reserve outright blocking for IPs you have already confirmed are abusive from the AbuseLog evidence above.
 
 Cloudflare's `CF-Connecting-IP` header is used automatically (see "Trusted proxy hops" above) - it takes priority over `X-Forwarded-For`, so `TRUSTED_PROXY_HOPS` does not need to be set for a purely Cloudflare-proxied deployment. Still set it if this app also sits behind an additional reverse proxy of your own between Cloudflare and this process.
 
@@ -145,7 +162,7 @@ server {
         proxy_set_header X-Forwarded-Proto $scheme;
     }
 
-    location ~ ^/(p|x)/ {
+    location ~ ^/(p|x|w)/ {
         limit_req zone=dogtag_tokens burst=10 nodelay;
         proxy_pass http://127.0.0.1:3000;
         proxy_set_header Host $host;

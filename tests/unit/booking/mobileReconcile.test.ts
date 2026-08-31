@@ -16,6 +16,7 @@ import {
   type MobileTagLookupStore,
   mapVerifiedLeavesToPetAttributes,
   resolveTagClaim,
+  toBookingIdentity,
 } from "@/lib/booking/mobileReconcile";
 
 const OUR_CLONE = "0x5bd5048125f223100a2753a740f34d044ab493b";
@@ -329,3 +330,58 @@ function buildVerifiableFixture(): {leaves: OpenedLeaf[]; reservedLeafHashes: st
 
   return {leaves, reservedLeafHashes, root};
 }
+
+describe("toBookingIdentity", () => {
+  const walletBase = {walletAddress: "0xabc", walletVerified: true, bookingHash: "0xhash", dogTagIdDec: "42"};
+
+  it("maps 'none' to just the base fields, no tier-specific extras", () => {
+    expect(toBookingIdentity({...walletBase, tagClaim: {tagResolution: "none"}})).toEqual({...walletBase, tagResolution: "none"});
+  });
+
+  it("maps a clean local match with no review-flag fields", () => {
+    const result = toBookingIdentity({...walletBase, tagClaim: {tagResolution: "local", petId: "pet-1", needsReview: false}});
+    expect(result).toEqual({...walletBase, tagResolution: "local"});
+    expect(result).not.toHaveProperty("needsReview");
+    expect(result).not.toHaveProperty("candidatePetId");
+  });
+
+  it("maps a review-flagged local mismatch with candidatePetId", () => {
+    const result = toBookingIdentity({...walletBase, tagClaim: {tagResolution: "local", needsReview: true, candidatePetId: "pet-2"}});
+    expect(result).toEqual({...walletBase, tagResolution: "local", needsReview: true, candidatePetId: "pet-2"});
+  });
+
+  it("maps unknown with its verificationError flag, both true and false", () => {
+    expect(toBookingIdentity({...walletBase, tagClaim: {tagResolution: "unknown", verificationError: true}})).toMatchObject({verificationError: true});
+    expect(toBookingIdentity({...walletBase, tagClaim: {tagResolution: "unknown", verificationError: false}})).toMatchObject({verificationError: false});
+  });
+
+  it("maps issued_here_unlinked with issuerClone only", () => {
+    const result = toBookingIdentity({...walletBase, tagClaim: {tagResolution: "issued_here_unlinked", issuerClone: OUR_CLONE, dogTagIdField: DOG_TAG_ID_FIELD, root: A_ROOT}});
+    expect(result).toEqual({...walletBase, tagResolution: "issued_here_unlinked", issuerClone: OUR_CLONE});
+  });
+
+  it("maps external with issuerClone/issuerValid/dataVerificationAttempted/dataVerified, never verifiedAttributes or existingExternalPetId (those are for the route to consume, not to persist)", () => {
+    const result = toBookingIdentity({
+      ...walletBase,
+      tagClaim: {
+        tagResolution: "external",
+        issuerClone: FOREIGN_CLONE,
+        dogTagIdField: DOG_TAG_ID_FIELD,
+        root: A_ROOT,
+        issuerValid: true,
+        dataVerificationAttempted: true,
+        dataVerified: true,
+        verifiedAttributes: {species: "dog"},
+        existingExternalPetId: "pet-3",
+      },
+    });
+    expect(result).toEqual({
+      ...walletBase,
+      tagResolution: "external",
+      issuerClone: FOREIGN_CLONE,
+      issuerValid: true,
+      dataVerificationAttempted: true,
+      dataVerified: true,
+    });
+  });
+});
