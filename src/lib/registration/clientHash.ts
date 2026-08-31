@@ -3,7 +3,14 @@ import {uuidToBytes16} from "@/lib/registration/uuid";
 
 /** The subset of `Client` fields that feed `clientHash` - deliberately structural (not
  * `ClientDoc` itself) so this module stays free of any mongoose/model dependency and is directly
- * importable from `scripts/verify-receipt.ts`. */
+ * importable from `scripts/verify-receipt.ts`.
+ *
+ * Deliberately never grows an `idDocType`/`idDocNumber` field (WP4.3 A2, normative), even though
+ * `ClientDoc` gained both: this shape is baked into every already-signed wallet-registration
+ * receipt's `clientHash` commitment (`docs/client-wallet-registration.md`), so changing what it
+ * hashes over would make every existing receipt permanently unverifiable against a freshly
+ * recomputed hash. Identification-document fields stay outside the wallet-registration trust
+ * boundary entirely. */
 export interface ClientHashFields {
   name: string;
   address?: string;

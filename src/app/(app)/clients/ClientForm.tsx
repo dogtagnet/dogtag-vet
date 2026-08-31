@@ -3,10 +3,10 @@
 import {useState} from "react";
 import type {ReactNode} from "react";
 import {useRouter} from "next/navigation";
-import {Button, Input, Textarea} from "@/components/ui/controls";
+import {Button, Input, Select, Textarea} from "@/components/ui/controls";
 import {FormActionBar, FormField, FormSection} from "@/components/ui/FormSection";
 import {useSnackbar} from "@/components/ui/Snackbar";
-import type {ClientDoc} from "@/lib/models/Client";
+import type {ClientDoc, ClientIdDocType} from "@/lib/models/Client";
 
 export interface ClientFormValues {
   name: string;
@@ -14,7 +14,16 @@ export interface ClientFormValues {
   phone: string;
   address: string;
   notes: string;
+  idDocType: ClientIdDocType | "";
+  idDocNumber: string;
 }
+
+const idDocTypeLabel: Record<ClientIdDocType, string> = {
+  passport: "Passport",
+  national_id: "National ID card",
+  drivers_license: "Driver's license",
+  other: "Other",
+};
 
 function toValues(client?: ClientDoc): ClientFormValues {
   return {
@@ -23,6 +32,8 @@ function toValues(client?: ClientDoc): ClientFormValues {
     phone: client?.phone ?? "",
     address: client?.address ?? "",
     notes: client?.notes ?? "",
+    idDocType: client?.idDocType ?? "",
+    idDocNumber: client?.idDocNumber ?? "",
   };
 }
 
@@ -73,6 +84,8 @@ export function ClientForm({client, children}: {client?: ClientDoc; children?: R
       phone: values.phone.trim() || undefined,
       address: values.address.trim() || undefined,
       notes: values.notes.trim() || undefined,
+      idDocType: values.idDocType || undefined,
+      idDocNumber: values.idDocNumber.trim() || undefined,
     };
     try {
       const res = await fetch(client ? `/api/clients/${client.clientId}` : "/api/clients", {
@@ -132,6 +145,32 @@ export function ClientForm({client, children}: {client?: ClientDoc; children?: R
             rows={3}
             value={values.notes}
             onChange={(e) => set("notes", e.target.value)}
+          />
+        </FormField>
+      </FormSection>
+      <FormSection
+        title="Identification"
+        helperText="Optional - passport, ID card, driver license, or other proof of identity."
+      >
+        <FormField label="Document type" htmlFor="client-id-doc-type" error={fieldErrors.idDocType}>
+          <Select
+            id="client-id-doc-type"
+            value={values.idDocType}
+            onChange={(e) => set("idDocType", e.target.value as ClientFormValues["idDocType"])}
+          >
+            <option value="">Not on file</option>
+            {(Object.entries(idDocTypeLabel) as [ClientIdDocType, string][]).map(([value, label]) => (
+              <option key={value} value={value}>
+                {label}
+              </option>
+            ))}
+          </Select>
+        </FormField>
+        <FormField label="Document number" htmlFor="client-id-doc-number" error={fieldErrors.idDocNumber}>
+          <Input
+            id="client-id-doc-number"
+            value={values.idDocNumber}
+            onChange={(e) => set("idDocNumber", e.target.value)}
           />
         </FormField>
       </FormSection>

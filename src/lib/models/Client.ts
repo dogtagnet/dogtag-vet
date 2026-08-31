@@ -22,6 +22,8 @@ export interface ClientWallet {
   revokedAt?: number; // unix seconds; undefined = active
 }
 
+export type ClientIdDocType = "passport" | "national_id" | "drivers_license" | "other";
+
 export interface ClientDoc {
   clientId: string;
   name: string;
@@ -29,6 +31,14 @@ export interface ClientDoc {
   phone?: string;
   address?: string;
   notes?: string;
+  /** WP4.3 A2: optional identification-document fields - only `name` stays required on a client.
+   * Both are deliberately excluded from two places that otherwise touch every other client field:
+   * `buildClientSearchKey` below (no ID numbers in a substring-searchable index), and WP4.2's
+   * `clientHash` canonicalization (`src/lib/registration/clientHash.ts`'s `ClientHashFields` -
+   * already-signed wallet-registration receipts must stay verifiable against the exact
+   * {name,email,phone,address} shape they were signed over, which must never grow a new field). */
+  idDocType?: ClientIdDocType;
+  idDocNumber?: string;
   petIds: string[];
   wallets: ClientWallet[];
   searchKey: string;
@@ -68,6 +78,8 @@ const clientSchema = new Schema<ClientDoc>(
     phone: {type: String, trim: true},
     address: {type: String, trim: true},
     notes: {type: String},
+    idDocType: {type: String, enum: ["passport", "national_id", "drivers_license", "other"]},
+    idDocNumber: {type: String, trim: true},
     petIds: {type: [String], default: []},
     wallets: {type: [clientWalletSchema], default: []},
     searchKey: {type: String, required: true, index: true},
@@ -81,7 +93,13 @@ export const Client = getOrCreateModel<ClientDoc>("Client", clientSchema);
 
 /** Lowercased, whitespace-collapsed name+email+phone blob used for the search box - kept
  * denormalized on the document so listing/search queries never need a runtime join or regex
- * across multiple fields. */
+ * across multiple fields.
+ *
+ * Deliberately never reads `idDocType`/`idDocNumber` (WP4.3 A2, normative): an identification
+ * document number must never end up in a substring-searchable index. This is enforced structurally
+ * by the parameter type below picking only {name, email, phone} - a caller may still pass a wider
+ * object (e.g. a full `ClientDoc`) through it, but this function only ever reads these three
+ * fields off it. */
 export function buildClientSearchKey(fields: Pick<ClientDoc, "name" | "email" | "phone">): string {
   return [fields.name, fields.email, fields.phone]
     .filter(Boolean)
