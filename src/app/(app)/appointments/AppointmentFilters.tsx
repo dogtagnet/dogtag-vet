@@ -25,7 +25,7 @@ export function AppointmentFilters() {
       <Select
         value={searchParams.get("status") ?? ""}
         onChange={(e) => setParam("status", e.target.value)}
-        className="w-auto"
+        className="!w-auto"
         aria-label="Filter by status"
       >
         <option value="">All statuses</option>
@@ -38,7 +38,7 @@ export function AppointmentFilters() {
       <Select
         value={searchParams.get("source") ?? ""}
         onChange={(e) => setParam("source", e.target.value)}
-        className="w-auto"
+        className="!w-auto"
         aria-label="Filter by source"
       >
         <option value="">All sources</option>
@@ -52,14 +52,14 @@ export function AppointmentFilters() {
         type="date"
         value={searchParams.get("fromDate") ?? ""}
         onChange={(e) => setParam("fromDate", e.target.value)}
-        className="w-auto"
+        className="!w-auto"
         aria-label="From date"
       />
       <Input
         type="date"
         value={searchParams.get("toDate") ?? ""}
         onChange={(e) => setParam("toDate", e.target.value)}
-        className="w-auto"
+        className="!w-auto"
         aria-label="To date"
       />
     </div>

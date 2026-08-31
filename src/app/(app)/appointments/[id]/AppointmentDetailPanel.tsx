@@ -285,7 +285,7 @@ function ProvenanceBox({appointment, onSaved}: {appointment: AppointmentDoc; onS
   if (!identity) return null;
 
   return (
-    <section className="rounded-card border border-border bg-surface p-5 shadow-card">
+    <section data-testid="provenance-box" className="rounded-card border border-border bg-surface p-5 shadow-card">
       <h3 className="mb-4 text-section-title text-ink">Provenance</h3>
       <dl className="grid grid-cols-1 gap-4">
         {identity.walletAddress && (

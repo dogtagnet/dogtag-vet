@@ -1,7 +1,12 @@
 import {defineConfig, devices} from "@playwright/test";
 import {E2E_MONGO_URI} from "./e2e/mongo-fixture";
+import {RPC_STUB_URL} from "./e2e/rpcStub";
 
-const PORT = 4210;
+// Overridable so a copy of this checkout synced elsewhere (to run its own dev server without
+// colliding with a `next dev`/`next start` already bound to the default port from THIS checkout)
+// can run the suite on a different one. Defaults to 4210 unchanged for every normal
+// `pnpm test:e2e` run.
+const PORT = Number(process.env.E2E_WEB_PORT ?? 4210);
 
 export default defineConfig({
   testDir: "./e2e",
@@ -33,14 +38,17 @@ export default defineConfig({
       PUBLIC_BASE_URL: `http://localhost:${PORT}`,
       AUTH_SECRET: "e2e-test-secret-not-for-production-use",
       AUTH_TRUST_HOST: "1",
-      // wallet-registration.spec.ts's session creation makes a real (read-only - this flow never
-      // writes on chain) network round trip for the current block number; a fresh checkout has no
-      // .env.local, so without these the suite cannot pass at all. Non-secret: a public ROAX
-      // devnet RPC/explorer and this clinic's own already-deployed contract addresses, not keys.
-      ROAX_RPC_URL: "https://devrpc.roax.net",
+      // wallet-registration.spec.ts's session creation reads the current block number, and
+      // WP4.4's mobile-booking tiers read profileRoot/rootIssuer/isValid - all against
+      // `rpcStub.ts`'s local, deterministic, scriptable stub (`global-setup.ts` starts it for the
+      // whole run) rather than a real devnet RPC: offline, and drivable per-test for tiers a real
+      // chain has no practical way to put into a specific state on demand (a foreign-clone tag, an
+      // unreadable-chain retry). ROAX_EXPLORER_URL stays a real (non-secret) URL - only used to
+      // build display links, never actually fetched.
+      ROAX_RPC_URL: RPC_STUB_URL,
       ROAX_CHAIN_ID: "135",
       ROAX_EXPLORER_URL: "https://explorer.roax.net",
-      NEXT_PUBLIC_ROAX_RPC_URL: "https://devrpc.roax.net",
+      NEXT_PUBLIC_ROAX_RPC_URL: RPC_STUB_URL,
       NEXT_PUBLIC_ROAX_CHAIN_ID: "135",
       NEXT_PUBLIC_ROAX_EXPLORER_URL: "https://explorer.roax.net",
       VET_ISSUER_FACTORY_ADDRESS: "0x1bd279d3c9fc85eb3e4d304ee890435b6a5ca4cc",
