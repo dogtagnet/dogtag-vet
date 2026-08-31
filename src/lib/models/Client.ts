@@ -108,3 +108,27 @@ export function buildClientSearchKey(fields: Pick<ClientDoc, "name" | "email" | 
     .replace(/\s+/g, " ")
     .trim();
 }
+
+/**
+ * Round-2 fix: splits an already-parsed PATCH payload into Mongo `$set`/`$unset` operations, ruled
+ * on the null-ness of each value alone - a `null` value becomes an `$unset` (explicit clear), any
+ * other defined value becomes a `$set`, and a key that is `undefined` (or simply absent, since
+ * `Object.entries` never sees an absent key at all) is left out of both, leaving that field
+ * untouched. Not specific to any one field by design, so it composes correctly for whichever subset
+ * of a payload's fields happen to be nullable per their zod schema (today: only
+ * `updateClientSchema`'s `idDocType`/`idDocNumber` - see its doc comment for why the rest of the
+ * optional client fields are not, yet).
+ *
+ * The route still owns applying these (`Client.findOneAndUpdate({...}, {$set, $unset})`) and
+ * computing `searchKey` from the resulting merged shape - this only decides which bucket each field
+ * goes in.
+ */
+export function splitSetUnsetOps(fields: Record<string, unknown>): {setOps: Record<string, unknown>; unsetOps: Record<string, "">} {
+  const setOps: Record<string, unknown> = {};
+  const unsetOps: Record<string, ""> = {};
+  for (const [key, value] of Object.entries(fields)) {
+    if (value === null) unsetOps[key] = "";
+    else if (value !== undefined) setOps[key] = value;
+  }
+  return {setOps, unsetOps};
+}

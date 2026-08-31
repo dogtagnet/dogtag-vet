@@ -16,6 +16,17 @@ Both are optional - a clinic that never asks for ID never has to fill them in, a
 
 The ClientForm shows them under an "Identification" section, with the helper text "Optional - passport, ID card, driver license, or other proof of identity."
 
+### Clearing a field
+
+`PATCH /api/clients/:id` treats `idDocType`/`idDocNumber` the same tri-state way `PATCH /api/appointments/:id` treats `clientId` (see `docs/appointments.md`'s "The PATCH contract"): omitting the key leaves the field untouched, and `null` is an explicit clear.
+A non-empty string sets or replaces the value.
+An empty string (`""`) is rejected with `400` - `null` is the only way to clear either field, never an empty string.
+The two fields clear independently: a request can clear one while leaving the other exactly as it was.
+
+`ClientForm` sends `null` for an emptied field whenever it is editing an existing client, so clearing the field in the UI actually clears it on the server.
+This matters because an emptied field that serialized to `undefined` instead would vanish from the request body entirely (`JSON.stringify` drops `undefined` values) - the route's "key absent means untouched" contract would then correctly, but unhelpfully, leave the old value exactly as it was.
+A brand-new client (the create form, no client yet to edit) has nothing to clear, and `POST /api/clients` does not accept `null` for either field, so creation always omits the key when a field is left blank.
+
 ### Two deliberate exclusions
 
 These fields are deliberately kept out of two places that otherwise touch every other client field, and this is normative (WP4.3 A2), not an oversight:

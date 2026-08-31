@@ -84,8 +84,13 @@ export function ClientForm({client, children}: {client?: ClientDoc; children?: R
       phone: values.phone.trim() || undefined,
       address: values.address.trim() || undefined,
       notes: values.notes.trim() || undefined,
-      idDocType: values.idDocType || undefined,
-      idDocNumber: values.idDocNumber.trim() || undefined,
+      // Round-2 fix: on an EXISTING client (PATCH), an emptied ID field is an explicit clear -
+      // send `null` so the server $unsets it (updateClientSchema's nullable idDocType/idDocNumber,
+      // mirroring the appointment PATCH route's already-shipped clientId tri-state). A brand-new
+      // client (no `client` prop yet, POST) has nothing to clear yet, and createClientSchema does
+      // not accept `null` - so creation keeps omitting the key exactly as it did before this fix.
+      idDocType: values.idDocType ? values.idDocType : client ? null : undefined,
+      idDocNumber: values.idDocNumber.trim() ? values.idDocNumber.trim() : client ? null : undefined,
     };
     try {
       const res = await fetch(client ? `/api/clients/${client.clientId}` : "/api/clients", {

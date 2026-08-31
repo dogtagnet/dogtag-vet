@@ -361,6 +361,46 @@ test("client identification fields round-trip through the form", async ({page}) 
   await page.reload();
   await expect(page.getByLabel("Document type")).toHaveValue("passport");
   await expect(page.getByLabel("Document number")).toHaveValue("P-9988776");
+
+  // Round-2 fix: clearing must actually take, not silently no-op behind a success toast (the
+  // client asking to have their passport number removed is exactly the case that matters). Clear
+  // BOTH fields through the real form, same as a staff member would.
+  await page.getByLabel("Document type").selectOption("");
+  await page.getByLabel("Document number").fill("");
+  await page.getByRole("button", {name: "Save changes"}).click();
+  await expect(page.getByText("Client updated")).toBeVisible({timeout: 10_000});
+
+  // The reload is the real persistence proof - ClientForm seeds its state from props once and does
+  // not re-seed on router.refresh() alone, so only a fresh server render can show whether the value
+  // that snapped back under the toast is fixed, or whether it just looks fixed pre-refresh.
+  await page.reload();
+  await expect(page.getByLabel("Document type")).toHaveValue("");
+  await expect(page.getByLabel("Document number")).toHaveValue("");
+
+  const afterClear = await (await page.request.get(`/api/clients/${client.clientId}`)).json();
+  expect(afterClear.idDocType).toBeUndefined();
+  expect(afterClear.idDocNumber).toBeUndefined();
+
+  // Asymmetric clear: only the number, keeping the type - proves the two fields clear
+  // independently rather than the fix only handling "clear everything at once".
+  await page.getByLabel("Document type").selectOption("national_id");
+  await page.getByLabel("Document number").fill("N-555");
+  await page.getByRole("button", {name: "Save changes"}).click();
+  await expect(page.getByText("Client updated")).toBeVisible({timeout: 10_000});
+  await page.getByLabel("Document number").fill("");
+  await page.getByRole("button", {name: "Save changes"}).click();
+  await expect(page.getByText("Client updated")).toBeVisible({timeout: 10_000});
+  await page.reload();
+  await expect(page.getByLabel("Document type")).toHaveValue("national_id");
+  await expect(page.getByLabel("Document number")).toHaveValue("");
+
+  // Direct-API adversarial probe: an empty string is still refused (by design - `null` is the only
+  // way to clear, documented in docs/clients.md), so this is a specified 400, not a remaining dead
+  // end with no escape hatch.
+  const emptyStringPatch = await page.request.patch(`/api/clients/${client.clientId}`, {
+    data: {idDocNumber: ""},
+  });
+  expect(emptyStringPatch.status()).toBe(400);
 });
 
 test("walk-in fallback: no client record, free-text names, and the list shows plain text (no link)", async ({page}) => {
