@@ -46,7 +46,7 @@ function WalletLabelField({wallet, onSave}: {wallet: ClientWallet; onSave: (addr
       }}
       placeholder="Add a label"
       aria-label={`Label for ${wallet.address}`}
-      className="max-w-[220px]"
+      className="w-full min-w-[100px] max-w-[160px]"
     />
   );
 }
@@ -81,12 +81,17 @@ function RevokeButton({onConfirm}: {onConfirm: () => void}) {
 }
 
 /** A collapsed-by-default raw-JSON view, for inspecting a receipt without leaving the page -
- * `<details>` needs no new design-system component and is keyboard/AT accessible for free. */
+ * `<details>` needs no new design-system component and is keyboard/AT accessible for free.
+ * `receipt.payloadJson` is itself a JSON-encoded STRING (an embedded blob with no internal line
+ * breaks), so `<pre>`'s default `white-space: pre` would render that one field as a single
+ * multi-hundred-character line - `whitespace-pre-wrap break-all` wraps it (and every other long
+ * unbroken token, like the signature/hash hex strings) at the block's own width instead of ever
+ * growing wider than its container or relying on a horizontal scrollbar inside a table cell. */
 function ReceiptDisclosure({wallet}: {wallet: ClientWallet}) {
   return (
     <details className="text-caption">
-      <summary className="cursor-pointer text-link hover:underline">View</summary>
-      <pre className="mt-2 max-w-md overflow-x-auto rounded-control bg-surface-2 p-3 font-mono text-caption text-ink">
+      <summary className="cursor-pointer text-link hover:underline">Receipt</summary>
+      <pre className="mt-2 max-w-xs whitespace-pre-wrap break-all rounded-control bg-surface-2 p-3 text-left font-mono text-caption text-ink">
         {receiptExportJson(wallet)}
       </pre>
     </details>
@@ -192,16 +197,20 @@ export function WalletsPanel({clientId, wallets, timeZone}: {clientId: string; w
           {
             key: "status",
             header: "Status",
-            render: (w) => (w.revokedAt ? <StatusBadge tone="danger" label="Revoked" /> : <StatusBadge tone="ok" label="Active" />),
+            render: (w) => (
+              <div className="flex flex-col items-start gap-1">
+                {w.revokedAt ? <StatusBadge tone="danger" label="Revoked" /> : <StatusBadge tone="ok" label="Active" />}
+                <span className="text-caption text-ink-faint">{formatUnixSeconds(w.registeredAt, timeZone)}</span>
+              </div>
+            ),
           },
-          {key: "registered", header: "Registered", render: (w) => formatUnixSeconds(w.registeredAt, timeZone)},
-          {key: "receipt", header: "Receipt", render: (w) => <ReceiptDisclosure wallet={w} />},
           {
             key: "actions",
             header: "",
             align: "right",
             render: (w) => (
-              <div className="flex justify-end gap-2">
+              <div className="flex flex-wrap items-start justify-end gap-2">
+                <ReceiptDisclosure wallet={w} />
                 <Button variant="ghost" onClick={() => downloadReceipt(w)}>
                   Download
                 </Button>

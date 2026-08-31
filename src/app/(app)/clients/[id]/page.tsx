@@ -26,6 +26,15 @@ export default async function ClientDetailPage({params}: {params: Promise<{id: s
   const client = await Client.findOne({clientId: id}).lean<ClientDoc>();
   if (!client) notFound();
 
+  // `.lean()` still carries `_id` as a mongoose ObjectId (with its own `toJSON`) even though
+  // `ClientDoc` never declares that field - passing it straight into a "use client" component's
+  // props (`ClientForm` below) trips React/Next's server-to-client boundary warning ("Objects
+  // with toJSON methods are not supported"), observed live while exercising this page end-to-end
+  // for WP4.2. Nothing in this app reads `_id` (`clientId`, the app's own UUID, is the real
+  // identifier), so it is dropped here rather than threaded through render.
+  const {_id: clientMongoId, ...clientForForm} = client as ClientDoc & {_id?: unknown};
+  void clientMongoId; // deliberately discarded - see comment above
+
   const [pets, appointments, payments, bookingSettings] = await Promise.all([
     Pet.find({petId: {$in: client.petIds}}).lean<PetDoc[]>(),
     Appointment.find({clientId: client.clientId}).sort({startAt: -1}).limit(RECENT_LIMIT).lean<AppointmentDoc[]>(),
@@ -42,7 +51,7 @@ export default async function ClientDetailPage({params}: {params: Promise<{id: s
           FormActionBar break out of the wrong container and land as a full-width rule between the
           two cards instead of terminating the page). Every related-records panel below is passed
           as ClientForm's children so "Save changes" stays the true last element. */}
-      <ClientForm client={client}>
+      <ClientForm client={clientForForm}>
         <FormSection title="Pets" helperText="Pets owned by this client.">
           <DataTable
             columns={[
