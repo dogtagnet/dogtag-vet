@@ -192,9 +192,26 @@ export async function resolveTagClaim(
     return {tagResolution: "local", needsReview: true, candidatePetId: local.petId};
   }
 
-  // Tier 2: NOT local -> derive dogTagIdField (no chain) -> readProfileRoot.
+  // Tier 2: NOT local -> derive/verify dogTagIdField (no chain) -> readProfileRoot.
   let dogTagIdFieldDec: string;
   if (input.dogTagIdField) {
+    // Review finding 5: `bookingHash` binds the signature to `dogTagIdField` alone (see
+    // `bookingHash.ts`'s doc comment) - it says nothing about `dogTagIdDec`. When the wire sends
+    // BOTH, trusting `dogTagIdField` at face value would let a fabricated `dogTagIdDec` ride along
+    // completely unverified into `Pet.create`'s `dogTag.dogTagIdDec` and the provenance box (a real,
+    // signed field id paired with an arbitrary decimal label). Require it recompute to the exact
+    // same field the wire's own dec claims, or reject the claim outright - never a half-trusted mix.
+    if (input.dogTagIdDec) {
+      let derivedFromDec: string;
+      try {
+        derivedFromDec = computeDogTagIdField(input.dogTagIdDec).toString(10);
+      } catch {
+        return {tagResolution: "unknown", verificationError: true};
+      }
+      if (derivedFromDec !== input.dogTagIdField) {
+        return {tagResolution: "unknown", verificationError: true};
+      }
+    }
     dogTagIdFieldDec = input.dogTagIdField;
   } else {
     try {

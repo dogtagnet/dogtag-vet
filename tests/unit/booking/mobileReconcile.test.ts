@@ -92,6 +92,29 @@ describe("resolveTagClaim", () => {
       await resolveTagClaim(fakeStore(), deps, {dogTagIdField: "999", resolvedClientId: "client-1", ourCloneAddress: OUR_CLONE});
       expect(deps.readProfileRoot).toHaveBeenCalledWith("999");
     });
+
+    it("accepts a wire-supplied dogTagIdField that matches the value recomputed from dogTagIdDec", async () => {
+      const deps = fakeDeps();
+      await resolveTagClaim(fakeStore(), deps, {
+        dogTagIdDec: DOG_TAG_ID_DEC,
+        dogTagIdField: DOG_TAG_ID_FIELD,
+        resolvedClientId: "client-1",
+        ourCloneAddress: OUR_CLONE,
+      });
+      expect(deps.readProfileRoot).toHaveBeenCalledWith(DOG_TAG_ID_FIELD);
+    });
+
+    it("review finding 5: rejects the claim (unknown, verificationError) when a wire-supplied dogTagIdField does NOT match dogTagIdDec, rather than trusting the field blindly - bookingHash only binds dogTagIdField, so an unbound dogTagIdDec could otherwise ride along unverified into Pet.create/the provenance box", async () => {
+      const deps = fakeDeps();
+      const result = await resolveTagClaim(fakeStore(), deps, {
+        dogTagIdDec: DOG_TAG_ID_DEC,
+        dogTagIdField: "123456789", // does not match dogTagIdField(DOG_TAG_ID_DEC)
+        resolvedClientId: "client-1",
+        ourCloneAddress: OUR_CLONE,
+      });
+      expect(result).toEqual({tagResolution: "unknown", verificationError: true});
+      expect(deps.readProfileRoot).not.toHaveBeenCalled();
+    });
   });
 
   describe("chain-read failure - must never lose the booking", () => {
