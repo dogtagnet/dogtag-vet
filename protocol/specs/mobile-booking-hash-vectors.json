@@ -1,0 +1,120 @@
+[
+  {
+    "name": "baseline",
+    "description": "Typical everyday values - a tag claim present, phone on file.",
+    "input": {
+      "serviceId": "svc-checkup",
+      "startAt": 1735689600,
+      "clientName": "Jordan Alvarez",
+      "clientEmail": "jordan@example.com",
+      "clientPhone": "+1-555-0100",
+      "dogTagIdField": "123456789"
+    },
+    "expected": {
+      "bookingHash": "0xc01dc20f1eee2c15a5a47d43950cc8bdb55001391f1209bd8ee9e6b747a1fb56"
+    }
+  },
+  {
+    "name": "no-phone-no-tag-claim",
+    "description": "Absent clientPhone and dogTagIdField both hash as empty string - the ordinary walk-up booking shape with no tag claim.",
+    "input": {
+      "serviceId": "svc-vaccination",
+      "startAt": 1735776000,
+      "clientName": "Priya Natarajan",
+      "clientEmail": "priya.n@example.com"
+    },
+    "expected": {
+      "bookingHash": "0x1d6290aae1e7a0ada037b9b754be2d4f9a81430b1fb851a5ed9e3037d8082acc"
+    }
+  },
+  {
+    "name": "email-case-and-whitespace-normalized",
+    "description": "Email/name/phone carry mixed case and leading/trailing whitespace - normalization must fold to the SAME hash as the pre-trimmed baseline-equivalent value.",
+    "input": {
+      "serviceId": "svc-checkup",
+      "startAt": 1735689600,
+      "clientName": "  Jordan Alvarez  ",
+      "clientEmail": "  Jordan@Example.COM  ",
+      "clientPhone": "  +1-555-0100  ",
+      "dogTagIdField": "123456789"
+    },
+    "expected": {
+      "bookingHash": "0xc01dc20f1eee2c15a5a47d43950cc8bdb55001391f1209bd8ee9e6b747a1fb56"
+    }
+  },
+  {
+    "name": "name-contains-literal-pipe",
+    "description": "clientName contains a literal '|' - a naive join(\"|\") implementation would misparse this; the hash-of-hashes design never delimits, so this is just an ordinary string.",
+    "input": {
+      "serviceId": "svc-grooming",
+      "startAt": 1735862400,
+      "clientName": "A|b@x.com",
+      "clientEmail": "real-owner@example.com",
+      "clientPhone": "",
+      "dogTagIdField": ""
+    },
+    "expected": {
+      "bookingHash": "0xf67ab91695d92ca8f1991c4dbe6f164705e614ccc371fad24bb6388e9c4edd2e"
+    }
+  },
+  {
+    "name": "unicode-name",
+    "description": "Non-ASCII client name (NFC-composed) - the hash operates on raw UTF-8 bytes, no NFC normalization applied (unlike profile-tree leaf keyPaths, which DO NFC-normalize - this is a display string, not a keyPath).",
+    "input": {
+      "serviceId": "svc-checkup",
+      "startAt": 1735689600,
+      "clientName": "José García",
+      "clientEmail": "jose@example.com",
+      "clientPhone": "+34-600-000-000",
+      "dogTagIdField": "42"
+    },
+    "expected": {
+      "bookingHash": "0xacc72ba591364e57961d1e6b1fdae8c10cdf92d3bbe4105aa88ffcf568e03b62"
+    }
+  },
+  {
+    "name": "long-service-and-large-dogtagid",
+    "description": "A long serviceId string and a large decimal dogTagIdField (field elements can be much larger than a raw handle).",
+    "input": {
+      "serviceId": "svc-annual-wellness-exam-and-full-panel-bloodwork",
+      "startAt": 1767225600,
+      "clientName": "Morgan Lee",
+      "clientEmail": "morgan.lee@example.com",
+      "clientPhone": "+1-555-0199",
+      "dogTagIdField": "21888242871839275222246405745257275088548364400416034343698204186575808495616"
+    },
+    "expected": {
+      "bookingHash": "0xebaa64947d5c813eda00e91ddd801ea3b9b29120c26e9c91292e025d356f6743"
+    }
+  },
+  {
+    "name": "startAt-far-future",
+    "description": "A large startAt (unix seconds well beyond 2^31, ruling out a 32-bit truncation bug).",
+    "input": {
+      "serviceId": "svc-checkup",
+      "startAt": 4102444800,
+      "clientName": "Alex Kim",
+      "clientEmail": "alex.kim@example.com",
+      "clientPhone": "+1-555-0142",
+      "dogTagIdField": "7"
+    },
+    "expected": {
+      "bookingHash": "0x36ac8bd0434c133adf744a1d4b212bfb10333c5b6b841fc62b3df420303e85fc"
+    }
+  },
+  {
+    "name": "startAt-zero",
+    "description": "startAt at the unix epoch (lower boundary) - not a realistic booking time, but exercises String(0) === \"0\" rather than an empty string.",
+    "input": {
+      "serviceId": "svc-checkup",
+      "startAt": 0,
+      "clientName": "Sam Rivera",
+      "clientEmail": "sam.rivera@example.com",
+      "clientPhone": "+1-555-0177",
+      "dogTagIdField": ""
+    },
+    "expected": {
+      "bookingHash": "0x09ad65f6652d2d8db683d9bd29c5cd1168435a64df26ec239bc4fbabbf705bd9"
+    }
+  }
+]
