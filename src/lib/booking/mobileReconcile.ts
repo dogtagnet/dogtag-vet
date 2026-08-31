@@ -11,6 +11,14 @@ export type TagResolution = "local" | "issued_here_unlinked" | "external" | "unk
 
 export interface LocalPetMatch {
   petId: string;
+  /** Review finding 3: carried through to the CLEAN-match `TagClaimResult` variant so the booking
+   * route can rebuild `Appointment.petName` from the actually-linked pet rather than leaving
+   * whatever display placeholder the wire's own (unverified) `mobile.pet.name` or the request's
+   * `petName` asserted - the same WP4.3 "no display-name drift from the linked record" invariant
+   * `relink-dogtag`'s own write already follows (`petName: pet.name`). Never read for the
+   * ownership-mismatch (`needsReview: true`) variant - that pet is deliberately NOT linked, so
+   * there is no name to adopt. */
+  name: string;
   ownerClientIds: string[];
 }
 
@@ -77,7 +85,7 @@ export interface TagClaimInput {
 
 export type TagClaimResult =
   | {tagResolution: "none"}
-  | {tagResolution: "local"; petId: string; needsReview: false}
+  | {tagResolution: "local"; petId: string; name: string; needsReview: false}
   /** Tier 1's ownership-mismatch guard (hijack prevention): a LOCAL pet was found for the claimed
    * dogTagId, but the client this booking resolved to is NOT among that pet's `ownerClientIds`.
    * The pet is deliberately NOT linked (`appointmentTagging.ts`'s `resolveTagging` treats "every
@@ -187,7 +195,7 @@ export async function resolveTagClaim(
   const local = await store.findLocalPetByDogTag({dogTagIdDec: input.dogTagIdDec, dogTagIdField: input.dogTagIdField});
   if (local) {
     if (local.ownerClientIds.includes(input.resolvedClientId)) {
-      return {tagResolution: "local", petId: local.petId, needsReview: false};
+      return {tagResolution: "local", petId: local.petId, name: local.name, needsReview: false};
     }
     return {tagResolution: "local", needsReview: true, candidatePetId: local.petId};
   }

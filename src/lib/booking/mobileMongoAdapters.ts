@@ -14,8 +14,8 @@ export const mongoMobileTagLookupStore: MobileTagLookupStore = {
       ...(dogTagIdField ? [{"dogTag.dogTagIdField": dogTagIdField}] : []),
     ];
     if (or.length === 0) return null;
-    const pet = await Pet.findOne({$or: or}).lean<Pick<PetDoc, "petId" | "ownerClientIds">>();
-    return pet ? {petId: pet.petId, ownerClientIds: pet.ownerClientIds} : null;
+    const pet = await Pet.findOne({$or: or}).lean<Pick<PetDoc, "petId" | "name" | "ownerClientIds">>();
+    return pet ? {petId: pet.petId, name: pet.name, ownerClientIds: pet.ownerClientIds} : null;
   },
 
   async findExternalPetByDogTagField(dogTagIdFieldDec) {

@@ -53,18 +53,18 @@ describe("resolveTagClaim", () => {
 
   describe("tier 1: LOCAL match", () => {
     it("links the pet when the resolved client is among its owners", async () => {
-      const local: LocalPetMatch = {petId: "pet-1", ownerClientIds: ["client-1", "client-2"]};
+      const local: LocalPetMatch = {petId: "pet-1", name: "Rex", ownerClientIds: ["client-1", "client-2"]};
       const store = fakeStore({findLocalPetByDogTag: vi.fn().mockResolvedValue(local)});
       const deps = fakeDeps();
 
       const result = await resolveTagClaim(store, deps, {dogTagIdDec: DOG_TAG_ID_DEC, resolvedClientId: "client-1", ourCloneAddress: OUR_CLONE});
 
-      expect(result).toEqual({tagResolution: "local", petId: "pet-1", needsReview: false});
+      expect(result).toEqual({tagResolution: "local", petId: "pet-1", name: "Rex", needsReview: false});
       expect(deps.readProfileRoot).not.toHaveBeenCalled(); // local match short-circuits the chain entirely
     });
 
     it("does NOT silently link, and flags for review, when the resolved client is NOT among the pet's owners (hijack guard)", async () => {
-      const local: LocalPetMatch = {petId: "pet-1", ownerClientIds: ["someone-elses-client"]};
+      const local: LocalPetMatch = {petId: "pet-1", name: "Rex", ownerClientIds: ["someone-elses-client"]};
       const store = fakeStore({findLocalPetByDogTag: vi.fn().mockResolvedValue(local)});
 
       const result = await resolveTagClaim(store, fakeDeps(), {dogTagIdDec: DOG_TAG_ID_DEC, resolvedClientId: "attacker-client", ourCloneAddress: OUR_CLONE});
@@ -361,11 +361,12 @@ describe("toBookingIdentity", () => {
     expect(toBookingIdentity({...walletBase, tagClaim: {tagResolution: "none"}})).toEqual({...walletBase, tagResolution: "none"});
   });
 
-  it("maps a clean local match with no review-flag fields", () => {
-    const result = toBookingIdentity({...walletBase, tagClaim: {tagResolution: "local", petId: "pet-1", needsReview: false}});
+  it("maps a clean local match with no review-flag fields, and never persists the matched pet's name (route-only, like external's verifiedAttributes)", () => {
+    const result = toBookingIdentity({...walletBase, tagClaim: {tagResolution: "local", petId: "pet-1", name: "Rex", needsReview: false}});
     expect(result).toEqual({...walletBase, tagResolution: "local"});
     expect(result).not.toHaveProperty("needsReview");
     expect(result).not.toHaveProperty("candidatePetId");
+    expect(result).not.toHaveProperty("name");
   });
 
   it("maps a review-flagged local mismatch with candidatePetId", () => {

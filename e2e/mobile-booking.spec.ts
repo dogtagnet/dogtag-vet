@@ -398,6 +398,9 @@ test.describe("section 3: tag-claim tiers", () => {
     expect(appointment.petIds).toEqual([petId]);
     expect(appointment.bookingIdentity.tagResolution).toBe("local");
     expect(appointment.bookingIdentity.needsReview).toBeFalsy();
+    // Review finding 3: the appointment shows the ACTUAL linked pet's name, not the "Pet"
+    // fallback (the wire sent no petName/mobile.pet.name at all here).
+    expect(appointment.petName).toBe("Locally Known Pet");
   });
 
   test("tier 1 (local, ownership mismatch): does NOT link the pet, flags needsReview with candidatePetId", async ({page}) => {
@@ -548,16 +551,20 @@ test.describe("section 3: tag-claim tiers", () => {
     expect(importedPet.dogTag.cloneAddress).toBe(FOREIGN_CLONE);
 
     // A second booking with the SAME tag, same client, reuses the SAME pet - no duplicate import.
+    // Deliberately omits the wire's own `name` hint this time (or a stale one would also prove
+    // nothing): review finding 3 says the REUSED pet's actual record name must win, never a "Pet"
+    // fallback or whatever this second request happened to assert.
     const startAt2 = await openSlot(page, service, 18);
     const second = await book(page, {
       serviceId: service.id,
       startAt: new Date(startAt2 * 1000).toISOString(),
       client: {name: "External Verified Owner", email: "external-verified@example.com"},
-      mobile: {source: "dogtag_app", pet: {dogTagIdDec, name: "Buddy", leaves, reservedLeafHashes}},
+      mobile: {source: "dogtag_app", pet: {dogTagIdDec, leaves, reservedLeafHashes}},
     });
     expect(second.status).toBe(201);
     const secondAppointment = await getAppointmentDirect(page, second.body.appointmentId!);
     expect(secondAppointment.petIds).toEqual([importedPetId]);
+    expect(secondAppointment.petName).toBe("Buddy"); // the reused pet's real name, not "Pet"
 
     // Excluded from this clinic's own tags surface.
     const tagsRes = await page.request.get("/api/tags");

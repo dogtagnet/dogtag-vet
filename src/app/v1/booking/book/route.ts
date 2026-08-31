@@ -18,7 +18,7 @@ import {computeReceiptHash, type ReceiptRecord} from "@/lib/registration/receipt
 import type {AppointmentDraft} from "@/lib/booking/mongoStore";
 import {Appointment, type BookingIdentity} from "@/lib/models/Appointment";
 import {Client} from "@/lib/models/Client";
-import {Pet, buildPetSearchKey} from "@/lib/models/Pet";
+import {Pet, buildPetSearchKey, type PetDoc} from "@/lib/models/Pet";
 import {Service, type ServiceDoc} from "@/lib/models/Service";
 import {bookAppointmentRequestSchema} from "@/lib/schemas/booking";
 import {enforceRateLimit, errorBody, jsonWithHeaders, readJsonBody} from "@/lib/publicApi";
@@ -213,14 +213,20 @@ export async function POST(request: Request) {
     : undefined;
 
   const cancelToken = randomBytes(16).toString("hex");
-  // Appointment.petName is required and non-blank per the v1 field vocabulary (wp4-vet.md) - and
-  // mongoose's default String required-check rejects "" - but the wire request's petName is
-  // optional, so fall back to a display placeholder rather than leaving it blank.
-  const petName = parsed.data.petName?.trim() || mobile?.pet?.name?.trim() || "Pet";
   // Only tier 1's CLEAN local match (an already-existing, already-verified pet) goes straight into
   // the create draft - every other tier that ends in a pet link (Q3's external import) needs the
   // appointmentId first, so it is applied in a follow-up write below instead.
-  const petIds = tagClaim.tagResolution === "local" && !tagClaim.needsReview ? [tagClaim.petId] : undefined;
+  const cleanLocalMatch = tagClaim.tagResolution === "local" && !tagClaim.needsReview ? tagClaim : undefined;
+  const petIds = cleanLocalMatch ? [cleanLocalMatch.petId] : undefined;
+  // Appointment.petName is required and non-blank per the v1 field vocabulary (wp4-vet.md) - and
+  // mongoose's default String required-check rejects "" - but the wire request's petName is
+  // optional, so fall back to a display placeholder rather than leaving it blank. Review finding 3:
+  // a tier-1 clean match's ACTUAL pet record wins over whatever display name the wire merely
+  // asserted (`mobile.pet.name`/`petName` are unverified hints - see `bookingIdentity`'s own doc
+  // comment) - otherwise the appointments list shows a stale or plain-wrong name for a booking that
+  // just linked correctly, the exact WP4.3 A1 no-drift invariant `relink-dogtag`'s write already
+  // follows (`petName: pet.name`).
+  const petName = cleanLocalMatch?.name.trim() || parsed.data.petName?.trim() || mobile?.pet?.name?.trim() || "Pet";
 
   const draft: AppointmentDraft = {
     clientId: client.clientId,
@@ -270,12 +276,19 @@ export async function POST(request: Request) {
   // ── Post-insert writes - only now that the appointment itself is durably booked.
   if (tagClaim.tagResolution === "external" && tagClaim.dataVerified) {
     let importedPetId: string;
+    // Review finding 3: rebuild petName from the actually-linked pet here too, same as the clean
+    // tier-1 match above and `relink-dogtag`'s own `petName: pet.name` write - otherwise the list
+    // shows the wire's unverified `mobile.pet.name` hint (or the "Pet" placeholder) even though a
+    // real, chain-verified pet record now exists for this appointment.
+    let linkedPetName: string;
     if (tagClaim.existingExternalPetId) {
       importedPetId = tagClaim.existingExternalPetId;
-      await Promise.all([
+      const [existingPet] = await Promise.all([
+        Pet.findOne({petId: importedPetId}).lean<Pick<PetDoc, "name">>(),
         Pet.updateOne({petId: importedPetId}, {$addToSet: {ownerClientIds: client.clientId}}),
         Client.updateOne({clientId: client.clientId}, {$addToSet: {petIds: importedPetId}}),
       ]);
+      linkedPetName = existingPet?.name?.trim() || petName;
     } else {
       const attrs = tagClaim.verifiedAttributes ?? {};
       const importedName = attrs.name?.trim() || mobile?.pet?.name?.trim() || "Pet";
@@ -297,10 +310,12 @@ export async function POST(request: Request) {
         searchKey: buildPetSearchKey({name: importedName, species: attrs.species, breed: attrs.breed}),
       });
       importedPetId = created.petId;
+      linkedPetName = importedName;
       await Client.updateOne({clientId: client.clientId}, {$addToSet: {petIds: importedPetId}});
     }
-    await Appointment.updateOne({appointmentId: result.appointment.appointmentId}, {$set: {petIds: [importedPetId]}});
+    await Appointment.updateOne({appointmentId: result.appointment.appointmentId}, {$set: {petIds: [importedPetId], petName: linkedPetName}});
     result.appointment.petIds = [importedPetId];
+    result.appointment.petName = linkedPetName;
   }
 
   if (walletVerifiedAddress && bookingHash && mobile?.wallet && !clientAlreadyHasWallet(client, walletVerifiedAddress)) {
