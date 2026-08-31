@@ -45,4 +45,5 @@ Both exclusions are enforced structurally, not by a runtime check: `buildClientS
 ## Search
 
 `GET /api/clients?q=` matches the denormalized `searchKey` (name + email + phone, lowercased, whitespace-collapsed) with a substring regex.
-It is the same index the `ClientPicker` and `PetMultiPicker`'s underlying client search (see `docs/appointments.md`) use to disambiguate same-named clients - the dropdown rows show name, email, and phone so that, for example, two different clients both named "John" are still tellable apart at a glance.
+It is the same index `ClientPicker` and `OwnerPicker` search - the dropdown rows show name, email, and phone so that, for example, two different clients both named "John" are still tellable apart at a glance.
+`PetMultiPicker` never searches clients: once a client is chosen it only fetches that client's own pets (`GET /api/pets?ownerClientId=`, see `docs/appointments.md`), and its dropdown rows show pet name, plus species/breed when the pet has them - never a client's email or phone.
