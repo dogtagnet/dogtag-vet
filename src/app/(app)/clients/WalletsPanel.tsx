@@ -9,12 +9,14 @@ import {DataTable} from "@/components/ui/DataTable";
 import {FormSection} from "@/components/ui/FormSection";
 import {HashCell} from "@/components/ui/HashCell";
 import {KeyValuePanel, type KeyValueRow} from "@/components/ui/KeyValuePanel";
+import {MonoValue} from "@/components/ui/MonoValue";
 import {QrSurface} from "@/components/ui/QrSurface";
 import {StatusBadge} from "@/components/ui/StatusBadge";
 import {useSnackbar} from "@/components/ui/Snackbar";
 import {formatUnixSeconds} from "@/lib/format";
 import {registrationStatusLabel, registrationStatusTone} from "@/lib/registrationStatusTone";
 import {decodeReceiptPayload, receiptExportJson} from "@/lib/registration/receipt";
+import {decodeMobileBookingPayload} from "@/lib/booking/mobileEip712";
 import type {RegistrationStatus} from "@/lib/registration/flow";
 import type {ClientWallet} from "@/lib/models/Client";
 
@@ -89,8 +91,29 @@ function RevokeButton({confirming, onStart, onCancel, onConfirm}: {confirming: b
  * expected path (the server only ever writes what it itself produced), but is handled without
  * throwing since this is a read-only display, never a security check: the raw JSON below and the
  * download button both still carry the real signed data regardless of whether it decodes.
+ *
+ * Branches on `wallet.via` (WP4.4): a `"booking"`-sourced wallet's `payloadJson` is a DIFFERENT
+ * EIP-712 payload shape (`MobileBooking`, not `ClientRegistration`) - `decodeReceiptPayload`/
+ * `receiptExportJson`/`ReceiptExport` are all scoped to `ClientRegistration` by design (their own
+ * zod schemas require `registrationId`/`blockNumber`, which a booking-sourced entry has neither
+ * of - see `ClientWallet`'s own doc comment on why). Rather than widen that shared,
+ * offline-reverifiable export contract (`scripts/verify-receipt.ts` depends on it staying exactly
+ * ClientRegistration-shaped), a booking-sourced row gets its own read-only view here: no "Download
+ * JSON" button (there is no equivalent offline-verification script for this payload shape yet),
+ * but the same decoded-fields-over-raw-JSON treatment otherwise.
  */
+/** `receiptExportJson`/`downloadReceipt`/`scripts/verify-receipt.ts` are all scoped to the
+ * `ClientRegistration` payload shape and require `registrationId`/`blockNumber` - both genuinely
+ * present on any wallet this repo ever writes with `via` unset or `"registration"` (see
+ * `ClientWallet`'s own doc comment), just typed optional on the shared interface to also admit a
+ * `via: "booking"` entry, which has neither. This narrowing exists at exactly the one place that
+ * distinction matters, rather than loosening the export/verify contract itself. */
+type RegistrationSourcedWallet = ClientWallet & {registrationId: string; blockNumber: number};
+
 function ReceiptPanel({wallet, timeZone}: {wallet: ClientWallet; timeZone: string}) {
+  if (wallet.via === "booking") return <MobileBookingReceiptPanel wallet={wallet} timeZone={timeZone} />;
+  const registrationWallet = wallet as RegistrationSourcedWallet;
+
   const decoded = decodeReceiptPayload(wallet.receipt.payloadJson);
   const rows: KeyValueRow[] = decoded
     ? [
@@ -112,7 +135,7 @@ function ReceiptPanel({wallet, timeZone}: {wallet: ClientWallet; timeZone: strin
     <div id={`receipt-panel-${wallet.address}`} data-testid={`receipt-panel-${wallet.address}`} className="space-y-3">
       <div className="flex items-center justify-between">
         <h4 className="text-body font-medium text-ink">Receipt</h4>
-        <Button variant="ghost" onClick={() => downloadReceipt(wallet)}>
+        <Button variant="ghost" onClick={() => downloadReceipt(registrationWallet)}>
           Download JSON
         </Button>
       </div>
@@ -131,14 +154,49 @@ function ReceiptPanel({wallet, timeZone}: {wallet: ClientWallet; timeZone: strin
       <details className="text-caption">
         <summary className="cursor-pointer text-link hover:underline">Raw JSON</summary>
         <pre className="mt-2 max-h-96 overflow-y-auto whitespace-pre-wrap break-all rounded-control bg-surface-2 p-3 text-left font-mono text-caption text-ink">
-          {receiptExportJson(wallet)}
+          {receiptExportJson(registrationWallet)}
         </pre>
       </details>
     </div>
   );
 }
 
-function downloadReceipt(wallet: ClientWallet) {
+/** The `via: "booking"` counterpart to `ReceiptPanel` above - same decoded-fields treatment, over
+ * the `MobileBooking` struct's own (smaller) field set, no download button. */
+function MobileBookingReceiptPanel({wallet, timeZone}: {wallet: ClientWallet; timeZone: string}) {
+  const decoded = decodeMobileBookingPayload(wallet.receipt.payloadJson);
+  const rows: KeyValueRow[] = decoded
+    ? [
+        {key: "clinic", label: "Clinic", value: <AddressChip address={decoded.message.clinic} />},
+        {key: "chainId", label: "Chain ID", value: String(decoded.domain.chainId)},
+        {key: "bookingHash", label: "Booking hash", value: <HashCell value={decoded.message.bookingHash} kind="doc" />},
+        {key: "issuedAt", label: "Issued at", value: formatUnixSeconds(Number(decoded.message.issuedAt), timeZone)},
+        {key: "deadline", label: "Deadline", value: formatUnixSeconds(Number(decoded.message.deadline), timeZone)},
+        {key: "signature", label: "Signature", value: <HashCell value={wallet.receipt.signature} kind="doc" />},
+        {key: "receiptHash", label: "Receipt hash", value: <HashCell value={wallet.receiptHash} kind="doc" />},
+        ...(wallet.bookingId ? [{key: "bookingId", label: "Appointment", value: <MonoValue value={wallet.bookingId} label="Appointment id" />}] : []),
+        ...(wallet.revokedAt !== undefined
+          ? [{key: "revokedAt", label: "Revoked at", value: formatUnixSeconds(wallet.revokedAt, timeZone)}]
+          : []),
+      ]
+    : [];
+
+  return (
+    <div id={`receipt-panel-${wallet.address}`} data-testid={`receipt-panel-${wallet.address}`} className="space-y-3">
+      <div className="flex items-center justify-between">
+        <h4 className="text-body font-medium text-ink">Receipt</h4>
+        <span className="text-caption text-ink-faint">Attached from a mobile app booking</span>
+      </div>
+      {decoded ? (
+        <KeyValuePanel rows={rows} />
+      ) : (
+        <p className="text-body text-danger">This receipt&apos;s payload could not be decoded.</p>
+      )}
+    </div>
+  );
+}
+
+function downloadReceipt(wallet: RegistrationSourcedWallet) {
   const json = receiptExportJson(wallet);
   const blob = new Blob([json], {type: "application/json"});
   const url = URL.createObjectURL(blob);

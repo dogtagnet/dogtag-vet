@@ -2,7 +2,7 @@ import "server-only";
 import {createPublicClient, http, keccak256, toBytes, type Address} from "viem";
 import {roax} from "@/lib/chains";
 import {getServerEnv} from "@/lib/env";
-import {vetIssuerAbi, entityRegistryAbi, dogTagSBTConsentAbi, verificationRegistryConsentAbi} from "@/lib/abi";
+import {vetIssuerAbi, vetIssuerFactoryAbi, entityRegistryAbi, dogTagSBTConsentAbi, verificationRegistryConsentAbi} from "@/lib/abi";
 
 /**
  * Server-side read-only ROAX client. This repo never holds a private key server-side (wp4-vet.md's
@@ -57,6 +57,23 @@ export async function readIsValidRoot(cloneAddress: Address, root: string): Prom
     functionName: "isValid",
     args: [root as `0x${string}`],
   })) as boolean;
+}
+
+/** `VetIssuerFactory.rootIssuer(root)` - the clone address that indexed `root` via
+ * `VetIssuer.issueTag`/`issueRecord`'s own `factory.indexRoot(root)` call (write-once, atomic with
+ * the issuance itself), or the zero address when no clone has ever indexed it. This is the ONE
+ * helper WP4.4 adds to this file - modelled directly on the readers above (fail-closed: an
+ * unreadable chain throws rather than resolving to a guessed answer). Used by the mobile-booking
+ * tag-claim tiers (`lib/booking/mobileReconcile.ts`) to tell "issued by THIS clinic, just unlinked
+ * locally" apart from "issued by someone else" apart from "never issued anywhere" - the same
+ * distinction iOS's `ChainReads.rootIssuer` makes for the verify flow. */
+export async function readRootIssuer(factoryAddress: Address, root: string): Promise<Address> {
+  return (await roaxPublicClient().readContract({
+    address: factoryAddress,
+    abi: vetIssuerFactoryAbi,
+    functionName: "rootIssuer",
+    args: [root as `0x${string}`],
+  })) as Address;
 }
 
 /** `VetIssuer.operators(address)` - whether `operator` is whitelisted on this clone right now. */

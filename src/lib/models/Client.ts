@@ -13,11 +13,25 @@ import type {ReceiptRecord} from "@/lib/registration/receipt";
 export interface ClientWallet {
   address: string; // lowercase 0x hex, unique within this client's wallets[]
   label?: string;
-  registrationId: string; // the session's UUID v4
+  /**
+   * WP4.4 Q1: BOTH attach paths are legitimate and BOTH are wallet-signed - the WP4.2 QR ceremony
+   * (`"registration"`, the default for any entry that predates this field) serves walk-ins; a
+   * valid `MobileBooking` signature on an app booking (`"booking"`) auto-attaches the wallet here
+   * too, just flagged for its different provenance. Absent means `"registration"` - every entry
+   * written before this field existed came from that flow, and it remains the only flow that
+   * writes here without setting it explicitly.
+   */
+  via?: "registration" | "booking";
+  registrationId?: string; // the session's UUID v4 - only for via:"registration"
+  /** Only for `via: "booking"` - the appointmentId whose signed claim attached this wallet. */
+  bookingId?: string;
   receipt: ReceiptRecord;
   receiptHash: string;
   issuedAt: number; // unix seconds, denormalized from receipt.payloadJson's message for display
-  blockNumber: number; // denormalized from receipt.payloadJson's message for display
+  /** Denormalized from receipt.payloadJson's message for display - only for `via: "registration"`.
+   * `MobileBooking`'s signed struct carries no block number (section 2's struct fields), so a
+   * `via: "booking"` entry has none to denormalize. */
+  blockNumber?: number;
   registeredAt: number; // unix seconds this wallet was appended (server "now" at /w/:token/complete)
   revokedAt?: number; // unix seconds; undefined = active
 }
@@ -59,11 +73,13 @@ const clientWalletSchema = new Schema<ClientWallet>(
   {
     address: {type: String, required: true},
     label: String,
-    registrationId: {type: String, required: true},
+    via: {type: String, enum: ["registration", "booking"]},
+    registrationId: String,
+    bookingId: String,
     receipt: {type: clientWalletReceiptSchema, required: true},
     receiptHash: {type: String, required: true},
     issuedAt: {type: Number, required: true},
-    blockNumber: {type: Number, required: true},
+    blockNumber: Number,
     registeredAt: {type: Number, required: true},
     revokedAt: Number,
   },

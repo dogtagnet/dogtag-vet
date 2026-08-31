@@ -87,7 +87,6 @@ describe("protocol/specs/mobile-booking-hash-vectors.json", () => {
   });
 
   it("covers non-ASCII input", () => {
-    // eslint-disable-next-line no-control-regex
     expect(typedVectors.some((v) => /[^\x00-\x7F]/.test(v.input.clientName))).toBe(true);
   });
 

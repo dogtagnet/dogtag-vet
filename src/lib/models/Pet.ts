@@ -49,6 +49,14 @@ export interface DogTagInfo {
    * cannot serve as "issued date" for the `/tags` table. Absent on any pet issued before this
    * field existed. */
   issuedAt?: Date;
+  /** WP4.4 Q3: `true` for a provisional pet record imported from an EXTERNAL clinic's tag claim
+   * during mobile booking (section 3, tier 4) - the tag verified on chain (issuer identified,
+   * valid) AND the booking's raw pet data verified against the on-chain root, but this clinic
+   * never issued it. Excludes the record from this clinic's own tags/issuance surfaces (`/tags`,
+   * `/tags/issue`): it is not a tag this clinic can revoke, reactivate, or claim credit for
+   * issuing. Absent (never `false`) on every pet this clinic actually issued or has not yet tagged
+   * - the field only ever exists to mark the one case it's true for. */
+  external?: boolean;
 }
 
 export interface PetDoc {
@@ -119,6 +127,7 @@ const dogTagSchema = new Schema<DogTagInfo>(
     cloneAddress: String,
     attestation: issuerAttestationSchema,
     issuedAt: Date,
+    external: Boolean,
   },
   {_id: false},
 );

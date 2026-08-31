@@ -1,6 +1,6 @@
 import "server-only";
 import {CapacityBucket} from "@/lib/models/CapacityBucket";
-import {Appointment, type AppointmentDoc} from "@/lib/models/Appointment";
+import {Appointment, type AppointmentDoc, type BookingIdentity} from "@/lib/models/Appointment";
 import {bucketKeysForInterval} from "@/lib/booking/buckets";
 import type {BookingStore} from "@/lib/booking/book";
 import type {OccupiedInterval} from "@/lib/booking/types";
@@ -19,6 +19,8 @@ export interface AppointmentDraft {
   clientName: string;
   petName: string;
   cancelToken?: string;
+  /** WP4.4 - only ever set for `source: "mobile"`. */
+  bookingIdentity?: BookingIdentity;
 }
 
 /**

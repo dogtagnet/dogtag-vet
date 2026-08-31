@@ -103,9 +103,13 @@ export function TagIssueWizard() {
       setPets([]);
       return;
     }
+    // WP4.4 Q3: `dogTag.external: true` pets (a provisional record imported from a mobile
+    // booking's foreign-tag claim - section 3, tier 4) are excluded from this clinic's own
+    // tags/issuance surfaces - this clinic never issued that tag and has no authority over it, so
+    // it must never appear as an "issue a tag for this pet" candidate here.
     fetch(`/api/pets?ownerClientId=${selectedClient.clientId}`)
       .then((r) => (r.ok ? r.json() : []))
-      .then(setPets);
+      .then((fetchedPets: PetDoc[]) => setPets(fetchedPets.filter((pet) => !pet.dogTag?.external)));
   }, [selectedClient]);
 
   function stopPolling() {

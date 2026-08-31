@@ -31,14 +31,23 @@ export function PetTagCard({dogTag = {}}: {dogTag?: DogTagInfo}) {
 
   return (
     <section className="rounded-card border border-border bg-surface p-5 shadow-card">
-      <div className="mb-4 flex items-center justify-between">
+      <div className="mb-4 flex items-center justify-between gap-2">
         <h3 className="text-section-title text-ink">DogTag</h3>
-        {dogTag.status ? (
-          <StatusBadge tone={dogTagStatusTone[dogTag.status]} label={dogTagStatusLabel[dogTag.status]} />
-        ) : (
-          <StatusBadge tone="neutral" label="Unknown" />
-        )}
+        <div className="flex items-center gap-2">
+          {dogTag.external && <StatusBadge tone="info" label="External" />}
+          {dogTag.status ? (
+            <StatusBadge tone={dogTagStatusTone[dogTag.status]} label={dogTagStatusLabel[dogTag.status]} />
+          ) : (
+            <StatusBadge tone="neutral" label="Unknown" />
+          )}
+        </div>
       </div>
+      {dogTag.external && (
+        <p className="mb-4 -mt-2 text-caption text-ink-faint">
+          Imported from a mobile booking&apos;s tag claim, verified on chain against another clinic&apos;s issuance - this clinic did not
+          issue it and cannot revoke, reactivate, or replace it here.
+        </p>
+      )}
       <dl className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <div>
           <dt className="text-caption text-ink-faint">Tag id</dt>
@@ -79,11 +88,13 @@ export function PetTagCard({dogTag = {}}: {dogTag?: DogTagInfo}) {
           </dd>
         </div>
       </dl>
-      <div className="mt-4">
-        <Link href="/tags" className="text-body font-medium text-link hover:underline">
-          Manage in Tags
-        </Link>
-      </div>
+      {!dogTag.external && (
+        <div className="mt-4">
+          <Link href="/tags" className="text-body font-medium text-link hover:underline">
+            Manage in Tags
+          </Link>
+        </div>
+      )}
     </section>
   );
 }

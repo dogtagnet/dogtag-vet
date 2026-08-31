@@ -96,6 +96,32 @@ export async function reconcileAnchoredSession(
   return {reconciled: true, dogTagIdDec: session.dogTagIdDec, root: session.root};
 }
 
+/**
+ * The terminal "seal this tag onto a Pet record" write - shared by every caller that ever needs to
+ * do this: the normal mint confirm route, this file's own reconciliation recovery paths (via
+ * `mongoReconcileDeps` below), and WP4.4's tier-3 staff relink action
+ * (`lib/booking/relinkDogTag.ts`, "issued_here_unlinked": a root this clinic issued exists on
+ * chain but no local Pet record carries it, typically after a DB restore). One implementation
+ * means every caller seals a tag onto a pet in EXACTLY the same shape - never a second, slightly
+ * different write path a future reader has to notice and reconcile by hand.
+ */
+export async function linkPetDogTag(petId: string, tag: LinkedDogTag): Promise<void> {
+  await Pet.updateOne(
+    {petId},
+    {
+      $set: {
+        "dogTag.dogTagIdDec": tag.dogTagIdDec,
+        "dogTag.dogTagIdField": tag.dogTagIdField,
+        "dogTag.root": tag.root,
+        "dogTag.status": "active",
+        "dogTag.issuedTx": tag.issuedTx,
+        "dogTag.cloneAddress": tag.cloneAddress,
+        "dogTag.issuedAt": new Date(),
+      },
+    },
+  );
+}
+
 /** Mongoose + real-chain `ReconcileDeps` - the production adapter shared by every call site. */
 export function mongoReconcileDeps(sbtAddress: `0x${string}`, cloneAddress: `0x${string}`): ReconcileDeps {
   return {
@@ -107,22 +133,7 @@ export function mongoReconcileDeps(sbtAddress: `0x${string}`, cloneAddress: `0x$
         {$set: {status: "bound", resolvedAt: new Date()}, $unset: {errorStage: "", errorReason: ""}},
       );
     },
-    async linkPetDogTag(petId, tag) {
-      await Pet.updateOne(
-        {petId},
-        {
-          $set: {
-            "dogTag.dogTagIdDec": tag.dogTagIdDec,
-            "dogTag.dogTagIdField": tag.dogTagIdField,
-            "dogTag.root": tag.root,
-            "dogTag.status": "active",
-            "dogTag.issuedTx": tag.issuedTx,
-            "dogTag.cloneAddress": tag.cloneAddress,
-            "dogTag.issuedAt": new Date(),
-          },
-        },
-      );
-    },
+    linkPetDogTag,
   };
 }
 
