@@ -119,6 +119,16 @@ export async function readRecordTypeProfile(cloneAddress: Address): Promise<stri
   })) as string;
 }
 
+/** The current ROAX head block number - the wallet-registration EIP-712 message's `blockNumber`
+ * field (plans/wp4.2-client-wallet-registration.md: "ROAX head at session creation, server-
+ * fetched; session creation FAILS if the RPC is unreachable - chain presence is part of the
+ * receipt"). Fail-closed like every other read in this file: an RPC failure throws rather than
+ * resolving to a guessed value; `lib/registration/createSession.ts` is what turns that throw into
+ * the route's `chain_unreachable` result. */
+export async function readRoaxBlockNumber(): Promise<bigint> {
+  return roaxPublicClient().getBlockNumber();
+}
+
 /** `VetIssuer.issuedBy(root)` - the operator wallet that actually anchored `root` on this clone,
  * set to `msg.sender` inside `issueTag`/`issueRecord` (`onlyOperator`). This is the sole correct
  * gate for accepting a C3 issuer attestation's signer (`specs/issuer-attestation.md`: "The signer
