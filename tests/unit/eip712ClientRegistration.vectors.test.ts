@@ -1,5 +1,5 @@
 import {describe, expect, it} from "vitest";
-import {domainSeparator, hashStruct, hashTypedData} from "viem";
+import {domainSeparator, getTypesForEIP712Domain, hashStruct, hashTypedData} from "viem";
 import type {Address, Hex} from "viem";
 import vectors from "../../protocol/specs/eip712-client-registration-vectors.json";
 
@@ -51,6 +51,13 @@ const TYPES = {
 // happened to be made identically in both places.
 const EXPECTED_CLIENT_REGISTRATION_TYPE_STRING =
   "ClientRegistration(address clinic,bytes32 clientHash,bytes32 registrationId,address wallet,uint64 issuedAt,uint64 blockNumber,uint64 deadline)";
+// Same idea, for the domain: exactly these four fields, in this order, and - notably - no `salt`.
+// Every domainSeparator recomputed below depends on viem's `getTypesForEIP712Domain` continuing to
+// infer this same four-field list from a domain object shaped like ours; if a future viem upgrade
+// changed that inference (field order, or started including `salt` for some reason), every
+// per-vector recomputation below would fail with no hint that the DOMAIN type list, specifically,
+// was the cause - this is the check that supplies that hint.
+const EXPECTED_EIP712_DOMAIN_TYPE_STRING = "EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)";
 
 function structTypeString(name: string, fields: ReadonlyArray<{name: string; type: string}>): string {
   return `${name}(${fields.map((f) => `${f.type} ${f.name}`).join(",")})`;
@@ -85,6 +92,14 @@ describe("protocol/specs/eip712-client-registration-vectors.json", () => {
 
   it("this file's independently-hardcoded ClientRegistration type string matches the spec", () => {
     expect(structTypeString(PRIMARY_TYPE, TYPES.ClientRegistration)).toBe(EXPECTED_CLIENT_REGISTRATION_TYPE_STRING);
+  });
+
+  it("viem still infers exactly the four spec'd EIP712Domain fields, in order, with no salt", () => {
+    // A standalone representative domain, not read off `typedVectors[0]` - this check is about
+    // viem's field-inference behavior for our domain shape in general, not about any one vector.
+    const sampleDomain = {name: "DogTagClientRegistration", version: "1", chainId: 135, verifyingContract: "0x0000000000000000000000000000000000000000" as Address};
+    const domainFields = getTypesForEIP712Domain({domain: sampleDomain});
+    expect(structTypeString("EIP712Domain", domainFields)).toBe(EXPECTED_EIP712_DOMAIN_TYPE_STRING);
   });
 
   it.each(typedVectors.map((v) => [v.name, v] as const))(
