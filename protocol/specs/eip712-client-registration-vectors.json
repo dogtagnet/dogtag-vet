@@ -1,0 +1,242 @@
+[
+  {
+    "name": "baseline",
+    "description": "Typical everyday values - small chain id, ordinary timestamps/block number.",
+    "domain": {
+      "name": "DogTagClientRegistration",
+      "version": "1",
+      "chainId": 135,
+      "verifyingContract": "0x7b9bf16f0e39AdF8c38d8491F4C7E9C17E85D703"
+    },
+    "message": {
+      "clinic": "0x7b9bf16f0e39AdF8c38d8491F4C7E9C17E85D703",
+      "clientHash": "0x69db80134111a377addd431581d312fdcc8570a538af67bfa5ce0b3d824703f2",
+      "registrationId": "0x8fd81415a95c9b04c6f908ec7d0bcf3a00000000000000000000000000000000",
+      "wallet": "0x57C00Ec1E6D2744a0931866CfECB10f9A642332e",
+      "issuedAt": "1735689600",
+      "blockNumber": "42",
+      "deadline": "1735690200"
+    },
+    "expected": {
+      "domainSeparator": "0xe2c5eb885c3a23733311951b05a989950a311095e09150825e409f757e414d62",
+      "structHash": "0x82a10d7cad6236949f433e7df6fc9e3bf4a71a7c1bde7597eb50e249c233080c",
+      "digest": "0x3dbf7011fe69cbe87220ad4d4e74f3fbac85bf2ecd08b739d88d13c7d5f7ef27"
+    }
+  },
+  {
+    "name": "issuedAt-uint64-max",
+    "description": "issuedAt pinned to 2^64-1 (18446744073709551615); blockNumber/deadline ordinary.",
+    "domain": {
+      "name": "DogTagClientRegistration",
+      "version": "1",
+      "chainId": 135,
+      "verifyingContract": "0xE5965b50d0ce2514F897E9780e2F5B7e75224D8d"
+    },
+    "message": {
+      "clinic": "0xE5965b50d0ce2514F897E9780e2F5B7e75224D8d",
+      "clientHash": "0x5d38c746eda69888b2bb849741320b1760638ba9ff0254f4c889f14a748ab4b6",
+      "registrationId": "0x40cd0e9df353d69e7cc8f57754fad8fa00000000000000000000000000000000",
+      "wallet": "0xF9922e229830f7d6f8f4D9CEFe6fA2ba643Dcf12",
+      "issuedAt": "18446744073709551615",
+      "blockNumber": "777",
+      "deadline": "1800000000"
+    },
+    "expected": {
+      "domainSeparator": "0x5ca7fb26010b854900fee2cfe161e3b99e57b3c344060c26a4a87b093754cc9e",
+      "structHash": "0x59cf59edb1776fa58f76353b37410aa4d139843afac81e3a46f3620f67ba3371",
+      "digest": "0x9f08d03b319a0eac391ebd5acac65d730efddeccf2da5b5cc919751f4683ab31"
+    }
+  },
+  {
+    "name": "blockNumber-uint64-max",
+    "description": "blockNumber pinned to 2^64-1; issuedAt/deadline ordinary.",
+    "domain": {
+      "name": "DogTagClientRegistration",
+      "version": "1",
+      "chainId": 135,
+      "verifyingContract": "0xc020989B1278a5c42A62BDc2b67f4f053d5293D7"
+    },
+    "message": {
+      "clinic": "0xc020989B1278a5c42A62BDc2b67f4f053d5293D7",
+      "clientHash": "0xbc08d91abc31f449a1613237044d9bc9d797a89dbc9be76524c8d3ce5902f7e4",
+      "registrationId": "0xe7526d6da6b96f777d28eb157ada5c4c00000000000000000000000000000000",
+      "wallet": "0xe6Ae31cF1fcd2277AdAf96dfC090D7A35e7E1431",
+      "issuedAt": "1700000000",
+      "blockNumber": "18446744073709551615",
+      "deadline": "1700000600"
+    },
+    "expected": {
+      "domainSeparator": "0xe7bf0062f7f7e1d9792a249587014f2b2730171a1980b0e882b80da3eba71649",
+      "structHash": "0x0ff992f0c81185c15bfb334fc51c968ade8ca593c41b1348675e3280cef0402c",
+      "digest": "0xcf895a2c2d9289fef123e1e57c614785f3264203708dc6f859dd1455e347a7c7"
+    }
+  },
+  {
+    "name": "deadline-uint64-max",
+    "description": "deadline pinned to 2^64-1; issuedAt/blockNumber ordinary.",
+    "domain": {
+      "name": "DogTagClientRegistration",
+      "version": "1",
+      "chainId": 135,
+      "verifyingContract": "0x1851b34c83D01bfe220d391c9960bcE735949066"
+    },
+    "message": {
+      "clinic": "0x1851b34c83D01bfe220d391c9960bcE735949066",
+      "clientHash": "0x11dbb663d8b75ab384b1a54c3e9f83ffab3a7ff25658bb96451fd86c6bfc935b",
+      "registrationId": "0xa7585515ccb5f9adb285c43688eec31d00000000000000000000000000000000",
+      "wallet": "0xF7DEbD13230b47496735DcD9b6B01a166441fA42",
+      "issuedAt": "1650000000",
+      "blockNumber": "123456",
+      "deadline": "18446744073709551615"
+    },
+    "expected": {
+      "domainSeparator": "0xa39be169e7650ea5d1f0ba8ed494c48387e78fe014b092c7cfc633d3b81d4c2f",
+      "structHash": "0xbb759c23a4d39e101460315defbb87d48f9ad3ae7d8389b2bb9800536e40a41f",
+      "digest": "0x55ec2b9552d66d4f1ad972aa4c476ab267f6aa2b1d923bee339fb59ee4d0c12c"
+    }
+  },
+  {
+    "name": "all-uint64-fields-max",
+    "description": "issuedAt, blockNumber and deadline simultaneously at 2^64-1.",
+    "domain": {
+      "name": "DogTagClientRegistration",
+      "version": "1",
+      "chainId": 135,
+      "verifyingContract": "0x1f2821801fb181954C05dD7b1B665d4603C5D7a5"
+    },
+    "message": {
+      "clinic": "0x1f2821801fb181954C05dD7b1B665d4603C5D7a5",
+      "clientHash": "0x4433c768e8cbc52484f8e704ae57b42e727f4294fd30d9b1eac29967f45ae060",
+      "registrationId": "0x48e1c55003bd7a9eb2ee3f908717f01800000000000000000000000000000000",
+      "wallet": "0x9E8E680e62070F500cbd6291a79955Dc448E78aD",
+      "issuedAt": "18446744073709551615",
+      "blockNumber": "18446744073709551615",
+      "deadline": "18446744073709551615"
+    },
+    "expected": {
+      "domainSeparator": "0x5bf11e6679ff147d944e3d8182173256ba55bb6b59c0de858291446ddedfaf8f",
+      "structHash": "0x6547c9a27056e74788d057ab2c16927064d62cb2653e9f84d6474731bbab4c67",
+      "digest": "0x781ef772810adc03d0dec5e21343c58199febc9ba0989c0ffc5550691a068e25"
+    }
+  },
+  {
+    "name": "all-uint64-fields-zero",
+    "description": "issuedAt, blockNumber and deadline simultaneously at 0 (lower boundary).",
+    "domain": {
+      "name": "DogTagClientRegistration",
+      "version": "1",
+      "chainId": 135,
+      "verifyingContract": "0xAb67383DBbA836ae925e400950B7287E5eB56472"
+    },
+    "message": {
+      "clinic": "0xAb67383DBbA836ae925e400950B7287E5eB56472",
+      "clientHash": "0xcbe0895fe86881cffae534a7a495117185e362f3040949eec9d6464a4c4dea6a",
+      "registrationId": "0x6d54150e8350f7cff8c7157b5c2414e400000000000000000000000000000000",
+      "wallet": "0x354D5039363031F067F44B267cF7951797C89f66",
+      "issuedAt": "0",
+      "blockNumber": "0",
+      "deadline": "0"
+    },
+    "expected": {
+      "domainSeparator": "0xe86010bb4d3629e7016bc82931896f6e45f6882e178da6b0f390d58f223cd0f2",
+      "structHash": "0xb70461354fbed7fca1117c308f636af3eb658211d8519a4129f8855d792e234c",
+      "digest": "0x2042a114a12bdc2b71eb596219fb0a66125480205a4d1426d2a8f56384c0e391"
+    }
+  },
+  {
+    "name": "address-edges-zero-clinic-max-wallet",
+    "description": "clinic (and verifyingContract) at the zero address, wallet at the all-0xff address.",
+    "domain": {
+      "name": "DogTagClientRegistration",
+      "version": "1",
+      "chainId": 135,
+      "verifyingContract": "0x0000000000000000000000000000000000000000"
+    },
+    "message": {
+      "clinic": "0x0000000000000000000000000000000000000000",
+      "clientHash": "0x50a880c78ca7a24859e8f172c11a80d2dba5a67293d07263b528705e8f4541df",
+      "registrationId": "0xc337698b2893a6ca0047b055756be4ad00000000000000000000000000000000",
+      "wallet": "0xFFfFfFffFFfffFFfFFfFFFFFffFFFffffFfFFFfF",
+      "issuedAt": "1710000000",
+      "blockNumber": "9999",
+      "deadline": "1710003600"
+    },
+    "expected": {
+      "domainSeparator": "0x4d66203848f749b2379612d2076b4d5b0295b03285fa89041353f80d3cb684b1",
+      "structHash": "0xb044fa01480ae9c81e86b625cced6bdec5a905d77fdb70309f769f4516dde094",
+      "digest": "0xc0feb2168de8b2de6dd1b3ed1f725ed18620518623dee2f9d9837d9e970d83dc"
+    }
+  },
+  {
+    "name": "address-edges-max-clinic-zero-wallet",
+    "description": "clinic (and verifyingContract) at the all-0xff address, wallet at the zero address.",
+    "domain": {
+      "name": "DogTagClientRegistration",
+      "version": "1",
+      "chainId": 135,
+      "verifyingContract": "0xFFfFfFffFFfffFFfFFfFFFFFffFFFffffFfFFFfF"
+    },
+    "message": {
+      "clinic": "0xFFfFfFffFFfffFFfFFfFFFFFffFFFffffFfFFFfF",
+      "clientHash": "0x71c44f006b8dc30de40915d47941a1617c812a19a235eb1e164e3f64264b28c5",
+      "registrationId": "0x74640c9869fcc9b6c55f4e71e8dde88700000000000000000000000000000000",
+      "wallet": "0x0000000000000000000000000000000000000000",
+      "issuedAt": "1720000000",
+      "blockNumber": "10000",
+      "deadline": "1720003600"
+    },
+    "expected": {
+      "domainSeparator": "0x6efe72a659723dc94e3bf320d1e9057b8f413afc2c97b8bbd5fa4d8d818ce45f",
+      "structHash": "0xf10d4ffe1a9b28b576d0027f7bb1fc681622ec674b95b75b8e4adf747914fba7",
+      "digest": "0x134706b3b35c0239c1760758cfa9fe2c82c174ed9066ec9b264d0b8a3268ddae"
+    }
+  },
+  {
+    "name": "bytes32-edges-and-different-chain",
+    "description": "clientHash zeroed, registrationId at all-0xff (a pure bit-pattern edge case, not a real right-padded-UUID shape), chainId different from ROAX's default (135) to prove the domain separator is chain-scoped.",
+    "domain": {
+      "name": "DogTagClientRegistration",
+      "version": "1",
+      "chainId": 1,
+      "verifyingContract": "0x356B1Cc36096e4C47a32521B6aE3d523Ce46f35A"
+    },
+    "message": {
+      "clinic": "0x356B1Cc36096e4C47a32521B6aE3d523Ce46f35A",
+      "clientHash": "0x0000000000000000000000000000000000000000000000000000000000000000",
+      "registrationId": "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "wallet": "0x3FA4D520426E67773065446A33C7133dba1603EA",
+      "issuedAt": "1690000000",
+      "blockNumber": "55",
+      "deadline": "1690000900"
+    },
+    "expected": {
+      "domainSeparator": "0x6e496b4d270a9960ba18337f869acd1e8c19f7e15ae374b9c2bc053fb2d09bf4",
+      "structHash": "0x42668037c3447e8a0969e6dde8088aff407c243cffdb28fed347b98c6620b8e3",
+      "digest": "0xcf39e377f4ef9999af8bcc678b7fe87fa8628ae13a8466ae606bee9d6f1e2afb"
+    }
+  },
+  {
+    "name": "clinic-verifyingContract-mismatch",
+    "description": "clinic (in-struct) and domain.verifyingContract deliberately DIFFERENT addresses - real sessions always set them equal (the spec's 'redundantly in-struct'), but every other vector here does too, which would let an implementation that reads verifyingContract for the clinic field (or vice versa) still pass every other vector. This is the one vector that catches that specific mix-up.",
+    "domain": {
+      "name": "DogTagClientRegistration",
+      "version": "1",
+      "chainId": 135,
+      "verifyingContract": "0xEF2cF8F3A7e945D3b933E7F516A0D7Ea7306366f"
+    },
+    "message": {
+      "clinic": "0xf6833Abd3Aad31EbB3A5515dED6d4D8b03932839",
+      "clientHash": "0x8ba92b54e55a624e284b8d72ecf5c25a42003dfb847d37158fc4315ae0da9957",
+      "registrationId": "0x4798f8f5156c1fd4b97e049062aebd3b00000000000000000000000000000000",
+      "wallet": "0xaA4525A1BF754Fda472eAa13eEF1Ef29437a99cC",
+      "issuedAt": "1660000000",
+      "blockNumber": "321",
+      "deadline": "1660000300"
+    },
+    "expected": {
+      "domainSeparator": "0xc3aa5dcbc3131604b358d7e0bdec33886658f93afb39a0f056fbb942a69cface",
+      "structHash": "0x787cff6b5a0db2e47be1faf378acfd7a2771c37c567d39d2c24727dacbf410c1",
+      "digest": "0x3e47c552c901a6d5a22b8b07a36a973766b2ad5df70d99c7489c6b2e24059e4b"
+    }
+  }
+]
