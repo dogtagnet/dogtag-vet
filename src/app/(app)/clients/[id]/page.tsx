@@ -16,6 +16,7 @@ import {Appointment, type AppointmentDoc} from "@/lib/models/Appointment";
 import {Payment, type PaymentDoc} from "@/lib/models/Payment";
 import {getBookingSettings} from "@/lib/models/Availability";
 import {ClientForm} from "@/app/(app)/clients/ClientForm";
+import {WalletsPanel} from "@/app/(app)/clients/WalletsPanel";
 
 const RECENT_LIMIT = 5;
 
@@ -78,6 +79,8 @@ export default async function ClientDetailPage({params}: {params: Promise<{id: s
             </Link>
           </div>
         </FormSection>
+
+        <WalletsPanel clientId={client.clientId} wallets={client.wallets ?? []} timeZone={timeZone} />
 
         <FormSection title="Recent appointments" helperText="The most recent appointments booked for this client.">
           <DataTable

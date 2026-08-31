@@ -14,7 +14,12 @@ export async function GET(_request: Request, {params}: {params: Promise<{id: str
   const client = await Client.findOne({clientId: id}).lean<ClientDoc>();
   if (!client) return notFound("Client not found.");
   const pets = await Pet.find({petId: {$in: client.petIds}}).lean<PetDoc[]>();
-  return NextResponse.json({...client, pets});
+  // `wallets` has a schema-level `default: []`, but Mongoose defaults only fire at document
+  // CREATION time - a Client document that predates this field (any client created before this
+  // migration) reads back with `wallets` entirely absent, not `[]` (same class of gap
+  // `toSessionRow`'s microchip/ownerIdentity fallback fixes for MintSession). Defended here so a
+  // consumer of this route can always treat `wallets` as an array.
+  return NextResponse.json({...client, pets, wallets: client.wallets ?? []});
 }
 
 export async function PATCH(request: Request, {params}: {params: Promise<{id: string}>}) {
