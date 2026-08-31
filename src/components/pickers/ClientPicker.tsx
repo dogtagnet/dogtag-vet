@@ -4,6 +4,26 @@ import {useEffect, useRef, useState} from "react";
 import {Combobox} from "@/components/pickers/Combobox";
 import type {ClientDoc} from "@/lib/models/Client";
 
+/** Focus falls back to `<body>` after a selection: picking an option unmounts the `<input
+ * role="combobox">` that had focus during the selecting click/keypress (the `value` branch below
+ * swaps it out for the chip), and the browser has nowhere else to send focus on an element's
+ * removal. `focusPending` is set only inside the picker's own `onSelect` callback (never on mount,
+ * even when `value` starts already populated - e.g. the appointment detail page's Edit-tagging
+ * section), so this only fires for a selection this component itself just made. */
+function useFocusChipOnSelect(hasValue: boolean) {
+  const [focusPending, setFocusPending] = useState(false);
+  const removeButtonRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    if (focusPending && hasValue) {
+      removeButtonRef.current?.focus();
+      setFocusPending(false);
+    }
+  }, [focusPending, hasValue]);
+
+  return {removeButtonRef, requestFocus: () => setFocusPending(true)};
+}
+
 export interface ClientPickerProps {
   value: ClientDoc | null;
   onChange: (client: ClientDoc | null) => void;
@@ -26,6 +46,7 @@ export function ClientPicker({value, onChange, ariaLabel = "Search clients", pla
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<ClientDoc[]>([]);
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const {removeButtonRef, requestFocus} = useFocusChipOnSelect(value !== null);
 
   useEffect(() => {
     clearTimeout(timeoutRef.current);
@@ -45,7 +66,13 @@ export function ClientPicker({value, onChange, ariaLabel = "Search clients", pla
       <span className="inline-flex items-center gap-1.5 rounded-badge bg-brand-soft px-2.5 py-1 text-caption font-medium text-brand">
         <span>{value.name}</span>
         {value.email && <span className="font-normal opacity-80">{` - ${value.email}`}</span>}
-        <button type="button" onClick={() => onChange(null)} aria-label={`Remove ${value.name}`} className="text-brand hover:opacity-70">
+        <button
+          ref={removeButtonRef}
+          type="button"
+          onClick={() => onChange(null)}
+          aria-label={`Remove ${value.name}`}
+          className="text-brand hover:opacity-70"
+        >
           x
         </button>
       </span>
@@ -62,6 +89,7 @@ export function ClientPicker({value, onChange, ariaLabel = "Search clients", pla
       options={results}
       onSelect={(client) => {
         onChange(client);
+        requestFocus();
         setQuery("");
         setResults([]);
       }}

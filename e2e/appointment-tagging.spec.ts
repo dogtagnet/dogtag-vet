@@ -1,4 +1,6 @@
 import {expect, test, type Page} from "@playwright/test";
+import {MongoClient} from "mongodb";
+import {E2E_MONGO_URI} from "./mongo-fixture";
 
 /**
  * End-to-end coverage for plans/wp4.3-appointment-tagging-client-id.md: tagging an appointment to
@@ -313,6 +315,28 @@ test("ClientPicker keyboard nav: ArrowDown/ArrowUp move aria-activedescendant am
   await page.getByRole("button", {name: "Cancel"}).click();
 });
 
+test("ClientPicker: selecting a client moves focus to the removable chip, never losing it to the page body", async ({page}) => {
+  // WP4.3 B3's "focus management" requirement. Selecting a client collapses ClientPicker's
+  // Combobox branch into a chip <span> - the <input role="combobox"> that had focus during the
+  // selecting keypress/click unmounts on that same render. Without somewhere deliberate for focus
+  // to land, the browser drops it to <body>, silently stranding a keyboard user.
+  const focusTarget = await createClient(page, {name: "Focus Target", email: "focus-target@example.com", phone: "555-0701"});
+  const date = futureDate(34);
+  await openCreateDialogOnEmptySlot(page, date);
+
+  const clientCombobox = page.getByRole("combobox", {name: "Search clients"});
+  await clientCombobox.fill("Focus Target");
+  await expect(page.getByRole("option", {name: /Focus Target/})).toBeVisible();
+  await clientCombobox.press("ArrowDown");
+  await clientCombobox.press("Enter");
+
+  const removeButton = page.getByRole("button", {name: `Remove ${focusTarget.name}`});
+  await expect(removeButton).toBeVisible();
+  await expect(removeButton).toBeFocused();
+
+  await page.getByRole("button", {name: "Cancel"}).click();
+});
+
 test("open slot still creates after the chip-click fix (regression, on a day with no appointments)", async ({page}) => {
   const date = futureDate(31);
   await openCreateDialogOnEmptySlot(page, date);
@@ -356,6 +380,50 @@ test("walk-in fallback: no client record, free-text names, and the list shows pl
   await expect(page.getByRole("link", {name: "Walk-in Guest E2E"})).not.toBeVisible();
 });
 
+test("pet order is preserved everywhere on the detail page, and a no-op Edit-tagging save does not rewrite the stored order", async ({page}) => {
+  // Round-1 regression: Pet.find({petId: {$in: petIds}}) does not preserve petIds' order - names
+  // chosen so creation order differs from the tagged order, which is what exposes Mongo's own
+  // natural-order fetch diverging from it.
+  const client = await createClient(page, {name: "Order Probe Client", email: "order-probe@example.com", phone: "555-0801"});
+  const zuluId = await createPet(page, "Zulu", [client.clientId]);
+  const alphaId = await createPet(page, "Alpha", [client.clientId]);
+  const mikeId = await createPet(page, "Mike", [client.clientId]);
+
+  const appointmentId = await createAppointmentApi(page, {
+    clientId: client.clientId,
+    petIds: [zuluId, alphaId, mikeId],
+    startAt: Math.floor(Date.now() / 1000) + 55 * 86_400,
+  });
+  const created = await getAppointment(page, appointmentId);
+  expect(created.petName).toBe("Zulu, Alpha, Mike");
+
+  await page.goto(`/appointments/${appointmentId}`);
+
+  // The PageHeader subtitle is built straight from the stored petName string.
+  await expect(page.getByText("Order Probe Client - Zulu, Alpha, Mike")).toBeVisible();
+
+  // "Tagged to" -> Pets must show the SAME order, not whatever order the $in fetch happened to
+  // return the documents in.
+  const petsRow = page.locator("dl > div", {has: page.getByText("Pets", {exact: true})});
+  await expect(petsRow.getByRole("link")).toHaveText(["Zulu", "Alpha", "Mike"]);
+
+  // Edit-tagging's chips (seeded from the same fetched array) must match too. Each chip's visible
+  // text is just "x" (the remove glyph) - the name lives in aria-label - so order is asserted via
+  // that attribute, in DOM order, rather than via toHaveText.
+  const editSection = page.locator("section", {has: page.getByRole("heading", {name: "Edit tagging"})});
+  const petRemoveButtons = editSection.getByRole("button", {name: /^Remove (Zulu|Alpha|Mike)$/});
+  await expect(petRemoveButtons).toHaveCount(3);
+  const petChipLabels = await petRemoveButtons.evaluateAll((buttons) => buttons.map((b) => b.getAttribute("aria-label")));
+  expect(petChipLabels).toEqual(["Remove Zulu", "Remove Alpha", "Remove Mike"]);
+
+  // Saving with ZERO actual edits must not silently rewrite petName into a different order.
+  await editSection.getByRole("button", {name: "Save tagging"}).click();
+  await expect(page.getByText("Tagging saved")).toBeVisible();
+  const afterNoOpSave = await getAppointment(page, appointmentId);
+  expect(afterNoOpSave.petIds).toEqual([zuluId, alphaId, mikeId]);
+  expect(afterNoOpSave.petName).toBe("Zulu, Alpha, Mike");
+});
+
 test("public booking still creates a confirmed appointment (unchanged flow, regression)", async ({request}) => {
   const services = await request.get("/v1/booking/services");
   expect(services.ok()).toBe(true);
@@ -384,6 +452,82 @@ test("public booking still creates a confirmed appointment (unchanged flow, regr
   const body = await res.json();
   expect(body.status).toBe("confirmed");
   expect(body.appointmentId).toBeTruthy();
+});
+
+test("public-booking appointment is not a dead end: status actions and notes save succeed, and cancel releases its capacity buckets", async ({
+  page,
+  request,
+}) => {
+  // Round-1 regression: public booking is the only path that produces clientId-set/petIds-empty
+  // appointments (clientMatch.ts links a real client but never a pet - spec Facts line 9, C10).
+  // The PATCH route used to re-validate that untouched shape against the tagging invariant on
+  // EVERY request, so every status action and the notes save 400'd - the only way to unblock
+  // anything was destroying the client tag. This proves the real, intended path works directly.
+  const services = await request.get("/v1/booking/services");
+  const serviceList = await services.json();
+  const service = serviceList.find((s: {name: string}) => s.name === "General checkup");
+  expect(service).toBeTruthy();
+  const from = new Date();
+  const to = new Date(from.getTime() + 14 * 24 * 60 * 60 * 1000);
+  const availability = await request.get(
+    `/v1/booking/availability?serviceId=${service.id}&from=${from.toISOString()}&to=${to.toISOString()}`,
+  );
+  const availabilityBody = await availability.json();
+  const slot = availabilityBody.slots[availabilityBody.slots.length - 1]; // last slot: least likely to collide with the regression test above
+
+  const bookRes = await request.post("/v1/booking/book", {
+    data: {
+      serviceId: service.id,
+      startAt: slot.startAt,
+      client: {name: "Dead End Regression", email: "dead-end-regression@example.com"},
+      petName: "No Pet Yet",
+    },
+  });
+  expect(bookRes.ok()).toBe(true);
+  const appointmentId = (await bookRes.json()).appointmentId as string;
+
+  const before = await getAppointment(page, appointmentId);
+  expect(before.clientId).toBeTruthy();
+  expect(before.petIds).toEqual([]);
+
+  await page.goto(`/appointments/${appointmentId}`);
+  await expect(page.getByRole("link", {name: "Dead End Regression"})).toBeVisible();
+
+  // Notes save must succeed without touching the tag at all.
+  await page.getByPlaceholder("No notes yet").fill("Round-1 regression probe note");
+  await page.getByRole("button", {name: "Save notes"}).click();
+  await expect(page.getByText("Notes saved")).toBeVisible();
+
+  // A plain status action must succeed too.
+  await page.getByRole("button", {name: "Confirm"}).click();
+  await expect(page.getByText("appointment confirmed")).toBeVisible();
+
+  const afterConfirm = await getAppointment(page, appointmentId);
+  expect(afterConfirm.status).toBe("confirmed");
+  expect(afterConfirm.notes).toBe("Round-1 regression probe note");
+  // Neither save touched the tag - still the same untouched public-booking shape.
+  expect(afterConfirm.clientId).toBe(before.clientId);
+  expect(afterConfirm.petIds).toEqual([]);
+
+  // Cancel must succeed AND actually release the capacity bucket(s) it held - the sharpest piece
+  // of evidence from the original report (buckets were byte-identical before/after on the bug).
+  const mongoClient = new MongoClient(E2E_MONGO_URI);
+  await mongoClient.connect();
+  try {
+    const bucketsCollection = mongoClient.db().collection("capacitybuckets");
+    const nonZeroBefore = await bucketsCollection.countDocuments({count: {$gt: 0}});
+
+    await page.getByRole("button", {name: "Cancel"}).click();
+    await expect(page.getByText("appointment cancelled")).toBeVisible();
+
+    const nonZeroAfter = await bucketsCollection.countDocuments({count: {$gt: 0}});
+    expect(nonZeroAfter).toBeLessThan(nonZeroBefore);
+  } finally {
+    await mongoClient.close();
+  }
+
+  const afterCancel = await getAppointment(page, appointmentId);
+  expect(afterCancel.status).toBe("cancelled");
 });
 
 test("screenshots (both themes): calendar dialog with pickers, appointment detail, client form with ID fields", async ({page}) => {
