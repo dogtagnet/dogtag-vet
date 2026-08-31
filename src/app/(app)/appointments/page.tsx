@@ -1,3 +1,4 @@
+import Link from "next/link";
 import {PageHeader} from "@/components/shell/PageHeader";
 import {DataTable} from "@/components/ui/DataTable";
 import {StatusBadge} from "@/components/ui/StatusBadge";
@@ -46,8 +47,27 @@ export default async function AppointmentsPage({searchParams}: {searchParams: Pr
       <AppointmentFilters />
       <DataTable
         columns={[
-          {key: "when", header: "When", render: (a: AppointmentDoc) => formatUnixSeconds(a.startAt, timeZone)},
-          {key: "client", header: "Client", render: (a: AppointmentDoc) => a.clientName},
+          {
+            key: "when",
+            header: "When",
+            render: (a: AppointmentDoc) => (
+              <Link href={`/appointments/${a.appointmentId}`} className="text-link hover:underline">
+                {formatUnixSeconds(a.startAt, timeZone)}
+              </Link>
+            ),
+          },
+          {
+            key: "client",
+            header: "Client",
+            render: (a: AppointmentDoc) =>
+              a.clientId ? (
+                <Link href={`/clients/${a.clientId}`} className="text-link hover:underline">
+                  {a.clientName}
+                </Link>
+              ) : (
+                a.clientName
+              ),
+          },
           {key: "pet", header: "Pet", render: (a: AppointmentDoc) => a.petName},
           {
             key: "status",
