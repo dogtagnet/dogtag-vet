@@ -287,6 +287,21 @@ function ProvenanceBox({appointment, onSaved}: {appointment: AppointmentDoc; onS
   return (
     <section data-testid="provenance-box" className="rounded-card border border-border bg-surface p-5 shadow-card">
       <h3 className="mb-4 text-section-title text-ink">Provenance</h3>
+      {/* Review finding 4: the booking itself durably succeeded, but its post-insert follow-up
+       * writes (Q3's pet import/reuse, Q1's wallet auto-attach - lib/booking/postBooking.ts) did
+       * not all complete - staff completes them by hand rather than the client being told their
+       * confirmed booking "failed". */}
+      {identity.postBookingIncomplete && (
+        <div className="mb-4">
+          <Banner tone="warn" title="This booking was created, but its follow-up records did not complete">
+            <p>
+              A pet import or wallet attachment failed after the appointment itself was booked. The
+              client&apos;s booking and confirmation are fine - review this client&apos;s pets and wallets and
+              complete anything missing by hand.
+            </p>
+          </Banner>
+        </div>
+      )}
       <dl className="grid grid-cols-1 gap-4">
         {identity.walletAddress && (
           <div>

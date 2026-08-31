@@ -67,6 +67,12 @@ export interface BookingIdentity {
    * try again" apart from "no such tag exists". Never set alongside any tier other than
    * `"unknown"`. */
   verificationError?: boolean;
+  /** Review finding 4: set when the post-insert side effects (Q3's provisional pet import/reuse,
+   * Q1's wallet auto-attach - `lib/booking/postBooking.ts`) failed AFTER this appointment was
+   * durably created. The booking itself succeeded and the client received their confirmation and
+   * manage token; this flags the FOLLOW-UP records (pet link, client-pet association, wallet
+   * entry) as possibly missing, surfaced as a review banner in the provenance box. */
+  postBookingIncomplete?: boolean;
 }
 
 export interface AppointmentDoc {
@@ -111,6 +117,7 @@ const bookingIdentitySchema = new Schema<BookingIdentity>(
     dataVerificationAttempted: Boolean,
     dataVerified: Boolean,
     verificationError: Boolean,
+    postBookingIncomplete: Boolean,
   },
   {_id: false},
 );

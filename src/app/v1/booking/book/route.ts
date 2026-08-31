@@ -2,23 +2,20 @@ import {randomBytes} from "node:crypto";
 import type {Address, Hex} from "viem";
 import {createAppointment} from "@/lib/booking/lifecycle";
 import {loadAvailabilityConfig} from "@/lib/booking/queries";
-import {appendBookingWalletToClient, clientAlreadyHasWallet, findOrCreateClientForBooking, findOrCreateClientForMobileBooking} from "@/lib/booking/clientMatch";
+import {findOrCreateClientForBooking, findOrCreateClientForMobileBooking} from "@/lib/booking/clientMatch";
 import {sendBookingConfirmation} from "@/lib/booking/confirmation";
 import {toPublicAppointmentStatus} from "@/lib/booking/status";
 import {computeMobileBookingHash} from "@/lib/booking/bookingHash";
-import {buildMobileBookingDomain, canonicalPayloadJson, toWireMessage, type MobileBookingMessage} from "@/lib/booking/mobileEip712";
 import {verifyMobileBookingWalletClaim, type MobileBookingWalletClaimInvalidReason} from "@/lib/booking/walletClaim";
-import {mongoMobileTagChainDeps, mongoMobileTagLookupStore, unconfiguredMobileTagChainDeps} from "@/lib/booking/mobileMongoAdapters";
+import {mongoMobileTagChainDeps, mongoMobileTagLookupStore, mongoPostBookingStore, unconfiguredMobileTagChainDeps} from "@/lib/booking/mobileMongoAdapters";
+import {applyPostBookingSideEffects} from "@/lib/booking/postBooking";
 import {resolveTagClaim, toBookingIdentity, type TagClaimResult} from "@/lib/booking/mobileReconcile";
 import {connectToDatabase} from "@/lib/db";
 import {roax} from "@/lib/chains";
 import {getServerEnv} from "@/lib/env";
 import {getClinicSettings} from "@/lib/models/ClinicSettings";
-import {computeReceiptHash, type ReceiptRecord} from "@/lib/registration/receipt";
 import type {AppointmentDraft} from "@/lib/booking/mongoStore";
 import {Appointment, type BookingIdentity} from "@/lib/models/Appointment";
-import {Client} from "@/lib/models/Client";
-import {Pet, buildPetSearchKey, type PetDoc} from "@/lib/models/Pet";
 import {Service, type ServiceDoc} from "@/lib/models/Service";
 import {bookAppointmentRequestSchema} from "@/lib/schemas/booking";
 import {enforceRateLimit, errorBody, jsonWithHeaders, readJsonBody} from "@/lib/publicApi";
@@ -283,75 +280,38 @@ export async function POST(request: Request) {
     });
   }
 
-  // ── Post-insert writes - only now that the appointment itself is durably booked.
-  if (tagClaim.tagResolution === "external" && tagClaim.dataVerified) {
-    let importedPetId: string;
-    // Review finding 3: rebuild petName from the actually-linked pet here too, same as the clean
-    // tier-1 match above and `relink-dogtag`'s own `petName: pet.name` write - otherwise the list
-    // shows the wire's unverified `mobile.pet.name` hint (or the "Pet" placeholder) even though a
-    // real, chain-verified pet record now exists for this appointment.
-    let linkedPetName: string;
-    if (tagClaim.existingExternalPetId) {
-      importedPetId = tagClaim.existingExternalPetId;
-      const [existingPet] = await Promise.all([
-        Pet.findOne({petId: importedPetId}).lean<Pick<PetDoc, "name">>(),
-        Pet.updateOne({petId: importedPetId}, {$addToSet: {ownerClientIds: client.clientId}}),
-        Client.updateOne({clientId: client.clientId}, {$addToSet: {petIds: importedPetId}}),
-      ]);
-      linkedPetName = existingPet?.name?.trim() || petName;
-    } else {
-      const attrs = tagClaim.verifiedAttributes ?? {};
-      const importedName = attrs.name?.trim() || mobile?.pet?.name?.trim() || "Pet";
-      const created = await Pet.create({
-        name: importedName,
-        species: attrs.species,
-        breed: attrs.breed,
-        sex: attrs.sex,
-        dateOfBirth: attrs.dateOfBirth,
-        ownerClientIds: [client.clientId],
-        dogTag: {
-          dogTagIdDec: mobile?.pet?.dogTagIdDec,
-          dogTagIdField: tagClaim.dogTagIdField,
-          root: tagClaim.root,
-          cloneAddress: tagClaim.issuerClone,
-          status: "active",
-          external: true,
-        },
-        searchKey: buildPetSearchKey({name: importedName, species: attrs.species, breed: attrs.breed}),
-      });
-      importedPetId = created.petId;
-      linkedPetName = importedName;
-      await Client.updateOne({clientId: client.clientId}, {$addToSet: {petIds: importedPetId}});
-    }
-    await Appointment.updateOne({appointmentId: result.appointment.appointmentId}, {$set: {petIds: [importedPetId], petName: linkedPetName}});
-    result.appointment.petIds = [importedPetId];
-    result.appointment.petName = linkedPetName;
-  }
-
-  if (walletVerifiedAddress && bookingHash && mobile?.wallet && !clientAlreadyHasWallet(client, walletVerifiedAddress)) {
-    const domain = buildMobileBookingDomain(roax.id, settings!.cloneAddress as Address);
-    const message: MobileBookingMessage = {
-      clinic: settings!.cloneAddress as Address,
-      bookingHash,
-      wallet: walletVerifiedAddress as Address,
-      issuedAt: BigInt(mobile.wallet.issuedAt),
-      deadline: BigInt(mobile.wallet.deadline),
-    };
-    const receipt: ReceiptRecord = {
-      payloadJson: canonicalPayloadJson(domain, toWireMessage(message)),
-      signature: mobile.wallet.signature,
-      recoveredAt: now,
-    };
-    await appendBookingWalletToClient(client.clientId, {
-      address: walletVerifiedAddress,
-      via: "booking",
-      bookingId: result.appointment.appointmentId,
-      receipt,
-      receiptHash: computeReceiptHash(receipt),
-      issuedAt: mobile.wallet.issuedAt,
-      registeredAt: now,
-    });
-  }
+  // ── Post-insert side effects - only now that the appointment itself is durably booked. Review
+  // finding 4: extracted to `applyPostBookingSideEffects` (`lib/booking/postBooking.ts`), whose
+  // one contract is that a failure in here can no longer 500 a booking that already durably
+  // exists - by this point the appointment is created and (when a wallet claim was involved) its
+  // `bookingHash` is burned into the replay guard, so a thrown error would leave the client
+  // retrying a booking that exists and being told "already used" with nothing to show for it.
+  // The module traps every failure, flags `bookingIdentity.postBookingIncomplete` for staff
+  // review (a warning banner in the provenance box), and the response below returns the created
+  // appointment + manage token regardless. Q3's import/reuse (with review finding 3's petName
+  // rebuild) and Q1's wallet auto-attach keep their exact write shapes - see the module and
+  // `mongoPostBookingStore`'s own doc comments.
+  await applyPostBookingSideEffects(mongoPostBookingStore, {
+    appointmentId: result.appointment.appointmentId,
+    client: {clientId: client.clientId, wallets: client.wallets},
+    tagClaim,
+    fallbackPetName: petName,
+    wirePetName: mobile?.pet?.name,
+    wireDogTagIdDec: mobile?.pet?.dogTagIdDec,
+    wallet:
+      walletVerifiedAddress && bookingHash && mobile?.wallet
+        ? {
+            verifiedAddress: walletVerifiedAddress,
+            bookingHash,
+            signature: mobile.wallet.signature,
+            issuedAt: mobile.wallet.issuedAt,
+            deadline: mobile.wallet.deadline,
+            clinicCloneAddress: settings!.cloneAddress as Address,
+            chainId: roax.id,
+          }
+        : undefined,
+    now,
+  });
 
   const ics = await sendBookingConfirmation({
     appointment: result.appointment,

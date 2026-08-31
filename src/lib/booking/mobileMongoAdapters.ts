@@ -1,8 +1,12 @@
 import "server-only";
 import type {Address} from "viem";
-import {Pet, type PetDoc} from "@/lib/models/Pet";
+import {Appointment} from "@/lib/models/Appointment";
+import {Client} from "@/lib/models/Client";
+import {Pet, buildPetSearchKey, type PetDoc} from "@/lib/models/Pet";
 import {readIsValidRoot, readProfileRoot, readRootIssuer} from "@/lib/chainRead";
+import {appendBookingWalletToClient} from "@/lib/booking/clientMatch";
 import type {MobileTagChainDeps, MobileTagLookupStore} from "@/lib/booking/mobileReconcile";
+import type {PostBookingStore} from "@/lib/booking/postBooking";
 
 /** Mongoose-backed `MobileTagLookupStore` - the production adapter for `resolveTagClaim`'s
  * database reads, mirroring every other `mongo*Store`/`mongo*Deps` factory in this app
@@ -46,3 +50,54 @@ export function unconfiguredMobileTagChainDeps(): MobileTagChainDeps {
   const notConfigured = (): Promise<never> => Promise.reject(new Error("Chain not configured for tag verification."));
   return {readProfileRoot: notConfigured, readRootIssuer: notConfigured, readIsValidRoot: notConfigured};
 }
+
+/** Mongoose-backed `PostBookingStore` (review finding 4) - each write preserves the exact shape
+ * the booking route performed inline before the extraction: the same `$addToSet` owner/pet links,
+ * the same provisional `Pet.create` fields (`external: true`, `status: "active"`, searchKey from
+ * the imported attributes), the same appointment link write, and the SAME
+ * `appendBookingWalletToClient` atomic push the route already used. */
+export const mongoPostBookingStore: PostBookingStore = {
+  async findPetName(petId) {
+    const pet = await Pet.findOne({petId}).lean<Pick<PetDoc, "name">>();
+    return pet?.name ?? null;
+  },
+
+  async addOwnerToPet(petId, clientId) {
+    await Pet.updateOne({petId}, {$addToSet: {ownerClientIds: clientId}});
+  },
+
+  async addPetToClient(clientId, petId) {
+    await Client.updateOne({clientId}, {$addToSet: {petIds: petId}});
+  },
+
+  async createExternalPet(input) {
+    const created = await Pet.create({
+      name: input.name,
+      species: input.species,
+      breed: input.breed,
+      sex: input.sex,
+      dateOfBirth: input.dateOfBirth,
+      ownerClientIds: [input.ownerClientId],
+      dogTag: {
+        dogTagIdDec: input.dogTag.dogTagIdDec,
+        dogTagIdField: input.dogTag.dogTagIdField,
+        root: input.dogTag.root,
+        cloneAddress: input.dogTag.cloneAddress,
+        status: "active",
+        external: true,
+      },
+      searchKey: buildPetSearchKey({name: input.name, species: input.species, breed: input.breed}),
+    });
+    return {petId: created.petId};
+  },
+
+  async linkAppointmentPet(appointmentId, petId, petName) {
+    await Appointment.updateOne({appointmentId}, {$set: {petIds: [petId], petName}});
+  },
+
+  appendBookingWallet: appendBookingWalletToClient,
+
+  async flagPostBookingIncomplete(appointmentId) {
+    await Appointment.updateOne({appointmentId}, {$set: {"bookingIdentity.postBookingIncomplete": true}});
+  },
+};
