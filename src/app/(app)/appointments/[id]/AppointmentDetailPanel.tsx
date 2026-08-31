@@ -310,6 +310,15 @@ function ProvenanceBox({appointment, onSaved}: {appointment: AppointmentDoc; onS
               <AddressChip address={identity.walletAddress} chain="roax" />
               <StatusBadge tone={identity.walletVerified ? "ok" : "danger"} label={identity.walletVerified ? "Verified" : "Unverified"} />
             </dd>
+            {identity.walletMultiMatch && (
+              /* Review finding 6: the same wallet on multiple client records is allowed state -
+               * the booking resolved deterministically (earliest registration of this wallet
+               * wins), and staff sees the ambiguity instead of a silent pick. */
+              <p className="mt-1 text-caption text-ink-faint">
+                This wallet is registered on more than one client record - this booking resolved to its earliest
+                registration. Review the client link if that looks wrong.
+              </p>
+            )}
           </div>
         )}
 

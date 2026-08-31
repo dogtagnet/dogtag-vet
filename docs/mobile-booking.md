@@ -80,6 +80,7 @@ Because the pre-check and the partial unique index both match on the live `booki
 ## Client resolution (Q1)
 
 Returning-user resolution tries, in order: a verified wallet match against `Client.wallets[]` (active entries only - a revoked wallet's key may have been revoked BECAUSE it was compromised, so a signature from it must not still resolve to the client that once owned it); else today's email-then-phone match; else create.
+The same wallet may legitimately sit on more than one client record (WP4.2 allows it - e.g. a household); in that case resolution is deterministic - the client whose active registration of this wallet is EARLIEST wins, ties broken by clientId - and the ambiguity is persisted as `bookingIdentity.walletMultiMatch` and surfaced in the provenance box, never silently picked over.
 Existing client fields are never overwritten by a booking, same doctrine as v1.
 
 **Auto-attach**: both attach paths - the WP4.2 QR ceremony and a mobile booking's signed claim - are wallet-signed, so both are legitimate.

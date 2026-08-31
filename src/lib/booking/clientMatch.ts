@@ -29,6 +29,48 @@ export async function findOrCreateClientForBooking(client: {
   return created.toObject();
 }
 
+export interface WalletClientMatchPick {
+  client: ClientDoc;
+  /** More than one client record carries this active wallet - allowed state (WP4.2: "same wallet
+   * MAY appear on different clients"), surfaced rather than silently picked over. */
+  multiMatch: boolean;
+}
+
+/**
+ * Review finding 6: deterministic selection among clients sharing one active wallet. A bare
+ * `findOne` has no defined order, so the same household wallet on two client records resolved to
+ * whichever document Mongo happened to return first - alternating bookings could split across the
+ * two records. The pick is now total and stable: the client whose ACTIVE entry for this wallet has
+ * the earliest `registeredAt` wins (the record that has known this wallet longest), ties broken by
+ * `clientId`. Pure (no database) so it is unit-testable directly; the caller passes every match.
+ */
+export function pickDeterministicWalletClient(clients: ClientDoc[], walletAddress: string): WalletClientMatchPick | null {
+  if (clients.length === 0) return null;
+  const address = walletAddress.toLowerCase();
+  const earliestActiveRegistration = (client: ClientDoc): number => {
+    const times = client.wallets
+      .filter((w) => w.address.toLowerCase() === address && w.revokedAt === undefined)
+      .map((w) => w.registeredAt);
+    // A client with no active entry for this address (defensive - the caller's query should never
+    // hand one in) sorts last rather than throwing on Math.min of nothing.
+    return times.length > 0 ? Math.min(...times) : Number.MAX_SAFE_INTEGER;
+  };
+  const sorted = [...clients].sort((a, b) => {
+    const diff = earliestActiveRegistration(a) - earliestActiveRegistration(b);
+    if (diff !== 0) return diff;
+    return a.clientId < b.clientId ? -1 : a.clientId > b.clientId ? 1 : 0;
+  });
+  return {client: sorted[0], multiMatch: clients.length > 1};
+}
+
+export interface MobileBookingClientResolution {
+  client: ClientDoc;
+  /** Review finding 6: true when the verified wallet matched MORE THAN ONE client record -
+   * persisted to `bookingIdentity.walletMultiMatch` for staff visibility. Always false on the
+   * email/phone/create path. */
+  walletMultiMatch: boolean;
+}
+
 /**
  * WP4.4 Q1's client-resolution order: "verified wallet match against Client.wallets[] FIRST, else
  * today's email-then-phone clientMatch, else create." Only a VERIFIED wallet address is ever
@@ -36,18 +78,23 @@ export async function findOrCreateClientForBooking(client: {
  * the whole booking per Q2, before client resolution ever runs). Excludes revoked wallet entries
  * from the match: a revoked wallet's key may have been revoked BECAUSE it was compromised, so
  * possession of a signature from it must not still resolve to the client that once owned it.
+ *
+ * Review finding 6: fetches EVERY matching client (not a nondeterministic `findOne`) and picks via
+ * `pickDeterministicWalletClient`, reporting the multi-match fact alongside the resolved client so
+ * the booking route can persist it for staff.
  */
 export async function findOrCreateClientForMobileBooking(input: {
   verifiedWalletAddress?: string;
   client: {name: string; email: string; phone?: string};
-}): Promise<ClientDoc> {
+}): Promise<MobileBookingClientResolution> {
   if (input.verifiedWalletAddress) {
-    const walletMatch = await Client.findOne({
+    const walletMatches = await Client.find({
       wallets: {$elemMatch: {address: input.verifiedWalletAddress, revokedAt: {$exists: false}}},
-    }).lean<ClientDoc>();
-    if (walletMatch) return walletMatch;
+    }).lean<ClientDoc[]>();
+    const pick = pickDeterministicWalletClient(walletMatches, input.verifiedWalletAddress);
+    if (pick) return {client: pick.client, walletMultiMatch: pick.multiMatch};
   }
-  return findOrCreateClientForBooking(input.client);
+  return {client: await findOrCreateClientForBooking(input.client), walletMultiMatch: false};
 }
 
 /** Does `client` already carry `walletAddress` in its `wallets[]`, active or revoked? Used to

@@ -207,6 +207,39 @@ async function clearCloneAddress(page: Page) {
   void page;
 }
 
+/** Review finding 6: pushes a minimal but schema-complete active wallet entry straight into
+ * Mongo - two clients legitimately sharing one wallet is allowed state (WP4.2: "same wallet MAY
+ * appear on different clients") that no staff API can produce on demand, so seeding it uses the
+ * same direct-Mongo escape hatch as `seedLocalDogTag`. */
+async function seedClientWallet(page: Page, clientId: string, address: string, registeredAt: number) {
+  const {MongoClient} = await import("mongodb");
+  const {E2E_MONGO_URI} = await import("./mongo-fixture");
+  const client = new MongoClient(E2E_MONGO_URI);
+  await client.connect();
+  try {
+    await client.db().collection("clients").updateOne(
+      {clientId},
+      {
+        $push: {
+          wallets: {
+            address,
+            via: "registration",
+            registrationId: `seed-${registeredAt}`,
+            receipt: {payloadJson: "{}", signature: `0x${"11".repeat(65)}`, recoveredAt: registeredAt},
+            receiptHash: `0x${"22".repeat(32)}`,
+            issuedAt: registeredAt,
+            blockNumber: 1,
+            registeredAt,
+          },
+        },
+      },
+    );
+  } finally {
+    await client.close();
+  }
+  void page;
+}
+
 async function setTheme(page: Page, theme: "Light" | "Dark") {
   await page.getByRole("radio", {name: theme}).click();
   await expect(page.getByRole("radio", {name: theme})).toHaveAttribute("aria-checked", "true");
@@ -444,6 +477,56 @@ test.describe("section 2: the signed wallet claim", () => {
     const replayAgain = await book(page, requestBody);
     expect(replayAgain.status).toBe(400);
     expect(replayAgain.body.error?.code).toBe("wallet_claim_replayed");
+  });
+
+  test("review finding 6: a wallet shared by two client records resolves DETERMINISTICALLY (earliest registration wins) and the multi-match is surfaced for staff", async ({page}) => {
+    const signer = privateKeyToAccount(generatePrivateKey());
+    const wallet = signer.address.toLowerCase();
+    // Insertion order is the OPPOSITE of registration order, so a natural-order findOne would pick
+    // the later registration - the nondeterminism this test pins down.
+    const lateClientId = await createClientApi(page, "Household Late Registration", "household-late@example.com");
+    await seedClientWallet(page, lateClientId, wallet, 3_000);
+    const earlyClientId = await createClientApi(page, "Household Early Registration", "household-early@example.com");
+    await seedClientWallet(page, earlyClientId, wallet, 1_000);
+
+    const service = await getCheckupService(page);
+    const startAt = await openSlot(page, service, 23);
+    const client = {name: "Household Booker", email: "household-booker@example.com"};
+    const now = Math.floor(Date.now() / 1000);
+    const bookingHash = computeBookingHash({serviceId: service.id, startAt, clientName: client.name, clientEmail: client.email});
+    const {address, signature} = await signWalletClaim({chainId: 135, clinic: OUR_CLONE, bookingHash, issuedAt: now, deadline: now + 300, signer});
+    const result = await book(page, {
+      serviceId: service.id,
+      startAt: new Date(startAt * 1000).toISOString(),
+      client,
+      mobile: {source: "dogtag_app", wallet: {address, signature, issuedAt: now, deadline: now + 300}},
+    });
+    expect(result.status).toBe(201);
+
+    const appointment = await getAppointmentDirect(page, result.body.appointmentId!);
+    expect(appointment.clientId).toBe(earlyClientId); // earliest registeredAt for this wallet, NOT insertion order
+    expect(appointment.bookingIdentity.walletMultiMatch).toBe(true);
+
+    // No re-attach onto the chosen client - the seeded entry already covers this address.
+    const clientDoc = await (await page.request.get(`/api/clients/${earlyClientId}`)).json();
+    expect(clientDoc.wallets.filter((w: {address: string}) => w.address === wallet).length).toBe(1);
+
+    // A second booking from the same wallet lands on the SAME client - the household never splits.
+    const startAt2 = await openSlot(page, service, 24);
+    const hash2 = computeBookingHash({serviceId: service.id, startAt: startAt2, clientName: client.name, clientEmail: client.email});
+    const sig2 = await signWalletClaim({chainId: 135, clinic: OUR_CLONE, bookingHash: hash2, issuedAt: now, deadline: now + 300, signer});
+    const second = await book(page, {
+      serviceId: service.id,
+      startAt: new Date(startAt2 * 1000).toISOString(),
+      client,
+      mobile: {source: "dogtag_app", wallet: {address: sig2.address, signature: sig2.signature, issuedAt: now, deadline: now + 300}},
+    });
+    expect(second.status).toBe(201);
+    expect((await getAppointmentDirect(page, second.body.appointmentId!)).clientId).toBe(earlyClientId);
+
+    // Staff visibility: the provenance box says so out loud.
+    await page.goto(`/appointments/${result.body.appointmentId}`);
+    await expect(page.getByTestId("provenance-box").getByText(/registered on more than one client record/)).toBeVisible();
   });
 });
 

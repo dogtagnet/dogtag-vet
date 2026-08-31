@@ -33,6 +33,13 @@ export interface BookingIdentity {
    * that on its own, `walletVerified` does). */
   walletAddress?: string;
   walletVerified: boolean;
+  /** Review finding 6: the verified wallet matched MORE THAN ONE client record (the same wallet
+   * on multiple clients is explicitly allowed - WP4.2). The booking resolved deterministically
+   * (earliest active registration of this wallet, ties by clientId -
+   * `pickDeterministicWalletClient`) rather than at random; this flag surfaces the ambiguity in
+   * the provenance box so staff can review the client link. Only ever set true - absent
+   * otherwise. */
+  walletMultiMatch?: boolean;
   /** keccak256 over the canonical booking content (`lib/booking/bookingHash.ts`) - the signed
    * claim's replay-protection anchor. Present only when a wallet claim was verified AND this
    * appointment is still in a non-terminal status - see `releasedBookingHash` below. */
@@ -106,6 +113,7 @@ const bookingIdentitySchema = new Schema<BookingIdentity>(
   {
     walletAddress: String,
     walletVerified: {type: Boolean, required: true},
+    walletMultiMatch: Boolean,
     bookingHash: String,
     releasedBookingHash: String,
     dogTagIdDec: String,

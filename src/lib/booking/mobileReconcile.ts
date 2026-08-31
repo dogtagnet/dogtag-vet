@@ -318,6 +318,10 @@ export function toBookingIdentity(params: {
   walletVerified: boolean;
   bookingHash?: string;
   dogTagIdDec?: string;
+  /** Review finding 6 - see `BookingIdentity.walletMultiMatch`. Persisted only when true (the
+   * field exists to mark the one case it is true for, the house style for flags), so `false` and
+   * absent land identically. */
+  walletMultiMatch?: boolean;
   tagClaim: TagClaimResult;
 }): BookingIdentity {
   const base: BookingIdentity = {
@@ -325,6 +329,7 @@ export function toBookingIdentity(params: {
     walletVerified: params.walletVerified,
     bookingHash: params.bookingHash,
     dogTagIdDec: params.dogTagIdDec,
+    ...(params.walletMultiMatch ? {walletMultiMatch: true} : {}),
     tagResolution: params.tagClaim.tagResolution,
   };
   const tagClaim = params.tagClaim;

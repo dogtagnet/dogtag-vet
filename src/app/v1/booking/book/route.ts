@@ -175,10 +175,14 @@ export async function POST(request: Request) {
   }
 
   // ── Section 3: client resolution - wallet-match-first when the claim verified, else today's
-  // email/phone match-or-create (unchanged).
-  const client = walletVerifiedAddress
+  // email/phone match-or-create (unchanged). Review finding 6: the wallet path resolves
+  // deterministically when the same wallet legitimately sits on multiple client records (earliest
+  // active registration of the wallet wins) and reports the multi-match so it lands on
+  // `bookingIdentity.walletMultiMatch` for staff, never a silent arbitrary pick.
+  const resolvedClient = walletVerifiedAddress
     ? await findOrCreateClientForMobileBooking({verifiedWalletAddress: walletVerifiedAddress, client: parsed.data.client})
-    : await findOrCreateClientForBooking(parsed.data.client);
+    : {client: await findOrCreateClientForBooking(parsed.data.client), walletMultiMatch: false};
+  const client = resolvedClient.client;
 
   // ── Tag-claim tier resolution - pure reads, zero writes (see resolveTagClaim's own doc comment
   // for why an unreadable chain here folds to "unknown" rather than rejecting the booking).
@@ -215,6 +219,7 @@ export async function POST(request: Request) {
         walletVerified: Boolean(walletVerifiedAddress),
         bookingHash,
         dogTagIdDec: mobile.pet?.dogTagIdDec,
+        walletMultiMatch: resolvedClient.walletMultiMatch,
         tagClaim,
       })
     : undefined;
