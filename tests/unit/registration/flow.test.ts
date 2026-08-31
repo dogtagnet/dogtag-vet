@@ -257,21 +257,28 @@ describe("getRegistrationSessionStatus (staff poll)", () => {
   it("404s for an unknown registrationId", async () => {
     const session = newSessionFixture();
     const {store} = makeStore(session);
-    const result = await getRegistrationSessionStatus(store, "unknown-registration-id", NOW);
+    const result = await getRegistrationSessionStatus(store, session.clientId, "unknown-registration-id", NOW);
+    expect(result).toEqual({ok: false, status: 404});
+  });
+
+  it("404s when the registrationId resolves to a DIFFERENT client - never leaks status across clients", async () => {
+    const session = newSessionFixture();
+    const {store} = makeStore(session);
+    const result = await getRegistrationSessionStatus(store, "some-other-client-id", session.registrationId, NOW);
     expect(result).toEqual({ok: false, status: 404});
   });
 
   it("waiting: not yet consumed, not yet expired", async () => {
     const session = newSessionFixture();
     const {store} = makeStore(session);
-    const result = await getRegistrationSessionStatus(store, session.registrationId, NOW + 100);
+    const result = await getRegistrationSessionStatus(store, session.clientId, session.registrationId, NOW + 100);
     expect(result).toEqual({ok: true, status: "waiting"});
   });
 
   it("expired: never consumed, past the deadline", async () => {
     const session = newSessionFixture();
     const {store} = makeStore(session);
-    const result = await getRegistrationSessionStatus(store, session.registrationId, session.deadline + 1);
+    const result = await getRegistrationSessionStatus(store, session.clientId, session.registrationId, session.deadline + 1);
     expect(result).toEqual({ok: true, status: "expired"});
   });
 
@@ -279,21 +286,21 @@ describe("getRegistrationSessionStatus (staff poll)", () => {
     const session = newSessionFixture({consumed: true, consumedAt: NOW});
     const {store, walletsByClient} = makeStore(session);
     walletsByClient.set(session.clientId, [{address: "0x1111111111111111111111111111111111111111", registrationId: session.registrationId}]);
-    const result = await getRegistrationSessionStatus(store, session.registrationId, NOW + 10);
+    const result = await getRegistrationSessionStatus(store, session.clientId, session.registrationId, NOW + 10);
     expect(result).toEqual({ok: true, status: "registered", wallet: "0x1111111111111111111111111111111111111111"});
   });
 
   it("failed: consumed, no matching wallet on the client (a bad-signature attempt burned it), still within the grace window", async () => {
     const session = newSessionFixture({consumed: true, consumedAt: NOW});
     const {store} = makeStore(session);
-    const result = await getRegistrationSessionStatus(store, session.registrationId, NOW + 10);
+    const result = await getRegistrationSessionStatus(store, session.clientId, session.registrationId, NOW + 10);
     expect(result).toEqual({ok: true, status: "failed"});
   });
 
   it("expired: consumed, no matching wallet, and past the post-consume grace window - the session is now simply gone", async () => {
     const session = newSessionFixture({consumed: true, consumedAt: NOW});
     const {store} = makeStore(session);
-    const result = await getRegistrationSessionStatus(store, session.registrationId, NOW + STATUS_GRACE_PERIOD_SECS + 1);
+    const result = await getRegistrationSessionStatus(store, session.clientId, session.registrationId, NOW + STATUS_GRACE_PERIOD_SECS + 1);
     expect(result).toEqual({ok: true, status: "expired"});
   });
 
@@ -301,7 +308,7 @@ describe("getRegistrationSessionStatus (staff poll)", () => {
     const session = newSessionFixture({consumed: true, consumedAt: NOW});
     const {store, walletsByClient} = makeStore(session);
     walletsByClient.set(session.clientId, [{address: "0x2222222222222222222222222222222222222222", registrationId: session.registrationId}]);
-    const result = await getRegistrationSessionStatus(store, session.registrationId, NOW + STATUS_GRACE_PERIOD_SECS + 1000);
+    const result = await getRegistrationSessionStatus(store, session.clientId, session.registrationId, NOW + STATUS_GRACE_PERIOD_SECS + 1000);
     expect(result).toEqual({ok: true, status: "registered", wallet: "0x2222222222222222222222222222222222222222"});
   });
 });

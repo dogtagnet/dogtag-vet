@@ -235,14 +235,20 @@ export type GetRegistrationStatusResult =
  * Once past the grace window with still no matching wallet, this reports `expired` instead -
  * from the staff's perspective a `failed` registration this old is exactly as actionable as a
  * `waiting` one that plain timed out: generate a fresh code.
+ *
+ * `clientId` scopes the lookup: a `registrationId` that resolves to a DIFFERENT client's session
+ * reports 404, identically to a `registrationId` that does not exist at all - the route path
+ * already names a client (`/api/clients/:id/wallet-registrations/:registrationId`), so a
+ * registrationId that belongs to some other client must never leak its status through this one.
  */
 export async function getRegistrationSessionStatus(
   store: RegistrationFlowStore,
+  clientId: string,
   registrationId: string,
   now: number,
 ): Promise<GetRegistrationStatusResult> {
   const session = await store.getByRegistrationId(registrationId);
-  if (!session) return {ok: false, status: 404};
+  if (!session || session.clientId !== clientId) return {ok: false, status: 404};
 
   if (!session.consumed) {
     return {ok: true, status: now > session.deadline ? "expired" : "waiting"};
