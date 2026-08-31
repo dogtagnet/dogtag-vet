@@ -220,7 +220,11 @@ async function seedClientWallet(page: Page, clientId: string, address: string, r
   const client = new MongoClient(E2E_MONGO_URI);
   await client.connect();
   try {
-    await client.db().collection("clients").updateOne(
+    // The collection is typed with an explicit `wallets` array so the driver's `$push` operator
+    // typing accepts the entry - the default `Collection<Document>` indexes every field to
+    // `undefined` under `PushOperator`, rejecting any pushed object (same class of driver-typing
+    // friction `clearCloneAddress` documents for `_id`).
+    await client.db().collection<{clientId: string; wallets: Record<string, unknown>[]}>("clients").updateOne(
       {clientId},
       {
         $push: {

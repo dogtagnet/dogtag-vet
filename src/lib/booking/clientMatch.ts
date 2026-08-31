@@ -60,7 +60,9 @@ export function pickDeterministicWalletClient(clients: ClientDoc[], walletAddres
     if (diff !== 0) return diff;
     return a.clientId < b.clientId ? -1 : a.clientId > b.clientId ? 1 : 0;
   });
-  return {client: sorted[0], multiMatch: clients.length > 1};
+  // Non-null: `clients.length > 0` was checked above and sort preserves length -
+  // `noUncheckedIndexedAccess` just cannot see that through the index expression.
+  return {client: sorted[0]!, multiMatch: clients.length > 1};
 }
 
 export interface MobileBookingClientResolution {
