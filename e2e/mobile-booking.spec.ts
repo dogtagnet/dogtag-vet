@@ -187,6 +187,26 @@ async function seedLocalDogTag(page: Page, petId: string, dogTagIdDec: string) {
   void page;
 }
 
+/** Review finding 7: there is no PATCH surface to CLEAR `cloneAddress` once set (only to set it -
+ * `configureClinic`, run in `beforeEach` for every test in this file), so proving the
+ * "clinic not configured" pet-only path needs the same direct-Mongo escape hatch
+ * `seedLocalDogTag` already uses for state no API exposes. */
+async function clearCloneAddress(page: Page) {
+  const {MongoClient} = await import("mongodb");
+  const {E2E_MONGO_URI} = await import("./mongo-fixture");
+  const client = new MongoClient(E2E_MONGO_URI);
+  await client.connect();
+  try {
+    // Filters on `{}` rather than `{_id: "singleton"}` - ClinicSettings is a true one-document
+    // singleton (see `models/ClinicSettings.ts`), and `_id` here is an app-chosen string, not the
+    // driver's default ObjectId type `Collection<Document>` expects.
+    await client.db().collection("clinicsettings").updateOne({}, {$unset: {cloneAddress: ""}});
+  } finally {
+    await client.close();
+  }
+  void page;
+}
+
 async function setTheme(page: Page, theme: "Light" | "Dark") {
   await page.getByRole("radio", {name: theme}).click();
   await expect(page.getByRole("radio", {name: theme})).toHaveAttribute("aria-checked", "true");
@@ -570,6 +590,34 @@ test.describe("section 3: tag-claim tiers", () => {
     const tagsRes = await page.request.get("/api/tags");
     const tagsBody = await tagsRes.json();
     expect(tagsBody.issued.some((p: {petId: string}) => p.petId === importedPetId)).toBe(false);
+  });
+
+  test("review finding 7: a pet-only claim (no wallet) at an UNCONFIGURED clinic never misclassifies its own tag as external, and never 503s - folds to unknown", async ({page}) => {
+    await clearCloneAddress(page);
+    const dogTagIdDec = "555010";
+    const fieldDec = dogTagIdField(dogTagIdDec).toString(10);
+    const root = `0x${"22".repeat(32)}`;
+    // Scripted exactly like tier 3 (rootIssuer answers what WOULD be this clinic's own clone) - the
+    // point is the clinic itself does not know its own clone address yet, so the server must never
+    // guess, must never classify this as "issued_here_unlinked" OR "external", and must never
+    // import a pet - it can only ever fold to "unknown".
+    await setRpcScenario("profileRoot", SBT_ADDRESS, [fieldDec], root);
+    await setRpcScenario("rootIssuer", FACTORY_ADDRESS, [root], OUR_CLONE);
+
+    const service = await getCheckupService(page);
+    const startAt = await openSlot(page, service, 19);
+    const result = await book(page, {
+      serviceId: service.id,
+      startAt: new Date(startAt * 1000).toISOString(),
+      client: {name: "Unconfigured Clinic Case", email: "unconfigured-clinic@example.com"},
+      mobile: {source: "dogtag_app", pet: {dogTagIdDec}},
+    });
+    expect(result.status).toBe(201); // kept - a pet-only claim never 503s (that guard is wallet-claim-specific)
+    const appointment = await getAppointmentDirect(page, result.body.appointmentId!);
+    expect(appointment.petIds).toEqual([]);
+    expect(appointment.bookingIdentity.tagResolution).toBe("unknown");
+    expect(appointment.bookingIdentity.verificationError).toBe(true);
+    expect(appointment.bookingIdentity.issuerClone).toBeUndefined();
   });
 });
 

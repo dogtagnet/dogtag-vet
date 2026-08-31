@@ -188,8 +188,18 @@ export async function POST(request: Request) {
   let tagClaim: TagClaimResult = {tagResolution: "none"};
   if (mobile?.pet) {
     const env = getServerEnv();
+    // Review finding 7: tiers 3/4 discriminate "issued by THIS clinic" from "issued elsewhere"
+    // purely by comparing the chain's `rootIssuer` against `settings.cloneAddress` - without that
+    // address, a genuinely local ("issued_here_unlinked") tag cannot be told apart from a foreign
+    // one at all, so it must never be allowed to fall through and get classified as "external"
+    // against an empty-string clone (which the wallet-claim path already 503s on, but a pet-only
+    // claim has no wallet block to gate that check on). Route through the SAME "chain not
+    // configured" fail-closed idiom `unconfiguredMobileTagChainDeps` already provides for missing
+    // env vars: every chain read throws, `resolveTagClaim` folds that to `unknown`/
+    // `verificationError: true` - never losing the booking (tier 1's local lookup is unaffected,
+    // it never needs the clone address at all).
     const chainDeps =
-      env.DOGTAG_SBT_ADDRESS && env.VET_ISSUER_FACTORY_ADDRESS
+      env.DOGTAG_SBT_ADDRESS && env.VET_ISSUER_FACTORY_ADDRESS && settings?.cloneAddress
         ? mongoMobileTagChainDeps(env.DOGTAG_SBT_ADDRESS as Address, env.VET_ISSUER_FACTORY_ADDRESS as Address)
         : unconfiguredMobileTagChainDeps();
     tagClaim = await resolveTagClaim(mongoMobileTagLookupStore, chainDeps, {
