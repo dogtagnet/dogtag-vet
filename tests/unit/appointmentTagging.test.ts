@@ -1,5 +1,11 @@
 import {describe, expect, it} from "vitest";
-import {deriveAppointmentDisplayNames, isTaggingConsistent, petsBelongToClient, resolveTagging} from "@/lib/booking/appointmentTagging";
+import {
+  deriveAppointmentDisplayNames,
+  isTaggingConsistent,
+  orderPetsByPetIds,
+  petsBelongToClient,
+  resolveTagging,
+} from "@/lib/booking/appointmentTagging";
 
 describe("petsBelongToClient", () => {
   it("is true when every petId's owner set includes clientId", () => {
@@ -132,5 +138,39 @@ describe("resolveTagging - the symmetric invariant is a rule on the TAGGING OPER
     if (!result.ok) return;
     expect(result.result.clientName).toBe("Jane Doe");
     expect(result.result.petName).toBe("Rex");
+  });
+});
+
+describe("orderPetsByPetIds", () => {
+  // Round-1 regression (WP4.3 grading): the appointment detail page fetches tagged pets with
+  // `Pet.find({petId: {$in: petIds}})`, which does NOT preserve `petIds`' order - Mongo returns
+  // matches in natural/index order. That left the PageHeader subtitle (built from the stored
+  // `petName`, itself joined in `petIds` order by resolveTagging) showing a different pet order
+  // than the "Tagged to" pets list and the Edit-tagging chips on the very same page - and because
+  // EditTaggingSection seeds its selection from that same reordered array, saving "Edit tagging"
+  // with zero actual edits silently rewrote the stored petName into the wrong order.
+  const zulu = {petId: "zulu", name: "Zulu"};
+  const alpha = {petId: "alpha", name: "Alpha"};
+  const mike = {petId: "mike", name: "Mike"};
+
+  it("reorders fetched docs to match petIds order, regardless of the order they were fetched in", () => {
+    // Simulates Mongo's natural/index order (alphabetical by petId here) differing from the
+    // appointment's actual stored petIds order (Zulu, Alpha, Mike).
+    const fetchedInNaturalOrder = [alpha, mike, zulu];
+    expect(orderPetsByPetIds(fetchedInNaturalOrder, ["zulu", "alpha", "mike"])).toEqual([zulu, alpha, mike]);
+  });
+
+  it("is a no-op when the fetch already happens to match petIds order", () => {
+    expect(orderPetsByPetIds([alpha, mike, zulu], ["alpha", "mike", "zulu"])).toEqual([alpha, mike, zulu]);
+  });
+
+  it("drops a petId with no matching fetched document instead of emitting undefined", () => {
+    // Defensive, matching the rest of this file's "petIds ?? []" tolerance for a pet that no
+    // longer resolves (e.g. deleted after being tagged) - never surfaces a hole in the list.
+    expect(orderPetsByPetIds([alpha], ["alpha", "ghost"])).toEqual([alpha]);
+  });
+
+  it("returns an empty array for an empty petIds list", () => {
+    expect(orderPetsByPetIds([alpha, mike], [])).toEqual([]);
   });
 });

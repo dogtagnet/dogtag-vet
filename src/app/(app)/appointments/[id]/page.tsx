@@ -1,5 +1,6 @@
 import {notFound} from "next/navigation";
 import {PageHeader} from "@/components/shell/PageHeader";
+import {orderPetsByPetIds} from "@/lib/booking/appointmentTagging";
 import {connectToDatabase} from "@/lib/db";
 import {Appointment, type AppointmentDoc} from "@/lib/models/Appointment";
 import {Client, type ClientDoc} from "@/lib/models/Client";
@@ -27,12 +28,15 @@ export default async function AppointmentDetailPage({params}: {params: Promise<{
   if (!appointment) notFound();
 
   const petIds = appointment.petIds ?? [];
-  const [client, pets, service, bookingSettings] = await Promise.all([
+  const [client, fetchedPets, service, bookingSettings] = await Promise.all([
     appointment.clientId ? Client.findOne({clientId: appointment.clientId}).lean<ClientDoc>() : Promise.resolve(null),
     petIds.length > 0 ? Pet.find({petId: {$in: petIds}}).lean<PetDoc[]>() : Promise.resolve([]),
     appointment.serviceId ? Service.findOne({serviceId: appointment.serviceId}).lean<ServiceDoc>() : Promise.resolve(null),
     getBookingSettings(),
   ]);
+  // `Pet.find({$in: ...})` does not preserve petIds' order - restore it so this page's pet order
+  // matches the stored petName's order everywhere it's shown (see orderPetsByPetIds's doc comment).
+  const pets = orderPetsByPetIds(fetchedPets, petIds);
 
   return (
     <>

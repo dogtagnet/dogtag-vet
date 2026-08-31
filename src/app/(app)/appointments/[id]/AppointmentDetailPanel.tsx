@@ -148,6 +148,13 @@ function EditTaggingSection({
     <FormSection title="Edit tagging" helperText="Retag this appointment to a different client and pets, or untag it entirely.">
       <ClientPicker value={selectedClient} onChange={setSelectedClient} />
       <PetMultiPicker clientId={selectedClient?.clientId} value={selectedPets} onChange={setSelectedPets} />
+      {!canSave && (
+        // Inline validation under the fields (design-system.md's FormSection idiom) - explains why
+        // Save is disabled instead of leaving it as an unexplained dead end (WP4.3 round-1 fix):
+        // this is most visible right after tagging a public-booking client, who has a client link
+        // but no pets on file yet.
+        <p className="mt-1 text-caption text-danger">Select at least one pet before saving - create one from the client page first if none exist yet.</p>
+      )}
       <div className="flex justify-end">
         <Button size="sm" onClick={handleSave} disabled={saving || !canSave}>
           {saving ? "Saving..." : "Save tagging"}

@@ -19,6 +19,22 @@ export function petsBelongToClient(
 }
 
 /**
+ * WP4.3 round-1 fix: `Pet.find({petId: {$in: petIds}})` (the appointment detail page's fetch) does
+ * NOT preserve `petIds`' order - Mongo returns matches in natural/index order, not the order they
+ * were requested in. This reorders the fetched docs back to the order the appointment actually
+ * stores, which is the same order `resolveTagging` joins pet NAMES in when it builds `petName` -
+ * without it, the page showed two different pet orders at once (the `petName`-derived subtitle vs.
+ * the freshly-fetched "Tagged to" list and Edit-tagging chips), and because `EditTaggingSection`
+ * seeds its selection from the fetched array, saving with zero edits silently rewrote `petName`
+ * into the fetch's order. Tolerates a `petId` with no matching document (e.g. a pet deleted after
+ * being tagged) by dropping it rather than emitting `undefined`.
+ */
+export function orderPetsByPetIds<T extends {petId: string}>(pets: T[], petIds: string[]): T[] {
+  const byPetId = new Map(pets.map((pet) => [pet.petId, pet]));
+  return petIds.map((petId) => byPetId.get(petId)).filter((pet): pet is T => pet !== undefined);
+}
+
+/**
  * WP4.3's tagging model is one client, N pets, together or not at all: a tagged appointment
  * (`clientId` set) always has at least one pet, and pets never dangle on an appointment with no
  * tagged client. `petIds.length > 0` and `Boolean(clientId)` must therefore always agree - this is
