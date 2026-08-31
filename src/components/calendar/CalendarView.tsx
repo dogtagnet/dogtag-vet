@@ -5,8 +5,12 @@ import {useRouter} from "next/navigation";
 import {Banner} from "@/components/ui/Banner";
 import {Button, Input, Select, Textarea} from "@/components/ui/controls";
 import {useSnackbar} from "@/components/ui/Snackbar";
+import {ClientPicker} from "@/components/pickers/ClientPicker";
+import {PetMultiPicker} from "@/components/pickers/PetMultiPicker";
 import {appointmentStatusLabel, appointmentStatusTone} from "@/lib/appointmentTone";
 import type {AppointmentStatus} from "@/lib/models/Appointment";
+import type {ClientDoc} from "@/lib/models/Client";
+import type {PetDoc} from "@/lib/models/Pet";
 
 export interface CalendarAppointment {
   appointmentId: string;
@@ -202,17 +206,35 @@ export function CalendarView(props: CalendarViewProps) {
                   (a) => a.localMinute >= minute && a.localMinute < minute + ROW_MINUTES,
                 );
                 return (
-                  <button
+                  // The slot's create-draft button and each appointment chip are SIBLINGS here,
+                  // never nested - previously the chips were plain <div>s absolutely positioned
+                  // INSIDE the slot <button>, so clicking an existing appointment always also
+                  // opened the New-appointment dialog (the click bubbled up into the button it was
+                  // visually stacked on top of - WP4.3 C7's bug). Each chip is now its own <button>
+                  // stacked on top (z-10) via CSS, not the DOM, so its click can never reach the
+                  // slot button underneath - stopPropagation() below is defense in depth for that,
+                  // not what actually fixes it.
+                  <div
                     key={`${d}-${minute}`}
-                    type="button"
-                    onClick={() => setDraft({date: d, minute})}
-                    className="relative border-l border-t border-border text-left hover:bg-surface-2"
+                    className="relative border-l border-t border-border"
                     style={{height: ROW_HEIGHT_PX}}
                   >
+                    <button
+                      type="button"
+                      onClick={() => setDraft({date: d, minute})}
+                      aria-label={`New appointment ${d} ${formatMinuteLabel(minute)}`}
+                      className="absolute inset-0 text-left hover:bg-surface-2"
+                    />
                     {cellAppointments.map((a) => (
-                      <div
+                      <button
                         key={a.appointmentId}
-                        className="absolute inset-x-0.5 top-0.5 truncate rounded-control px-1.5 py-0.5 text-caption"
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          router.push(`/appointments/${a.appointmentId}`);
+                        }}
+                        aria-label={`${a.clientName} - ${a.petName}, ${appointmentStatusLabel[a.status]}, view appointment`}
+                        className="absolute inset-x-0.5 top-0.5 z-10 truncate rounded-control px-1.5 py-0.5 text-left text-caption"
                         style={{
                           height: Math.max(ROW_HEIGHT_PX - 4, (a.durationMinutes / ROW_MINUTES) * ROW_HEIGHT_PX - 4),
                         }}
@@ -221,9 +243,9 @@ export function CalendarView(props: CalendarViewProps) {
                         <ToneBox tone={appointmentStatusTone[a.status]}>
                           {a.clientName} - {a.petName}
                         </ToneBox>
-                      </div>
+                      </button>
                     ))}
-                  </button>
+                  </div>
                 );
               })}
             </Fragment>
@@ -273,6 +295,9 @@ function CreateAppointmentPanel({
   onClose: () => void;
   onCreated: () => void;
 }) {
+  const [walkIn, setWalkIn] = useState(false);
+  const [selectedClient, setSelectedClient] = useState<ClientDoc | null>(null);
+  const [selectedPets, setSelectedPets] = useState<PetDoc[]>([]);
   const [clientName, setClientName] = useState("");
   const [petName, setPetName] = useState("");
   const [serviceId, setServiceId] = useState(services[0]?.serviceId ?? "");
@@ -284,9 +309,20 @@ function CreateAppointmentPanel({
   const durationMinutes = service?.durationMinutes ?? 30;
 
   async function handleCreate() {
-    if (!clientName.trim() || !petName.trim()) {
-      snackbar.show("Client and pet name are required", "danger");
-      return;
+    if (walkIn) {
+      if (!clientName.trim() || !petName.trim()) {
+        snackbar.show("Client and pet name are required", "danger");
+        return;
+      }
+    } else {
+      if (!selectedClient) {
+        snackbar.show("Select a client, or switch to walk-in", "danger");
+        return;
+      }
+      if (selectedPets.length === 0) {
+        snackbar.show("Select at least one pet", "danger");
+        return;
+      }
     }
     setSaving(true);
     // Build the local wall-clock instant as an ISO string with no offset and let the server
@@ -300,7 +336,15 @@ function CreateAppointmentPanel({
       const res = await fetch("/api/appointments/from-local-time", {
         method: "POST",
         headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({localIso, durationMinutes, clientName, petName, serviceId: serviceId || undefined, notes}),
+        body: JSON.stringify({
+          localIso,
+          durationMinutes,
+          serviceId: serviceId || undefined,
+          notes,
+          ...(walkIn
+            ? {clientName, petName}
+            : {clientId: selectedClient!.clientId, petIds: selectedPets.map((p) => p.petId)}),
+        }),
       });
       if (!res.ok) throw new Error("Create failed");
       onCreated();
@@ -313,14 +357,35 @@ function CreateAppointmentPanel({
 
   return (
     <div className="fixed inset-0 z-20 flex items-center justify-center bg-black/40 p-4" role="dialog" aria-modal="true">
-      <div className="w-full max-w-md rounded-card border border-border bg-surface p-5 shadow-raised">
+      <div className="w-full max-w-lg rounded-card border border-border bg-surface p-5 shadow-raised">
         <h3 className="mb-1 text-section-title text-ink">New appointment</h3>
         <p className="mb-4 text-body text-ink-muted">
           {date} at {formatMinuteLabel(minute)}
         </p>
         <div className="space-y-3">
-          <Input placeholder="Client name" value={clientName} onChange={(e) => setClientName(e.target.value)} />
-          <Input placeholder="Pet name" value={petName} onChange={(e) => setPetName(e.target.value)} />
+          <label className="flex items-center gap-2 text-body text-ink">
+            <input
+              type="checkbox"
+              checked={walkIn}
+              onChange={(e) => {
+                setWalkIn(e.target.checked);
+                setSelectedClient(null);
+                setSelectedPets([]);
+              }}
+            />
+            Walk-in (no client record)
+          </label>
+          {walkIn ? (
+            <>
+              <Input placeholder="Client name" value={clientName} onChange={(e) => setClientName(e.target.value)} />
+              <Input placeholder="Pet name" value={petName} onChange={(e) => setPetName(e.target.value)} />
+            </>
+          ) : (
+            <>
+              <ClientPicker value={selectedClient} onChange={setSelectedClient} />
+              <PetMultiPicker clientId={selectedClient?.clientId} value={selectedPets} onChange={setSelectedPets} />
+            </>
+          )}
           <Select value={serviceId} onChange={(e) => setServiceId(e.target.value)}>
             <option value="">No specific service</option>
             {services.map((s) => (

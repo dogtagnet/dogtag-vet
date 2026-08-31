@@ -100,7 +100,23 @@ export function Combobox<T>({
           setActiveIndex(-1);
         }}
         onFocus={() => {
-          if (options.length > 0) setOpen(true);
+          // Unconditional, not gated on `options.length > 0` at this instant: PetMultiPicker's
+          // options arrive from an async fetch that can still be in flight the moment focus
+          // lands (e.g. clicking the pet search immediately after picking a client). Since
+          // `showListbox` is `open && options.length > 0`, staying open-but-empty here means the
+          // listbox reveals itself reactively the instant options arrive, with no second focus
+          // needed - the alternative (gating this on options.length) leaves the picker looking
+          // inert until the user clicks away and back.
+          setOpen(true);
+        }}
+        onClick={() => {
+          // Selecting an option deliberately keeps focus on the input (each option's onMouseDown
+          // preventDefault's the blur, so a multi-select picker can accept another pick right
+          // away) - which means a native "focus" event does NOT refire on a second click, since
+          // focus never actually left. Reopening here too (a plain click, independent of focus)
+          // is what makes "select one option, click the still-focused input again, pick another"
+          // work for PetMultiPicker.
+          setOpen(true);
         }}
         onBlur={() => {
           // Delayed so a mousedown on an option (which fires before this blur's click) still

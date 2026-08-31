@@ -43,8 +43,8 @@ export function ClientPicker({value, onChange, ariaLabel = "Search clients", pla
   if (value) {
     return (
       <span className="inline-flex items-center gap-1.5 rounded-badge bg-brand-soft px-2.5 py-1 text-caption font-medium text-brand">
-        {value.name}
-        {value.email && <span className="font-normal opacity-80">- {value.email}</span>}
+        <span>{value.name}</span>
+        {value.email && <span className="font-normal opacity-80">{` - ${value.email}`}</span>}
         <button type="button" onClick={() => onChange(null)} aria-label={`Remove ${value.name}`} className="text-brand hover:opacity-70">
           x
         </button>
