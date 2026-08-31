@@ -838,6 +838,39 @@ test.describe("section 3: tag-claim tiers", () => {
     expect(appointment.bookingIdentity.verificationError).toBe(true);
     expect(appointment.bookingIdentity.issuerClone).toBeUndefined();
   });
+
+  test("review finding 9: an invalid ISSUER is never blamed on the sent pet data - the box says the data was not evaluated", async ({page}) => {
+    const dogTagIdDec = "555011";
+    const fieldDec = dogTagIdField(dogTagIdDec).toString(10);
+    // The data is GENUINELY verifiable against the on-chain root - the only thing wrong with this
+    // claim is the issuer's validity, which is exactly what the box must say.
+    const {leaves, reservedLeafHashes, root} = buildVerifiablePetProfile("cat", "Siamese");
+    await setRpcScenario("profileRoot", SBT_ADDRESS, [fieldDec], root);
+    await setRpcScenario("rootIssuer", FACTORY_ADDRESS, [root], FOREIGN_CLONE);
+    await setRpcScenario("isValid", FOREIGN_CLONE, [root], false);
+
+    const service = await getCheckupService(page);
+    const startAt = await openSlot(page, service, 25);
+    const result = await book(page, {
+      serviceId: service.id,
+      startAt: new Date(startAt * 1000).toISOString(),
+      client: {name: "Revoked Issuer Case", email: "revoked-issuer@example.com"},
+      mobile: {source: "dogtag_app", pet: {dogTagIdDec, name: "Misty", leaves, reservedLeafHashes}},
+    });
+    expect(result.status).toBe(201);
+    const appointment = await getAppointmentDirect(page, result.body.appointmentId!);
+    expect(appointment.bookingIdentity).toMatchObject({tagResolution: "external", issuerValid: false, dataVerificationAttempted: true, dataVerified: false});
+    expect(appointment.petIds).toEqual([]); // an invalid issuer never imports a pet
+
+    await page.goto(`/appointments/${result.body.appointmentId}`);
+    const provenanceBox = page.getByTestId("provenance-box");
+    await expect(provenanceBox).toBeVisible();
+    // exact: true - the fixed explanation paragraph ALSO contains the words "not currently valid",
+    // so a substring match would be a strict-mode violation; the badge's text is exactly this.
+    await expect(provenanceBox.getByText("Not currently valid", {exact: true})).toBeVisible();
+    await expect(provenanceBox.getByText(/issuer is not currently valid, so the sent pet data was not evaluated/)).toBeVisible();
+    await expect(provenanceBox.getByText(/did not verify against the on-chain record/)).toHaveCount(0);
+  });
 });
 
 test("screenshots (both themes): provenance box (external, verified import) and the appointments list source filter", async ({page}) => {

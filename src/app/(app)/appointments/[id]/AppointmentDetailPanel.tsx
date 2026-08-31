@@ -374,12 +374,19 @@ function ProvenanceBox({appointment, onSaved}: {appointment: AppointmentDoc; onS
                       <StatusBadge tone={identity.issuerValid ? "ok" : "danger"} label={identity.issuerValid ? "Valid" : "Not currently valid"} />
                     </div>
                   )}
+                  {/* Review finding 9: four truthful states. `verifyLeafCommitment` only RUNS
+                   * when data was sent AND the issuer read back valid (resolveTagClaim's own
+                   * gate) - so a non-verified result with an INVALID issuer must blame the
+                   * issuer, never the data: the data was not evaluated at all. Only the final
+                   * branch means the data itself failed the on-chain recompute. */}
                   <p className="text-caption text-ink-faint">
                     {identity.dataVerified
                       ? "Verified pet data was imported into a pet record for this clinic."
-                      : identity.dataVerificationAttempted
-                        ? "The sent pet data did not verify against the on-chain record - appointment only. A pet record can be created at arrival."
-                        : "No pet data was sent to verify - appointment only. A pet record can be created at arrival."}
+                      : !identity.dataVerificationAttempted
+                        ? "No pet data was sent to verify - appointment only. A pet record can be created at arrival."
+                        : !identity.issuerValid
+                          ? "The issuer is not currently valid, so the sent pet data was not evaluated - appointment only. A pet record can be created at arrival."
+                          : "The sent pet data did not verify against the on-chain record - appointment only. A pet record can be created at arrival."}
                   </p>
                 </div>
               )}
