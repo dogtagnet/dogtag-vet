@@ -32,6 +32,8 @@ tags:
     description: Mint-session flow (vet mints a dogtag; owner's app resolves and posts the custodial bind).
   - name: verify
     description: Verify-session flow (a relayer requests consent; owner's app resolves and submits a proof).
+  - name: wallet-registration
+    description: Client wallet registration (vet starts a session for bookkeeping; owner's app resolves the challenge, signs an EIP-712 binding, and posts the completion). No on-chain writes.
   - name: booking
     description: Calendly-style appointment booking against the vet's own availability.
   - name: payments
@@ -177,6 +179,115 @@ paths:
               schema: {$ref: '#/components/schemas/Error'}
         "410":
           description: Token never bound and expired, or past the post-bind grace period.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
+        "429":
+          $ref: '#/components/responses/RateLimited'
+        "5XX":
+          $ref: '#/components/responses/ServerError'
+
+  /w/{token}:
+    get:
+      operationId: resolveWalletRegistrationChallenge
+      tags: [wallet-registration]
+      summary: Resolve a wallet-registration challenge
+      description: |-
+        The owner's app scans the vet's wallet-registration QR (`https://<vet>/w/<32hex>`, see
+        `specs/qr-formats.md`) and calls this to fetch the EIP-712 challenge it will present on a
+        consent screen and then sign - `clinicName`/`maskedClientName` are shown to the owner;
+        `clientHash`/`registrationId`/`issuedAt`/`blockNumber`/`deadline` are folded verbatim into
+        the `ClientRegistration` struct the app signs (see the WP4.2 spec's "The signed message").
+
+        **No raw client PII is ever returned here** - `maskedClientName` only (first letter per
+        word, asterisks for the rest); the client's email, phone, and address never leave the
+        server. `clientHash` is an opaque commitment the app signs over without being able to open
+        it - the owner is vouching for the displayed clinic + masked name, not for PII contents it
+        cannot see (docs/client-wallet-registration.md's trust model).
+
+        **Non-consuming**: calling this does not burn the token - `POST /w/{token}/complete` is the
+        consuming action. Unlike the mint session's `/p/{token}`, there is no TTL-extension-on-
+        first-resolve here (a registration session's window is fixed at creation).
+      parameters:
+        - $ref: '#/components/parameters/WalletRegistrationToken'
+      responses:
+        "200":
+          description: Challenge resolved.
+          headers: *rateLimitHeaders
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WalletRegistrationChallengeResponse'
+        "404":
+          description: Token unknown or malformed.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
+        "410":
+          description: Token already consumed (successfully or not - there is no retry for a wallet-registration session) or naturally expired.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
+        "429":
+          $ref: '#/components/responses/RateLimited'
+        "5XX":
+          $ref: '#/components/responses/ServerError'
+
+  /w/{token}/complete:
+    post:
+      operationId: postWalletRegistrationComplete
+      tags: [wallet-registration]
+      summary: Submit the signed EIP-712 binding for a wallet-registration session (consumes the token)
+      description: |-
+        The owner's app has built the `ClientRegistration` EIP-712 message from the values
+        `GET /w/{token}` returned (plus this clinic's domain), had the wallet sign it, and now
+        posts the wallet address + signature. The server independently rebuilds the exact same
+        domain/message from its own server-trusted session state and recovers the signer
+        (`recoverTypedDataAddress`) - `wallet` in the request body is trusted only once the
+        recovered signer is proven to equal it.
+
+        On success the receipt (`{payloadJson, signature, recoveredAt}` plus a deterministic
+        `receiptHash`) is appended to `Client.wallets[]` for bookkeeping. No on-chain writes happen
+        as part of this call, now or ever automatically - the receipt is chain-ready (canonically
+        encoded and hashed) but nothing anchors it.
+
+        **Consumes the token**, including on a FAILED verification: a signature that does not
+        recover to the claimed `wallet` still burns the token (`error.code: signature_invalid`) -
+        there is no retry endpoint for this flow, unlike mint's `/retry`. A second call against an
+        already-consumed token - whether the first call succeeded or failed - returns `410`.
+      parameters:
+        - $ref: '#/components/parameters/WalletRegistrationToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WalletRegistrationCompleteRequest'
+      responses:
+        "200":
+          description: Wallet registered; the receipt has been persisted.
+          headers: *rateLimitHeaders
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WalletRegistrationCompleteResponse'
+        "400":
+          description: "`error.code` is `signature_invalid`: malformed request body, or the recovered signer does not equal the claimed `wallet`."
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
+        "404":
+          description: Token unknown or malformed.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
+        "409":
+          description: "`error.code` is `already_registered`: this wallet address is already registered to this client."
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
+        "410":
+          description: "`error.code` is `expired_or_reused`: the token was already consumed (by a prior success OR a prior failed attempt), or it simply expired."
           content:
             application/json:
               schema: {$ref: '#/components/schemas/Error'}
@@ -570,6 +681,12 @@ components:
       required: true
       description: The 32-lowercase-hex verify-session token (see `specs/qr-formats.md`).
       schema: {$ref: '#/components/schemas/Hex32Token'}
+    WalletRegistrationToken:
+      name: token
+      in: path
+      required: true
+      description: The 32-lowercase-hex wallet-registration session token (see `specs/qr-formats.md`).
+      schema: {$ref: '#/components/schemas/Hex32Token'}
     AppointmentToken:
       name: token
       in: query
@@ -794,6 +911,65 @@ components:
         reason:
           type: string
           description: A device-safe sentence explaining `error` status. Absent for every other status.
+
+    WalletRegistrationChallengeResponse:
+      type: object
+      required: [clinicName, clone, chainId, maskedClientName, clientHash, registrationId, issuedAt, blockNumber, deadline, ttlSecs]
+      properties:
+        clinicName:
+          type: string
+          description: This clinic's configured display name - shown on the consent screen so the owner knows who they are vouching for.
+        clone:
+          type: string
+          description: This clinic's `VetIssuer` clone address - the EIP-712 domain's `verifyingContract` AND the struct's in-message `clinic` field (redundantly, per the WP4.2 spec).
+        chainId:
+          type: integer
+          description: The ROAX chain id, as configured server-side - the EIP-712 domain's `chainId`.
+        maskedClientName:
+          type: string
+          description: "The client's name, masked: first letter per word, asterisks for the rest (e.g. `J***** A******`). NEVER the raw name."
+        clientHash:
+          $ref: '#/components/schemas/Hex32'
+        registrationId:
+          type: string
+          description: The session's UUID v4, in standard dashed string form (right-padded to a bytes32 only inside the signed struct itself).
+        issuedAt:
+          type: integer
+          description: Unix seconds, server-stamped at session creation - the struct's `issuedAt`.
+        blockNumber:
+          type: integer
+          description: The ROAX head block number at session creation, server-fetched (session creation fails closed if the RPC was unreachable) - the struct's `blockNumber`.
+        deadline:
+          type: integer
+          description: Unix seconds after which `POST /w/{token}/complete` no longer accepts this token - the struct's `deadline`.
+        ttlSecs:
+          type: integer
+          minimum: 0
+          description: Seconds remaining before this session expires.
+
+    WalletRegistrationCompleteRequest:
+      type: object
+      required: [wallet, signature]
+      properties:
+        wallet:
+          type: string
+          pattern: "^0x[0-9a-fA-F]{40}$"
+          description: The wallet address being registered - folded into the signed struct's `wallet` field; the recovered signer MUST equal this.
+        signature:
+          type: string
+          pattern: "^0x[0-9a-fA-F]{130}$"
+          description: 65-byte `r||s||v` ECDSA signature over the `ClientRegistration` EIP-712 message.
+
+    WalletRegistrationCompleteResponse:
+      type: object
+      required: [ok, wallet, receiptHash]
+      properties:
+        ok: {type: boolean}
+        wallet:
+          type: string
+          description: The registered wallet address, lowercased.
+        receiptHash:
+          $ref: '#/components/schemas/Hex32'
 
     VerifySessionResolveResponse:
       type: object
