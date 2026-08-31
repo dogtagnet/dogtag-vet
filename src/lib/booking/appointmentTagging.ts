@@ -102,9 +102,19 @@ export interface ResolvedTagging {
  * the rebuilt `clientName`/`petName` via `deriveAppointmentDisplayNames`. The caller still owns the
  * actual write (`Appointment.create` vs `findOneAndUpdate`), since that differs by call site.
  *
- * Not unit-tested directly (it is a thin DB-touching shell around the pure functions above, in the
- * same spirit as `lifecycle.ts`'s Mongo-touching orchestration) - covered by the Playwright e2e
- * journey instead.
+ * Both checks below are gated on `tagSideChanging` - the invariant is a rule on the TAGGING
+ * OPERATION, not a document-level precondition every call must satisfy regardless of what it
+ * touches (WP4.3 round-1 fix). Public booking (`clientMatch.ts`) links a real client but never a
+ * pet - `clientId` set, `petIds` empty - and that shape is permanently frozen (spec Facts line 9,
+ * C10 "public booking flow is UNCHANGED"). Re-checking that untouched, pre-existing shape on every
+ * PATCH - including one that only changes `status` or `notes` - made every public-booking
+ * appointment permanently un-PATCHable (capacity buckets could never be released on cancel). A
+ * request that actually retags (mentions `clientId` and/or `petIds`) still must leave the
+ * RESULTING pair consistent, same as before.
+ *
+ * Partially unit-tested (the two gates above, since a request that changes neither side never
+ * touches Mongo at all - see `resolveTagging`'s tests in `appointmentTagging.test.ts`); the
+ * DB-touching branches remain covered by the Playwright e2e journey instead.
  */
 export async function resolveTagging(
   current: {clientId?: string; petIds: string[]; clientName: string; petName: string},
@@ -112,8 +122,9 @@ export async function resolveTagging(
 ): Promise<{ok: true; result: ResolvedTagging} | {ok: false; error: TaggingError}> {
   const resultingClientId = change.clientId === undefined ? current.clientId : (change.clientId ?? undefined);
   const effectivePetIds = change.petIds === undefined ? current.petIds : change.petIds;
+  const tagSideChanging = change.clientId !== undefined || change.petIds !== undefined;
 
-  if (!isTaggingConsistent(resultingClientId, effectivePetIds)) {
+  if (tagSideChanging && !isTaggingConsistent(resultingClientId, effectivePetIds)) {
     return {
       ok: false,
       error: resultingClientId
@@ -124,7 +135,6 @@ export async function resolveTagging(
 
   // Either side of the tag changing must re-validate ownership of the RESULTING pair, even if this
   // particular request only mentioned one side - see the doc comment above.
-  const tagSideChanging = change.clientId !== undefined || change.petIds !== undefined;
   if (tagSideChanging && effectivePetIds.length > 0 && resultingClientId) {
     const pets = await Pet.find({petId: {$in: effectivePetIds}}).lean<Pick<PetDoc, "petId" | "ownerClientIds">[]>();
     if (pets.length !== effectivePetIds.length) {

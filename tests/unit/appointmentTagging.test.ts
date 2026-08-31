@@ -1,5 +1,5 @@
 import {describe, expect, it} from "vitest";
-import {deriveAppointmentDisplayNames, isTaggingConsistent, petsBelongToClient} from "@/lib/booking/appointmentTagging";
+import {deriveAppointmentDisplayNames, isTaggingConsistent, petsBelongToClient, resolveTagging} from "@/lib/booking/appointmentTagging";
 
 describe("petsBelongToClient", () => {
   it("is true when every petId's owner set includes clientId", () => {
@@ -81,5 +81,56 @@ describe("deriveAppointmentDisplayNames", () => {
   it("changes only the pet side when only petName is part of the change", () => {
     const result = deriveAppointmentDisplayNames(current, {petName: "Rex, Fido"});
     expect(result).toEqual({clientName: "Old Client", petName: "Rex, Fido"});
+  });
+});
+
+describe("resolveTagging - the symmetric invariant is a rule on the TAGGING OPERATION, not a document-level precondition", () => {
+  // Round-1 regression (WP4.3 grading): public booking (clientMatch.ts) links a real client but
+  // never a pet - clientId set, petIds empty - and that shape is explicitly frozen (spec Facts
+  // line 9, C10 "public booking flow is UNCHANGED"). A PATCH that does not mention clientId or
+  // petIds at all (e.g. {status: "cancelled"} or {notes: "..."}) must not re-validate that
+  // untouched, pre-existing shape against the invariant - doing so made every public-booking
+  // appointment permanently un-PATCHable (capacity buckets could never be released on cancel).
+  const publicBookingShape = {clientId: "client-real", petIds: [], clientName: "Jane Doe", petName: "Regression Pet"};
+
+  it("leaves an already-inconsistent shape alone when the request touches neither clientId nor petIds", async () => {
+    const result = await resolveTagging(publicBookingShape, {});
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    // Neither side of the tag was part of this change, so nothing about it should be written.
+    expect(result.result.setClientId).toBeUndefined();
+    expect(result.result.unsetClientId).toBeUndefined();
+    expect(result.result.setPetIds).toBeUndefined();
+    // And the display strings pass through untouched (this request wasn't a retag).
+    expect(result.result.clientName).toBe("Jane Doe");
+    expect(result.result.petName).toBe("Regression Pet");
+  });
+
+  it("still refuses a request that DOES touch the tag and would leave the resulting pair inconsistent, even starting from an already-inconsistent shape", async () => {
+    // Retagging to a new client without also sending petIds must not silently inherit the OLD
+    // (empty) petIds and call that consistent - the invariant still applies to the RESULTING pair
+    // whenever the tag itself is part of the change. This never reaches Client.findOne/Pet.find:
+    // the resulting pair (clientId truthy, petIds empty) fails isTaggingConsistent first.
+    const result = await resolveTagging(publicBookingShape, {clientId: "some-other-client"});
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.code).toBe("tagging_mismatch");
+  });
+
+  it("still refuses clearing petIds alone (without also nulling clientId) against an already-tagged appointment", async () => {
+    const tagged = {clientId: "client-a", petIds: ["p1"], clientName: "Jane Doe", petName: "Rex"};
+    const result = await resolveTagging(tagged, {petIds: []});
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.code).toBe("tagging_mismatch");
+  });
+
+  it("a status/notes-only change (petIds provided as untouched-equivalent via undefined) resolves fine even from a consistent shape", async () => {
+    const consistent = {clientId: "client-a", petIds: ["p1"], clientName: "Jane Doe", petName: "Rex"};
+    const result = await resolveTagging(consistent, {});
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.result.clientName).toBe("Jane Doe");
+    expect(result.result.petName).toBe("Rex");
   });
 });

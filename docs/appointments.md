@@ -6,7 +6,7 @@ This document is about the data model and the wire contract.
 
 ## The tagging model
 
-An appointment is either **tagged** or a **walk-in** - never a mix, and never partially one or the other:
+An appointment created (or retagged) **through this WP's own write paths** is either **tagged** or a **walk-in** - never a mix, and never partially one or the other:
 
 - **Tagged**: `clientId` is a real client's id, and `petIds` is a non-empty array of that client's pets.
   The server derives the denormalized `clientName`/`petName` strings from the live `Client`/`Pet` records - `clientName` is the client's `name`, and `petName` is every tagged pet's `name` joined with `", "`.
@@ -14,7 +14,11 @@ An appointment is either **tagged** or a **walk-in** - never a mix, and never pa
   `clientName`/`petName` are free text supplied directly (the calendar dialog's "Walk-in (no client record)" toggle shows the two plain-text inputs staff already know).
 
 `clientName` and `petName` are required, non-blank fields on every appointment document, tagged or not - there is no third "blank" state.
-This is why tagging is all-or-nothing: a client tagged with zero pets, or pets tagged with no owning client, would have nothing coherent to put in the field that has to be there regardless.
+This is why tagging is all-or-nothing wherever it's actively enforced: a client tagged with zero pets, or pets tagged with no owning client, would have nothing coherent to put in the field that has to be there regardless.
+
+**The one deliberate exception**: public booking (`POST /v1/booking/book`, `clientMatch.ts`) sets `clientId` to a real, matched-or-created client but never sets `petIds` - it has no pet in hand at booking time, and WP4.3's own scope statement (C10) freezes that flow as unchanged.
+So `clientId` set with `petIds` empty is a real, permanent, continuously-produced shape on the wire, not a bug - every reader of an appointment document (the list, the detail page, a direct API consumer) needs to treat "tagged-with-a-client-but-zero-pets" as a legitimate rendering case for `source: "public_booking"` appointments specifically, alongside the two above.
+Critically, this shape must never be treated as something to *fix on sight*: a status action or a notes save on one of these appointments does not touch `clientId`/`petIds` at all and must succeed exactly as it would on any other appointment (see "The symmetric tagging invariant" below for how the server tells "untouched" apart from "being retagged into this shape").
 
 ### Every write path funnels through the same two chokepoints
 
@@ -36,7 +40,9 @@ Whatever creates or mutates an appointment - the staff calendar's click-to-creat
 
 ### The symmetric tagging invariant
 
-A tagged client always has at least one pet, and pets are never tagged without an owning client - `Boolean(resultingClientId) === (resultingPetIds.length > 0)` always holds, checked against the **resulting** state (the new value if this request changes that side, else whatever the appointment already had).
+A tagged client always has at least one pet, and pets are never tagged without an owning client - `Boolean(resultingClientId) === (resultingPetIds.length > 0)` always holds, checked against the **resulting** state (the new value if this request changes that side, else whatever the appointment already had) - **and only when this request actually sends `clientId` and/or `petIds` at all.**
+This last clause is what makes the public-booking exception above coexist with the invariant rather than contradict it: the invariant is a rule on the act of *tagging* (a create, or a PATCH that mentions either field), not a document-level precondition every PATCH must satisfy regardless of what it touches.
+A `{status: "cancelled"}` or `{notes: "..."}` request never re-examines whatever tagging shape the appointment already carries - it goes through untouched, even for a `clientId`-set-`petIds`-empty public-booking appointment.
 
 One consequence worth calling out explicitly: **a request that nulls out `clientId` must also send `petIds: []` in the same request.**
 There is no server-side auto-clearing of the other side - sending only `{clientId: null}` while the appointment still has non-empty `petIds` is rejected (the resulting pair would violate the invariant), and sending only `{petIds: []}` while the appointment still has a `clientId` is rejected the same way.
@@ -80,8 +86,8 @@ The response always reflects a fresh read taken after both have applied, not a p
 ## Validation invariants, summarized
 
 - `clientName`/`petName` are always non-blank - tagged (derived from records) or walk-in (free text), never neither.
-- A tagged client always has >= 1 pet.
-- Pets are never tagged without a client (`isTaggingConsistent`).
+- A tagged client always has >= 1 pet - **enforced on the resulting pair whenever a request mentions `clientId` and/or `petIds`; never re-checked against an untouched pre-existing shape** (the public-booking exception above relies on this).
+- Pets are never tagged without a client (`isTaggingConsistent`), under the same "only when the tag is part of the request" gating.
 - Every tagged pet's `ownerClientIds` contains the tagged `clientId` (`petsBelongToClient`) - re-checked whenever either side of the tag changes, even if only one side was mentioned in the request.
 - Untagging freezes `clientName`/`petName` rather than blanking them.
 - A status transition must be one the graph above lists.

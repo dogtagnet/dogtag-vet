@@ -26,8 +26,14 @@ export async function GET(_request: Request, {params}: {params: Promise<{id: str
  * through `setAppointmentTerminalStatus` (releases the capacity buckets this appointment held) -
  * every other status is a plain field update. Tagging changes go through `resolveTagging`, which
  * re-derives `clientName`/`petName` from the live records and validates every petId belongs to the
- * resulting client. Both kinds of change can land in the same request (e.g. cancelling AND
- * untagging in one save); the response always reflects a fresh read after both have applied.
+ * resulting client - but ONLY when this request actually mentions `clientId` and/or `petIds`;
+ * `resolveTagging` gates its invariant check on that (WP4.3 round-1 fix), so a request that touches
+ * neither one - a plain status action, a notes save - always passes through unexamined, regardless
+ * of what pre-existing shape the appointment happens to carry (see `appointmentTagging.ts`'s doc
+ * comment for why that matters: public-booking appointments are `clientId` set with `petIds`
+ * empty, permanently, by design). Both kinds of change can land in the same request (e.g.
+ * cancelling AND untagging in one save); the response always reflects a fresh read after both have
+ * applied.
  */
 export async function PATCH(request: Request, {params}: {params: Promise<{id: string}>}) {
   const {response} = await requireStaffSession();
