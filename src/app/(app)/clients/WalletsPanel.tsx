@@ -109,9 +109,36 @@ function RevokeButton({confirming, onStart, onCancel, onConfirm}: {confirming: b
  * distinction matters, rather than loosening the export/verify contract itself. */
 type RegistrationSourcedWallet = ClientWallet & {registrationId: string; blockNumber: number};
 
+/** Review finding 8: a RUNTIME narrowing, not a bare cast. The schema now enforces
+ * `registrationId`/`blockNumber` on every non-booking entry (`models/Client.ts`'s conditional
+ * `required` - both append sites run validators), so this guard can only miss for data that
+ * predates the schema fix or was hand-edited - and when it does, the row degrades to a read-only
+ * view below instead of feeding an incomplete export into `downloadReceipt`/`receiptExportJson`,
+ * whose shared zod contract requires both fields. */
+function isRegistrationSourced(wallet: ClientWallet): wallet is RegistrationSourcedWallet {
+  return wallet.via !== "booking" && typeof wallet.registrationId === "string" && typeof wallet.blockNumber === "number";
+}
+
 function ReceiptPanel({wallet, timeZone}: {wallet: ClientWallet; timeZone: string}) {
   if (wallet.via === "booking") return <MobileBookingReceiptPanel wallet={wallet} timeZone={timeZone} />;
-  const registrationWallet = wallet as RegistrationSourcedWallet;
+  if (!isRegistrationSourced(wallet)) {
+    return (
+      <div id={`receipt-panel-${wallet.address}`} data-testid={`receipt-panel-${wallet.address}`} className="space-y-3">
+        <h4 className="text-body font-medium text-ink">Receipt</h4>
+        <p className="text-body text-danger">
+          This wallet entry is missing its registration fields (registration id / block number), so its receipt cannot
+          be exported for offline verification. The signed data below is still shown as-is.
+        </p>
+        <details className="text-caption">
+          <summary className="cursor-pointer text-link hover:underline">Raw JSON</summary>
+          <pre className="mt-2 max-h-96 overflow-y-auto whitespace-pre-wrap break-all rounded-control bg-surface-2 p-3 text-left font-mono text-caption text-ink">
+            {wallet.receipt.payloadJson}
+          </pre>
+        </details>
+      </div>
+    );
+  }
+  const registrationWallet = wallet;
 
   const decoded = decodeReceiptPayload(wallet.receipt.payloadJson);
   const rows: KeyValueRow[] = decoded

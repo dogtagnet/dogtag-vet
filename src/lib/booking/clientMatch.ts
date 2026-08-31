@@ -114,10 +114,14 @@ export function clientAlreadyHasWallet(client: Pick<ClientDoc, "wallets">, walle
  * attached to the client either way.
  */
 export async function appendBookingWalletToClient(clientId: string, entry: ClientWallet): Promise<boolean> {
+  // `runValidators: true` (review finding 8): update operations skip schema validation by mongoose
+  // default - without it, the wallet subdocument's conditional registrationId/blockNumber
+  // requirement (`models/Client.ts`) would only ever bind on document-level saves, which no wallet
+  // append path uses. Same flag as `lib/registration/mongoStore.ts`'s appendWalletToClient.
   const updated = await Client.findOneAndUpdate(
     {clientId, "wallets.address": {$ne: entry.address}},
     {$push: {wallets: entry}},
-    {new: true},
+    {new: true, runValidators: true},
   ).lean<ClientDoc>();
   return Boolean(updated);
 }

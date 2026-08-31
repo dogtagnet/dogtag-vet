@@ -69,17 +69,39 @@ const clientWalletReceiptSchema = new Schema<ReceiptRecord>(
   {_id: false},
 );
 
+/** Review finding 8 - see `registrationId`/`blockNumber` in the schema below. Mongoose binds
+ * `this` to the subdocument being validated, both on a full document save and on the element of a
+ * `$push` when the update runs with `runValidators: true` (both wallet-append call sites do -
+ * `lib/registration/mongoStore.ts` and `lib/booking/clientMatch.ts`). `via` absent means the
+ * WP4.2 registration flow (the only writer that predates the field), so absence requires them
+ * exactly like an explicit `"registration"` does. */
+function requiredUnlessBookingSourced(this: ClientWallet): boolean {
+  return this.via !== "booking";
+}
+
 const clientWalletSchema = new Schema<ClientWallet>(
   {
     address: {type: String, required: true},
     label: String,
     via: {type: String, enum: ["registration", "booking"]},
-    registrationId: String,
+    // Review finding 8: WP4.4 widened these two to plain-optional for ALL entries so a
+    // via:"booking" entry (whose MobileBooking struct carries neither field) could be stored - but
+    // that silently dropped the invariant every registration-sourced entry had always carried, the
+    // one WalletsPanel's RegistrationSourcedWallet narrowing and scripts/verify-receipt.ts's
+    // export contract depend on. Conditionally required restores it: mandatory unless the entry is
+    // booking-sourced.
+    registrationId: {
+      type: String,
+      required: [requiredUnlessBookingSourced, "registrationId is required for a registration-sourced wallet"],
+    },
     bookingId: String,
     receipt: {type: clientWalletReceiptSchema, required: true},
     receiptHash: {type: String, required: true},
     issuedAt: {type: Number, required: true},
-    blockNumber: Number,
+    blockNumber: {
+      type: Number,
+      required: [requiredUnlessBookingSourced, "blockNumber is required for a registration-sourced wallet"],
+    },
     registeredAt: {type: Number, required: true},
     revokedAt: Number,
   },

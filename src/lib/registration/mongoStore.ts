@@ -52,10 +52,13 @@ export const mongoRegistrationStore: RegistrationFlowStore = {
   async appendWalletToClient(clientId, entry: AppendWalletInput): Promise<AppendWalletResult> {
     // One atomic round trip: matches only if this client exists AND does not already carry this
     // address, so there is no separate check-then-push window a concurrent completion could race.
+    // `runValidators: true` (review finding 8): update operations skip schema validation by
+    // mongoose default, which would let a malformed entry bypass the wallet subdocument's
+    // conditional registrationId/blockNumber requirement that a document-level save enforces.
     const updated = await Client.findOneAndUpdate(
       {clientId, "wallets.address": {$ne: entry.address}},
       {$push: {wallets: entry satisfies ClientWallet}},
-      {new: true},
+      {new: true, runValidators: true},
     ).lean<ClientDoc>();
     if (updated) return "ok";
 
