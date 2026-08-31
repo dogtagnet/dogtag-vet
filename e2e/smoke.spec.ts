@@ -19,7 +19,10 @@ test("dev sign-in reaches the staff dashboard", async ({page}) => {
   await page.goto("/sign-in");
   await page.getByLabel("Email").fill("owner@example.com");
   await page.getByRole("button", {name: "Dev sign in (test only)"}).click();
-  await expect(page).toHaveURL(/\/dashboard$/);
+  // 15s, not the 5s default: on a cold `next dev` the post-sign-in navigation blocks on
+  // /dashboard's first compile, which can outrun 5s - seen flaking live when a spec file runs
+  // first/alone; the assertion itself (we DO land on the dashboard) is unchanged.
+  await expect(page).toHaveURL(/\/dashboard$/, {timeout: 15_000});
 });
 
 test("booking API answers availability for the seeded rules", async ({request}) => {

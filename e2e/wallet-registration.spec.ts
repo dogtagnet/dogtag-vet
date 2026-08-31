@@ -76,7 +76,10 @@ async function signInAsStaff(page: Page) {
   await page.goto("/sign-in");
   await page.getByLabel("Email").fill("owner@example.com");
   await page.getByRole("button", {name: "Dev sign in (test only)"}).click();
-  await expect(page).toHaveURL(/\/dashboard$/);
+  // 15s, not the 5s default: when this spec is the FIRST thing to run against a cold `next dev`,
+  // the post-sign-in navigation blocks on /dashboard's first compile, which can outrun 5s - seen
+  // flaking live in a filtered run (the same helper then passes for every later test once warm).
+  await expect(page).toHaveURL(/\/dashboard$/, {timeout: 15_000});
 }
 
 /** Idempotent: PATCHing the same clinic settings before every test is cheap and keeps each test

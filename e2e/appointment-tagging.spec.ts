@@ -19,7 +19,11 @@ async function signInAsStaff(page: Page) {
   await page.goto("/sign-in");
   await page.getByLabel("Email").fill("owner@example.com");
   await page.getByRole("button", {name: "Dev sign in (test only)"}).click();
-  await expect(page).toHaveURL(/\/dashboard$/);
+  // 15s, not the 5s default: when this spec is the FIRST thing to run against a cold `next dev`
+  // (it is - Playwright runs spec files alphabetically), the post-sign-in navigation blocks on
+  // /dashboard's first compile, which can outrun 5s - seen flaking live in a filtered run of a
+  // sibling spec (the same helper then passes for every later test once warm).
+  await expect(page).toHaveURL(/\/dashboard$/, {timeout: 15_000});
 }
 
 interface CreatedClient {
