@@ -1,0 +1,222 @@
+[
+  {
+    "name": "baseline",
+    "description": "Typical everyday values - small chain id, ordinary timestamps, deadline 10 minutes after issuedAt.",
+    "domain": {
+      "name": "DogTagMobileBooking",
+      "version": "1",
+      "chainId": 135,
+      "verifyingContract": "0x5bd5048125f223100A2753A740f34d044AB493B5"
+    },
+    "message": {
+      "clinic": "0x5bd5048125f223100A2753A740f34d044AB493B5",
+      "bookingHash": "0x2e2b3738f773ac21e64f6be41336cfeab2a8b2ef7a38390a5d716bd8b7c3a929",
+      "wallet": "0xF9C5d35A0b3170AB06956FB06722060Ce5074694",
+      "issuedAt": "1735689600",
+      "deadline": "1735690200"
+    },
+    "expected": {
+      "domainSeparator": "0xdabd7da35cce6c2b4bd1f7d3f6035da98ecc2c17770dc757a8bc7190d5c66c71",
+      "structHash": "0x8f46dce19704054933d0703848115d1df9cbfe2176acdceb199d299e46e38044",
+      "digest": "0x081232ac9f04d0dedac4b3e4e0b8785648a45e5fc7256a38f96dcdb0b85fbefc"
+    }
+  },
+  {
+    "name": "issuedAt-uint64-max",
+    "description": "issuedAt pinned to 2^64-1 (18446744073709551615); deadline ordinary.",
+    "domain": {
+      "name": "DogTagMobileBooking",
+      "version": "1",
+      "chainId": 135,
+      "verifyingContract": "0x57f8786264C55cDD8f3ECe0Ba177f6AD2dF90e04"
+    },
+    "message": {
+      "clinic": "0x57f8786264C55cDD8f3ECe0Ba177f6AD2dF90e04",
+      "bookingHash": "0xbc36e1d55c9bf1d8d349d2afa3745d39d17c92d68629e12e15d931168eb12c9c",
+      "wallet": "0xAD07dCec4B481977c1EB788Eff66F1994C5729Ac",
+      "issuedAt": "18446744073709551615",
+      "deadline": "1800000000"
+    },
+    "expected": {
+      "domainSeparator": "0x7023bfda69b1f81857e8c39fadeadb0e600b6c6f3a17f81815f54e96cb135f2c",
+      "structHash": "0xfe597e30c5d342335f5f8ef9ab0f9506149af88d87142b78bf16c621e472d247",
+      "digest": "0xbd762b02cad677be2b68706f622b4f97e668c4e9d6b2d1a31f5dc18f2def42a2"
+    }
+  },
+  {
+    "name": "deadline-uint64-max",
+    "description": "deadline pinned to 2^64-1; issuedAt ordinary.",
+    "domain": {
+      "name": "DogTagMobileBooking",
+      "version": "1",
+      "chainId": 135,
+      "verifyingContract": "0x985C5B55AEdb635eaBDC475f14e082458Bd8a457"
+    },
+    "message": {
+      "clinic": "0x985C5B55AEdb635eaBDC475f14e082458Bd8a457",
+      "bookingHash": "0xd389a20526315d0aef49f629612880595f6e55aa2da93232daa6dfc6e63e0005",
+      "wallet": "0xB00F02EBF1D478dDAe4B2C4fACbBe9fD13F94Dd9",
+      "issuedAt": "1650000000",
+      "deadline": "18446744073709551615"
+    },
+    "expected": {
+      "domainSeparator": "0xce3c4ba9fc471e725bae0dfa51d41e415f0c897dcef31c9faaff7f6fd1d4f569",
+      "structHash": "0x73976b2a25a0ae096ea2820eec268192e715be34105241d1e7739a66ffdc404e",
+      "digest": "0x0e1e70c5ad72a2a2f49552682d3db7249e2daeaac1e776b4fe19657d5b74cc42"
+    }
+  },
+  {
+    "name": "both-uint64-fields-max",
+    "description": "issuedAt and deadline simultaneously at 2^64-1.",
+    "domain": {
+      "name": "DogTagMobileBooking",
+      "version": "1",
+      "chainId": 135,
+      "verifyingContract": "0xd381Efb1CA9d18Bb035Ed76Df563aB249698eF7f"
+    },
+    "message": {
+      "clinic": "0xd381Efb1CA9d18Bb035Ed76Df563aB249698eF7f",
+      "bookingHash": "0xe19b772604100226397f826e72145f88e4e7771281c1000709e2603460e74129",
+      "wallet": "0x7a615418f9085baA435Df0d6eA41401C2d6d7249",
+      "issuedAt": "18446744073709551615",
+      "deadline": "18446744073709551615"
+    },
+    "expected": {
+      "domainSeparator": "0x4b83794c0286283d973806883f7b342b86fbeeea94a322db2b5b88c2161117aa",
+      "structHash": "0x788042b756a15258cc0525822175ba336160022bff5767b13212909b498769ea",
+      "digest": "0x654c7a98c686a585a9dd57fea47237b7627c82396578ce400f204cafecf7e5bb"
+    }
+  },
+  {
+    "name": "both-uint64-fields-zero",
+    "description": "issuedAt and deadline simultaneously at 0 (lower boundary).",
+    "domain": {
+      "name": "DogTagMobileBooking",
+      "version": "1",
+      "chainId": 135,
+      "verifyingContract": "0x4a366b2264646553af5A2eA2Dd4a7F64dA5aE632"
+    },
+    "message": {
+      "clinic": "0x4a366b2264646553af5A2eA2Dd4a7F64dA5aE632",
+      "bookingHash": "0x6070b860fc135a96da8308ceccef7aca3ccfd5c1e65a506e3cc13aa94abddb45",
+      "wallet": "0xB6E864A9CC29fb9B755a6785A902eE08C0d1Ae14",
+      "issuedAt": "0",
+      "deadline": "0"
+    },
+    "expected": {
+      "domainSeparator": "0xe92e8aad6ed712e25f66de6f36f1afd54f6c9f6bd4a107c97863678c9e43cd71",
+      "structHash": "0xc763acde192dfa8a1fccc1e21744b2fcf46fc266089de35e1045caf3c589d5de",
+      "digest": "0x6f36271c8fd56054575d26574aa078298e561cb87da4d297d75f9d4eb5014b0a"
+    }
+  },
+  {
+    "name": "address-edges-zero-clinic-max-wallet",
+    "description": "clinic (and verifyingContract) at the zero address, wallet at the all-0xff address.",
+    "domain": {
+      "name": "DogTagMobileBooking",
+      "version": "1",
+      "chainId": 135,
+      "verifyingContract": "0x0000000000000000000000000000000000000000"
+    },
+    "message": {
+      "clinic": "0x0000000000000000000000000000000000000000",
+      "bookingHash": "0x4fabd12d06805c57b9ef3270fcfe8465572c10db59e293f9397b64bec4efe614",
+      "wallet": "0xFFfFfFffFFfffFFfFFfFFFFFffFFFffffFfFFFfF",
+      "issuedAt": "1710000000",
+      "deadline": "1710000600"
+    },
+    "expected": {
+      "domainSeparator": "0x4143c98bed2f7d9a8389805536673e83f7f7fc0fe77837b86bd3f090903fbfbe",
+      "structHash": "0xce1c05ca4cc561f8bd7ec5efaf3949a227d73ff27a51398cb0564fb28b01801c",
+      "digest": "0x4f5dd7121deba045b429c828554ee230b61ce276dbe2f8ce6691aefe95e67939"
+    }
+  },
+  {
+    "name": "address-edges-max-clinic-zero-wallet",
+    "description": "clinic (and verifyingContract) at the all-0xff address, wallet at the zero address.",
+    "domain": {
+      "name": "DogTagMobileBooking",
+      "version": "1",
+      "chainId": 135,
+      "verifyingContract": "0xFFfFfFffFFfffFFfFFfFFFFFffFFFffffFfFFFfF"
+    },
+    "message": {
+      "clinic": "0xFFfFfFffFFfffFFfFFfFFFFFffFFFffffFfFFFfF",
+      "bookingHash": "0x15c9826ebdb4e628aef59fe6daf1bc7e0b1df322101db89f25a9374c155d8dc0",
+      "wallet": "0x0000000000000000000000000000000000000000",
+      "issuedAt": "1720000000",
+      "deadline": "1720000600"
+    },
+    "expected": {
+      "domainSeparator": "0x1e6a8e4cbcbc312d4ac91317862a81fb2b88832e9c2c99aeba6356501c08b569",
+      "structHash": "0x2ea627a845896ba1bbdda8ef5e0b16181a638ddb83d501a1f31271471706f3d2",
+      "digest": "0x9e47a838505278661d6630cbdbb6dfa899478ef1acca6d2cffd309602bdde3f2"
+    }
+  },
+  {
+    "name": "bookingHash-bytes32-zero-and-different-chain",
+    "description": "bookingHash zeroed (lower bytes32 edge); chainId different from the default (135) to prove the domain separator is chain-scoped.",
+    "domain": {
+      "name": "DogTagMobileBooking",
+      "version": "1",
+      "chainId": 1,
+      "verifyingContract": "0x206f90C858CC73EA23E787b7526Bd1166D53C875"
+    },
+    "message": {
+      "clinic": "0x206f90C858CC73EA23E787b7526Bd1166D53C875",
+      "bookingHash": "0x0000000000000000000000000000000000000000000000000000000000000000",
+      "wallet": "0x54268Ad59Df0FB80C82449669AEf8df9259b88d9",
+      "issuedAt": "1690000000",
+      "deadline": "1690000600"
+    },
+    "expected": {
+      "domainSeparator": "0x5c1f9452a58ea4cdadd8ce916093608073111fab9b088fdb935f629f4925fc71",
+      "structHash": "0x74183ed0fd08218831598a1c5b0501230ecf83d8a722e678801cd0c88e305b89",
+      "digest": "0xa305fc6fd339d2a735272c1926edbf2afc2f4c3b9931cf9b813b0d303f8fcdca"
+    }
+  },
+  {
+    "name": "bookingHash-bytes32-max",
+    "description": "bookingHash at the all-0xff bytes32 value (upper edge, not a real keccak256-output shape - the struct treats bookingHash as an opaque 32-byte value regardless of what produced it).",
+    "domain": {
+      "name": "DogTagMobileBooking",
+      "version": "1",
+      "chainId": 135,
+      "verifyingContract": "0x3F82459dD3a16651342608E0B175Da6a819355b7"
+    },
+    "message": {
+      "clinic": "0x3F82459dD3a16651342608E0B175Da6a819355b7",
+      "bookingHash": "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "wallet": "0xcF2d99179c3CBAfDb5BD185c488aaFcA258BA183",
+      "issuedAt": "1660000000",
+      "deadline": "1660000600"
+    },
+    "expected": {
+      "domainSeparator": "0xbedcd2047359ce6e9ae82d91538cba0ce265c8b7083957144696b2ea452e289e",
+      "structHash": "0x7d25b59018cae122dcc3a6e5f2eeb763acfbb1ae0551361548080fbfe548961a",
+      "digest": "0x7e4678eab4300b8e4e9fac7c991f804ae0fd189b9a3efd879bc5f9c7f1d8b12a"
+    }
+  },
+  {
+    "name": "clinic-verifyingContract-mismatch",
+    "description": "clinic (in-struct) and domain.verifyingContract deliberately DIFFERENT addresses - real sessions always set them equal (the spec's clinic clone address, redundantly in-struct), but every other vector here does too, which would let an implementation that reads verifyingContract for the clinic field (or vice versa) still pass every other vector. This is the one vector that catches that specific mix-up.",
+    "domain": {
+      "name": "DogTagMobileBooking",
+      "version": "1",
+      "chainId": 135,
+      "verifyingContract": "0xdBF310e0058BCF37A51Ed22207c6aBA4fFc75A4f"
+    },
+    "message": {
+      "clinic": "0x85245b4815cAD5b3d665f58Af960f684e0e552EA",
+      "bookingHash": "0x2411238303189a06ab5f83aa13f2f16d529176b45f9c9a5378a098dd01a4cd70",
+      "wallet": "0xde6bacdC9740246d55fe6Bc6C02410383A306E5F",
+      "issuedAt": "1670000000",
+      "deadline": "1670000600"
+    },
+    "expected": {
+      "domainSeparator": "0x6369cbc0d5f2cb2dd3d4dd7baf1807bd275255c633a7cc33f59a409127c2c28d",
+      "structHash": "0x7312661e12d03d46bf4c4580ae07a98cc2e4ef2ece5b7801c05596d62dc91b46",
+      "digest": "0x2b300621a8d7999a04a007f6403467e5c255ab3d932c191f8947f3cfa87d1fba"
+    }
+  }
+]
