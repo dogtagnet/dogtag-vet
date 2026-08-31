@@ -26,6 +26,12 @@ export const hexToken32 = z
   .string()
   .regex(/^[0-9a-f]{32}$/, "Must be 32 lowercase hex characters");
 
+/** A 65-byte `r||s||v` ECDSA signature, 0x-prefixed hex - the shape every `recoverTypedDataAddress`
+ * call site in this repo expects (`viem`'s own signature format). */
+export const hexSignature65 = z
+  .string()
+  .regex(/^0x[0-9a-fA-F]{130}$/, "Must be a 0x-prefixed 65-byte (130 hex char) signature");
+
 export const unixSeconds = z.number().int().nonnegative();
 
 export const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Must be an ISO date (YYYY-MM-DD)");
