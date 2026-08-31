@@ -76,10 +76,11 @@ Every registered wallet carries a receipt, persisted alongside it on `Client.wal
   "receiptHash": "0x...",
   "issuedAt": 1735689600,
   "blockNumber": 42,
-  "registeredAt": 1735689601,
-  "revokedAt": null
+  "registeredAt": 1735689601
 }
 ```
+
+(`revokedAt` appears ONLY on a revoked wallet's export, as a unix-seconds number - an unrevoked export omits the key entirely, and the verifier rejects a literal `null`.)
 
 `receipt.payloadJson` is a deterministic, fixed-key-order JSON encoding of exactly the `{domain, message}` pair that was signed - the same shape as one entry in `protocol/specs/eip712-client-registration-vectors.json`, minus the `expected` block.
 `receiptHash` is `keccak256` of a deterministic encoding of `{payloadJson, recoveredAt, signature}` - the chain-ready anchor point mentioned in "Purpose" above.
@@ -88,7 +89,7 @@ This whole structure is designed to be re-verifiable **offline, forever**: nothi
 
 ## Verifying a receipt
 
-The "Download" button on the Wallets panel saves exactly the JSON shape above to a file.
+The "Download JSON" button in a wallet row's expanded receipt band saves exactly the JSON shape above to a file.
 To independently re-verify it:
 
 ```bash
