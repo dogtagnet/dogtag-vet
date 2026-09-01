@@ -22,7 +22,12 @@ function zoneSegments(zone: string): string[] {
  * "nothing until you type" convention rather than dumping the full ~400-zone list on focus.
  */
 export function filterTimeZones(query: string, zones: readonly string[], limit = DEFAULT_RESULT_LIMIT): string[] {
-  const trimmed = query.trim().toLowerCase();
+  // The haystack (`zoneSegments`, above) normalizes "/" and "_" to spaces before comparing - the
+  // query must be normalized the SAME way, or a query that itself contains either character never
+  // matches anything: "New_York" (a bare city name someone typed with the underscore IANA itself
+  // uses) and "America/New_York" (a full zone id pasted straight from another system) both need to
+  // find "America/New_York" here, exactly as "new york" already does.
+  const trimmed = query.replace(/[/_]/g, " ").trim().toLowerCase();
   if (!trimmed) return [];
 
   const prefixMatches: string[] = [];

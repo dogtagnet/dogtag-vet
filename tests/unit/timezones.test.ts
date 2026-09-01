@@ -24,6 +24,21 @@ describe("filterTimeZones", () => {
     expect(result).toContain("America/New_York");
   });
 
+  it("normalizes the QUERY's own underscore too, not just the haystack's - \"New_York\" (typed with the IANA delimiter) matches America/New_York", () => {
+    const result = filterTimeZones("New_York", SAMPLE_ZONES);
+    expect(result).toContain("America/New_York");
+  });
+
+  it("normalizes the QUERY's own slash too - a full zone id pasted verbatim (\"America/New_York\") still matches America/New_York", () => {
+    const result = filterTimeZones("America/New_York", SAMPLE_ZONES);
+    expect(result).toContain("America/New_York");
+  });
+
+  it("normalizes both '/' and '_' together in a multi-segment pasted id - \"America/Argentina/Buenos_Aires\" matches its own zone", () => {
+    const result = filterTimeZones("America/Argentina/Buenos_Aires", SAMPLE_ZONES);
+    expect(result).toContain("America/Argentina/Buenos_Aires");
+  });
+
   it("matches a partial city prefix, e.g. \"los ang\" matches America/Los_Angeles", () => {
     const result = filterTimeZones("los ang", SAMPLE_ZONES);
     expect(result).toEqual(["America/Los_Angeles"]);
