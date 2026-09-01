@@ -646,4 +646,49 @@ describe("D3 across a mode switch / roster change", () => {
     expect(stillOnA?.practitionerStaffId).toBe(vetA.staffId);
     expect(stillOnA?.bucketScope).toEqual([vetA.staffId]);
   });
+
+  /**
+   * Advisor-flagged consequence of this fix round, verified empirically before writing it up in
+   * docs/DEPLOY.md: two unassigned appointments can legitimately land at the EXACT same instant
+   * (a Whole-clinic window with capacity > 1 before the mode switch), and with the fix in place,
+   * NEITHER can be reassigned to the sole practitioner while the other still sits unassigned - each
+   * one, from the other's perspective, is itself an "unassigned appointment" D3 folds into every
+   * staffId's occupancy. Pre-fix this pair was NOT correctly handled either: whichever reassignment
+   * happened to be attempted first silently won via the same stale-bucket gap MAJOR-1 closes,
+   * arbitrarily and without the operator ever deciding who should get the one available slot. This
+   * test pins the new, safe behavior - refuse both until a human resolves the actual conflict - as
+   * permanent and intentional, not a regression to relax later.
+   */
+  it("two unassigned appointments at the identical instant: neither can be assigned while the other remains unassigned; resolving one (cancelling it) frees the other", async () => {
+    await setPractitionerMode();
+    const vetA = await Staff.create({email: "overlap-a@example.com", role: "vet", bookable: true});
+    await AvailabilityRule.create({dayOfWeek: THURSDAY, startMinute: 9 * 60, endMinute: 17 * 60, staffId: vetA.staffId});
+
+    // Two staff-created unassigned appointments at the SAME instant - modelling a legacy
+    // Whole-clinic window that once had capacity 2 (or two direct staff bookings), now both
+    // "Unassigned" after the mode switch.
+    const apptA = await createAppointment(draftAt({startAt: thu9am, endAt: thu9am + 1800, source: "staff"}), {
+      enforceCapacity: false,
+    });
+    const apptB = await createAppointment(draftAt({startAt: thu9am, endAt: thu9am + 1800, source: "staff"}), {
+      enforceCapacity: false,
+    });
+    expect(apptA.ok).toBe(true);
+    expect(apptB.ok).toBe(true);
+    if (!apptA.ok || !apptB.ok) return;
+
+    // BOTH refuse - the OTHER one, still unassigned, blocks vetA exactly as D3 says any unassigned
+    // appointment must.
+    const assignA = await reassignPractitioner(apptA.appointment.appointmentId, vetA.staffId);
+    expect(assignA).toEqual({ok: false, reason: "slot_conflict"});
+    const assignB = await reassignPractitioner(apptB.appointment.appointmentId, vetA.staffId);
+    expect(assignB).toEqual({ok: false, reason: "slot_conflict"});
+
+    // The operator resolves the genuine conflict a human must decide (cancel/reschedule one) -
+    // once B is no longer live, A can be assigned normally.
+    await setAppointmentTerminalStatus(apptB.appointment.appointmentId, "cancelled");
+    const assignAAfter = await reassignPractitioner(apptA.appointment.appointmentId, vetA.staffId);
+    expect(assignAAfter.ok).toBe(true);
+    if (assignAAfter.ok) expect(assignAAfter.appointment.practitionerStaffId).toBe(vetA.staffId);
+  });
 });
