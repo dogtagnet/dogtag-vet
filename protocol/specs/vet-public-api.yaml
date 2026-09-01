@@ -423,6 +423,13 @@ paths:
         per-slot capacity, and already-booked appointments - every slot returned is bookable
         at the instant it was computed (a concurrent booking can still race it; `POST
         /v1/booking/book` is the authority and returns `409` on a lost race).
+
+        WP4.7 (D5) - a vet deployment running per-practitioner scheduling additionally returns
+        `practitioners` and each slot's `practitionerIds` (see their own schema descriptions
+        below). A deployment running whole-clinic scheduling (the default, and the only mode
+        that existed before WP4.7) omits both entirely - never present as an empty array - so
+        this response is byte-identical to what every client has always received, and an old
+        client that has never heard of either key is unaffected either way.
       parameters:
         - name: serviceId
           in: query
@@ -451,6 +458,13 @@ paths:
                   slots:
                     type: array
                     items: {$ref: '#/components/schemas/BookingSlot'}
+                  practitioners:
+                    type: array
+                    description: |-
+                      WP4.7 (D5) - the vet's bookable practitioners, present ONLY when this
+                      deployment is running `schedulingMode: "practitioner"`. Absent entirely
+                      (not an empty array) under whole-clinic scheduling.
+                    items: {$ref: '#/components/schemas/BookingPractitioner'}
         "400":
           description: "`serviceId` unknown, or `to` <= `from`, or the range exceeds 31 days."
           content:
@@ -488,6 +502,10 @@ paths:
             `error.details.reason` names the specific check that failed) or
             `wallet_claim_replayed` (this exact signed claim already booked something). Either way
             the WHOLE booking is rejected, never partially processed.
+            WP4.7 (D5): under `schedulingMode: "practitioner"`, a `practitionerId` that does not
+            name a currently-bookable practitioner also returns 400 with
+            `error.code: invalid_input` - the same generic code the missing-client-contact and
+            invalid-`startAt` cases above already use, not a new one.
           content:
             application/json:
               schema: {$ref: '#/components/schemas/Error'}
@@ -1133,6 +1151,22 @@ components:
       properties:
         startAt: {type: string, format: date-time}
         endAt: {type: string, format: date-time}
+        practitionerIds:
+          type: array
+          items: {type: string}
+          description: |-
+            WP4.7 (D5) - the `id`s (matching `BookingPractitioner.id`) of every practitioner free
+            for this exact slot, present ONLY when this deployment is running `schedulingMode:
+            "practitioner"`. Absent entirely under whole-clinic scheduling, exactly like
+            `practitioners` on the containing response.
+
+    BookingPractitioner:
+      type: object
+      required: [id, name]
+      description: WP4.7 (D5) - one bookable practitioner, as listed in a practitioner-mode availability response.
+      properties:
+        id: {type: string}
+        name: {type: string}
 
     BookingClient:
       type: object
@@ -1151,6 +1185,16 @@ components:
         client: {$ref: '#/components/schemas/BookingClient'}
         petName: {type: string}
         notes: {type: string, maxLength: 2000}
+        practitionerId:
+          type: string
+          description: |-
+            WP4.7 (D5) - optional, backward compatible: meaningful only under
+            `schedulingMode: "practitioner"`, where an old client that never sends it gets
+            auto-assigned to whichever bookable practitioner is free (fewest appointments that
+            day, ties broken by id). Ignored entirely under whole-clinic scheduling. Must name a
+            `BookingPractitioner.id` from the matching availability response's `practitioners[]`
+            that is actually free for `startAt`, or the booking is rejected with 400
+            `invalid_input` (see above) - never silently reassigned to someone else.
         mobile:
           $ref: '#/components/schemas/MobileBookingBlock'
 
