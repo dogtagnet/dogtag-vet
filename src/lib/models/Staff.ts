@@ -18,6 +18,18 @@ export function isVetOrOwner(role: StaffRole | undefined | null): boolean {
 }
 
 /**
+ * A bookable practitioner's display name for calendar chips, the practitioner picker (A5/A6), and
+ * the public availability response's `practitioners[].name` (D5) - `displayName` when set (D2),
+ * else the email's local part (everything before `@`) as a reasonable default rather than showing
+ * a full email address (or nothing) on a public-facing slot button. Pure and reused everywhere a
+ * practitioner needs a human-readable name so this fallback rule lives in exactly one place.
+ */
+export function practitionerDisplayName(staff: Pick<StaffDoc, "displayName" | "email">): string {
+  if (staff.displayName?.trim()) return staff.displayName.trim();
+  return staff.email.split("@")[0] ?? staff.email;
+}
+
+/**
  * A staff account's role, keyed by email and independent of whichever Auth.js adapter/provider
  * authenticated the sign-in (Google, email magic link, or the dev-only credentials provider) -
  * the `jwt` callback in src/lib/auth.ts looks this up by email and stamps `role` onto the token.
