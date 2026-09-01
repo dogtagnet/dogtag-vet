@@ -95,6 +95,18 @@ async function restoreBaseline(page: Page) {
 test.describe.serial("calendar service dropdown (WP4.5 issue 1)", () => {
   test.beforeEach(async ({page}) => {
     await signInAsStaff(page);
+    // Warms Next dev's on-demand compile of BOTH service API route modules - GET/POST
+    // src/app/api/services/route.ts and GET/PATCH src/app/api/services/[id]/route.ts (a separate
+    // compiled chunk, dynamic segments compile independently) - BEFORE any timed UI assertion
+    // depends on either. This file is the only spec that ever touches /api/services at all, so
+    // test 1's own POST and test 2's own first PATCH are each the very first hit on their route in
+    // the whole suite; that first compile, stacked on full-suite system load, was observed pushing
+    // the "Service created" snackbar past even a generous 10s assertion timeout (the fetch itself
+    // was still compiling the route, not merely slow). A plain awaited request has no such tight
+    // budget, so pay both compiles here instead - GET on each is side-effect-free.
+    const services = await listServices(page);
+    const generalCheckup = services.find((s) => s.name === "General checkup");
+    if (generalCheckup) await page.request.get(`/api/services/${generalCheckup.serviceId}`);
   });
 
   test.afterEach(async ({page}) => {
