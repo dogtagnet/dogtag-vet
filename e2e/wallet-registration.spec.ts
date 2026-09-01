@@ -203,6 +203,20 @@ test("happy path: staff registers a wallet, owner scans/signs, the panel shows i
   const completeBody = await completeRes.json();
   expect(completeBody.wallet).toBe(wallet.toLowerCase());
 
+  // WP4.5 track3-sig fix 4: the staff status poll (GET /api/clients/:id/wallet-registrations/
+  // :registrationId) itself reports "registered" right after complete - not just the panel's own
+  // eventual DOM state, which could in principle be satisfied by a stale row from an earlier test.
+  // The session document is looked up by `token` (its own unique index) purely to recover the
+  // internal `registrationId` this poll route keys on - it never asserts anything about the raw
+  // document itself.
+  const sessionDoc = await mongoClient.db().collection("walletregistrationsessions").findOne({token});
+  expect(sessionDoc?.registrationId).toBeTruthy();
+  const statusRes = await page.request.get(`/api/clients/${clientId}/wallet-registrations/${sessionDoc!.registrationId}`);
+  expect(statusRes.ok()).toBe(true);
+  const statusBody = await statusRes.json();
+  expect(statusBody.status).toBe("registered");
+  expect(statusBody.wallet).toBe(wallet.toLowerCase());
+
   // The panel polls every 2s and refreshes the server-rendered list on success - wait for the
   // registered address to actually appear as a row (AddressChip renders it truncated, but
   // MonoValue always sets `title` to the untruncated value). 20s (not the original 15s) now that
@@ -299,7 +313,12 @@ test("revoke flow: a registered wallet can be revoked from the panel with a two-
   // test's own row will ALSO gain a "Revoked at" KeyValuePanel label if it ever does expand one -
   // so the same non-exact match would still be a live hazard, and `{exact: true}` stays load-bearing
   // rather than a leftover from a bug that no longer applies.
-  await expect(row.getByText("Revoked", {exact: true})).toBeVisible();
+  //
+  // 15s (not the 5s default): `handleRevoke` awaits its own POST then `router.refresh()`'s full
+  // server-component re-render before the badge flips - observed flaking here specifically (not
+  // the click itself) under full-suite system load, the same class of load-induced timing flake
+  // this file's own happy-path test already budgets extra time for (see its opening comment).
+  await expect(row.getByText("Revoked", {exact: true})).toBeVisible({timeout: 15_000});
 });
 
 /**
