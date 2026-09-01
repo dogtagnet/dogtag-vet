@@ -91,16 +91,19 @@ export function StaffSection({initial, isOwner, currentStaffId}: {initial: Staff
                       <span className="text-caption text-ink-faint">This is you</span>
                     ) : (
                       <div className="flex items-center gap-2">
-                        <Select
-                          className="w-auto"
-                          value={s.role}
-                          disabled={busy}
-                          onChange={(e) => update(s.staffId, {role: e.target.value as StaffRole})}
-                          aria-label={`Role for ${s.email}`}
-                        >
-                          <option value="staff">Staff</option>
-                          <option value="owner">Owner</option>
-                        </Select>
+                        {/* Same wrapper-width rule as the invite row below - w-auto on the control
+                            itself loses to the base w-full. */}
+                        <div className="w-28 shrink-0">
+                          <Select
+                            value={s.role}
+                            disabled={busy}
+                            onChange={(e) => update(s.staffId, {role: e.target.value as StaffRole})}
+                            aria-label={`Role for ${s.email}`}
+                          >
+                            <option value="staff">Staff</option>
+                            <option value="owner">Owner</option>
+                          </Select>
+                        </div>
                         {s.disabled ? (
                           <Button variant="secondary" disabled={busy} onClick={() => update(s.staffId, {disabled: false})}>
                             Restore
@@ -122,17 +125,22 @@ export function StaffSection({initial, isOwner, currentStaffId}: {initial: Staff
       />
 
       {isOwner && (
+        /* Widths live on wrappers, never as className on Input/Select: the controls' base class is
+           w-full, and a bare `w-auto` override loses the stylesheet-order fight - the Select grew to
+           full width and squeezed the flex-1 email field to a sliver (Kenneth's 2026-09-01 report). */
         <div className="mt-4 flex items-end gap-2">
-          <div className="flex-1">
+          <div className="min-w-0 flex-1">
             <FormField label="Invite by email" htmlFor="invite-email">
               <Input id="invite-email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="colleague@clinic.example" />
             </FormField>
           </div>
-          <Select className="w-auto" value={role} onChange={(e) => setRole(e.target.value as StaffRole)} aria-label="Role to invite as">
-            <option value="staff">Staff</option>
-            <option value="owner">Owner</option>
-          </Select>
-          <Button onClick={invite} disabled={busy}>
+          <div className="w-32 shrink-0">
+            <Select value={role} onChange={(e) => setRole(e.target.value as StaffRole)} aria-label="Role to invite as">
+              <option value="staff">Staff</option>
+              <option value="owner">Owner</option>
+            </Select>
+          </div>
+          <Button className="shrink-0" onClick={invite} disabled={busy}>
             Invite
           </Button>
         </div>
