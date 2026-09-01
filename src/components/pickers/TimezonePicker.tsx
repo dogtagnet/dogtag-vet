@@ -2,7 +2,7 @@
 
 import {useEffect, useMemo, useRef, useState} from "react";
 import {Combobox} from "@/components/pickers/Combobox";
-import {filterTimeZones, utcOffsetLabel} from "@/lib/timezones";
+import {filterTimeZones, isValidTimeZone, utcOffsetLabel} from "@/lib/timezones";
 
 /** Memoized once at module scope, not per render/mount - the set of IANA zones a runtime supports
  * never changes over a process's lifetime. Empty when `Intl.supportedValuesOf` doesn't exist
@@ -58,12 +58,29 @@ export function TimezonePicker({
   const {removeButtonRef, requestFocus} = useFocusChipOnSelect(value !== "");
   const options = useMemo(() => filterTimeZones(query, ALL_ZONES), [query]);
 
+  if (ALL_ZONES.length === 0) {
+    // Fallback when Intl.supportedValuesOf is missing: the current value, read-only - never a
+    // free-text input (which would reopen the exact "any junk stores" hole this component exists
+    // to close), and checked BEFORE the `value` chip branch below, not after: the chip's own
+    // "Remove" button is itself an interactive control with no search to fall back to once
+    // clicked - putting it ahead here would strand the user with the zone gone and no way to pick
+    // another.
+    return <p className="text-body text-ink-muted">{value || "No timezone set"}</p>;
+  }
+
   if (value) {
     return (
       <span className="inline-flex items-center gap-1.5 rounded-badge bg-brand-soft px-2.5 py-1 text-caption font-medium text-brand">
         <span className="flex flex-col leading-tight">
           <span>{value}</span>
-          <span className="font-normal opacity-80">{utcOffsetLabel(value)}</span>
+          <span className="font-normal opacity-80">
+            {/* isValidTimeZone-guarded: `value` can be a zone stored before this schema's
+             * isValidTimeZone refinement existed - utcOffsetLabel's Intl.DateTimeFormat call
+             * throws on a genuinely malformed zone, which would otherwise crash this whole
+             * page's render (the same class of Intl throw the plan's danger paragraph
+             * describes for /calendar's todayInTimeZone). */}
+            {isValidTimeZone(value) ? utcOffsetLabel(value) : "Unrecognized timezone"}
+          </span>
         </span>
         <button
           ref={removeButtonRef}
@@ -76,13 +93,6 @@ export function TimezonePicker({
         </button>
       </span>
     );
-  }
-
-  if (ALL_ZONES.length === 0) {
-    // Fallback when Intl.supportedValuesOf is missing: the current value, read-only - never a
-    // free-text input, which would reopen the exact "any junk stores" hole this component exists
-    // to close.
-    return <p className="text-body text-ink-muted">{value || "No timezone set"}</p>;
   }
 
   return (

@@ -157,7 +157,13 @@ test.describe.serial("booking configuration timezone picker (WP4.5 issue 2)", ()
     await combobox.fill("tokyo");
     const tokyoOption = page.getByRole("option").filter({hasText: "Asia/Tokyo"});
     await expect(tokyoOption).toBeVisible();
+    expect(await combobox.getAttribute("aria-activedescendant")).toBeNull();
     await combobox.press("ArrowDown");
+    // The plan's own wording ("ArrowDown moves aria-activedescendant") - asserted on the INPUT,
+    // resolving to the active option's id, not just the option's own aria-selected mirror of it.
+    const activeId = await combobox.getAttribute("aria-activedescendant");
+    expect(activeId).toBeTruthy();
+    await expect(page.locator(`[id="${activeId}"]`)).toContainText("Asia/Tokyo");
     await expect(tokyoOption).toHaveAttribute("aria-selected", "true");
     await combobox.press("Enter");
     await expect(page.getByText("Asia/Tokyo", {exact: true})).toBeVisible();
@@ -232,10 +238,16 @@ test.describe.serial("booking configuration timezone picker (WP4.5 issue 2)", ()
     await expect(page.locator("p:has-text('Open times') + div button").first()).toBeVisible();
   });
 
-  test("5. screenshots (both themes): the open timezone combobox with offsets", async ({page}) => {
+  test("5. screenshots (both themes): the resting chip, and the open combobox with offsets", async ({page}) => {
     for (const theme of ["Light", "Dark"] as const) {
       await page.goto("/settings");
       await setTheme(page, theme);
+
+      // Resting chip first - the two-line (zone + secondary offset) layout is this component's
+      // own invention (ClientPicker's chip is single-line), never otherwise screenshotted.
+      await expect(page.getByText("America/New_York", {exact: true})).toBeVisible();
+      await page.screenshot({path: `${SHOTS_DIR}/timezone-chip-resting-${theme.toLowerCase()}.png`});
+
       await page.getByRole("button", {name: /^Remove /}).click();
       const combobox = page.getByRole("combobox", {name: "Timezone"});
       await combobox.fill("new"); // a small, clean result set: America/New_York + .../New_Salem
