@@ -114,7 +114,9 @@ test.describe.serial("calendar service dropdown (WP4.5 issue 1)", () => {
     // Active and Bookable online are left at their form defaults (checked / unchecked) -
     // deliberately exercising the defaults the previous commit's serviceSchema test documents.
     await page.getByRole("button", {name: "Create service"}).click();
-    await expect(page.getByText("Service created")).toBeVisible();
+    // Generous, not the 5s default - see booking-config-timezone.spec.ts's identical note on its
+    // own save-snackbar assertion (observed flaking under full-suite system load).
+    await expect(page.getByText("Service created")).toBeVisible({timeout: 10_000});
     await expect(page).toHaveURL(/\/services\/[0-9a-f-]+$/);
     const serviceId = new URL(page.url()).pathname.split("/").filter(Boolean).pop()!;
 
@@ -129,7 +131,7 @@ test.describe.serial("calendar service dropdown (WP4.5 issue 1)", () => {
     await page.getByPlaceholder("Client name").fill("Dental Walk-in E2E");
     await page.getByPlaceholder("Pet name").fill("Dental Pet E2E");
     await page.getByRole("button", {name: "Create"}).click();
-    await expect(page.getByText("Appointment created")).toBeVisible();
+    await expect(page.getByText("Appointment created")).toBeVisible({timeout: 10_000});
 
     const chip = page.getByRole("button", {name: /Dental Walk-in E2E - Dental Pet E2E/});
     await expect(chip).toBeVisible();

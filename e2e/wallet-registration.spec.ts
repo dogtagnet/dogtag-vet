@@ -161,6 +161,14 @@ test.beforeEach(async ({page}) => {
 });
 
 test("happy path: staff registers a wallet, owner scans/signs, the panel shows it registered", async ({page}) => {
+  // Generous, not the 30s default: this test already budgets 15s for TWO separate real-network-ish
+  // waits back to back (session creation's blockNumber round trip, then the panel's 2s poll picking
+  // up the completed registration) - comfortable in isolation, but deep into a full suite run
+  // (after four other spec files' worth of system load) their combined worst case can crowd the
+  // outer test timeout before either inner wait gets the full budget its own comment promises it.
+  // Observed exactly this way: passed alone, then failed here specifically (mid-poll) once wired
+  // into a full-suite run - a load-induced timing flake, not a product regression.
+  test.setTimeout(60_000);
   const clientId = await createClient(page, "Jordan Alvarez");
   await page.goto(`/clients/${clientId}`);
 
@@ -197,8 +205,9 @@ test("happy path: staff registers a wallet, owner scans/signs, the panel shows i
 
   // The panel polls every 2s and refreshes the server-rendered list on success - wait for the
   // registered address to actually appear as a row (AddressChip renders it truncated, but
-  // MonoValue always sets `title` to the untruncated value).
-  await expect(page.locator(`[title="${wallet.toLowerCase()}"]`)).toBeVisible({timeout: 15_000});
+  // MonoValue always sets `title` to the untruncated value). 20s (not the original 15s) now that
+  // the test's own timeout has headroom to match - see this test's opening comment.
+  await expect(page.locator(`[title="${wallet.toLowerCase()}"]`)).toBeVisible({timeout: 20_000});
 });
 
 test("expired token: both the challenge and completion are rejected once the deadline has passed", async ({page}) => {
