@@ -30,6 +30,12 @@ describe("bookAppointmentRequestSchema - backward compatibility", () => {
     if (result.success) expect(result.data.mobile).toBeUndefined();
   });
 
+  it("parses today's v1 shape with no practitionerId at all (WP4.7 D5 - absent means auto-assign/ignored)", () => {
+    const result = bookAppointmentRequestSchema.safeParse(baseRequest);
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.practitionerId).toBeUndefined();
+  });
+
   it("still parses (and ignores) an entirely unknown extra top-level field, per zod's default strip behavior", () => {
     const result = bookAppointmentRequestSchema.safeParse({...baseRequest, somethingFuture: "whatever"});
     expect(result.success).toBe(true);
@@ -120,6 +126,30 @@ describe("bookAppointmentRequestSchema - mobile block", () => {
     const result = bookAppointmentRequestSchema.safeParse({
       ...baseRequest,
       mobile: {source: "dogtag_app", wallet: validWallet, pet: {dogTagIdDec: "42"}},
+    });
+    expect(result.success).toBe(true);
+  });
+});
+
+/** WP4.7 D5 - the wire-level half of practitioner selection (validated against the actual Staff
+ * roster server-side, in `lifecycle.ts`'s `createAppointment` - this schema only checks shape). */
+describe("bookAppointmentRequestSchema - practitionerId (WP4.7 D5)", () => {
+  it("accepts a practitionerId alongside the base request", () => {
+    const result = bookAppointmentRequestSchema.safeParse({...baseRequest, practitionerId: "staff-uuid-123"});
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.practitionerId).toBe("staff-uuid-123");
+  });
+
+  it("rejects an empty-string practitionerId (must be a real id, not a silently-ignored blank)", () => {
+    const result = bookAppointmentRequestSchema.safeParse({...baseRequest, practitionerId: ""});
+    expect(result.success).toBe(false);
+  });
+
+  it("practitionerId and the mobile block are independent - both can be present together", () => {
+    const result = bookAppointmentRequestSchema.safeParse({
+      ...baseRequest,
+      practitionerId: "staff-uuid-123",
+      mobile: {source: "dogtag_app"},
     });
     expect(result.success).toBe(true);
   });

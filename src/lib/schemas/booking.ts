@@ -67,6 +67,11 @@ export const bookAppointmentRequestSchema = z.object({
   client: bookingClientSchema,
   petName: z.string().trim().optional(),
   notes: z.string().max(2000).optional(),
+  /** WP4.7 D5 - optional, backward compatible exactly like `mobile` below: absent means "auto-
+   * assign" in `schedulingMode: "practitioner"` (D5) and is simply ignored in clinic mode (the
+   * route never even looks at it there) - an old client that has never heard of this field books
+   * exactly as it always has either way. */
+  practitionerId: z.string().trim().min(1).optional(),
   /** WP4.4 section 1 - optional, backward compatible: an old client that never sends this keeps
    * working untouched (zod strips unknown fields by default, so today's clients that don't even
    * know this key exists are unaffected either way). */

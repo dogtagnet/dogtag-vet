@@ -243,6 +243,11 @@ export async function POST(request: Request) {
   const draft: AppointmentDraft = {
     clientId: client.clientId,
     serviceId: service.serviceId,
+    // WP4.7 D5 - absent (undefined) in clinic mode is a no-op (createAppointment never reads it
+    // there); absent in practitioner mode means "auto-assign". A present value that turns out not
+    // to name a real bookable practitioner is rejected below (`invalid_practitioner`), never
+    // silently ignored.
+    practitionerStaffId: parsed.data.practitionerId,
     startAt,
     endAt,
     notes: parsed.data.notes,
@@ -275,6 +280,12 @@ export async function POST(request: Request) {
   if (!result.ok) {
     if (result.reason === "outside_hours") {
       return jsonWithHeaders(errorBody("invalid_input", "This time is not within the clinic's bookable hours."), {
+        status: 400,
+        headers: rateLimit.headers,
+      });
+    }
+    if (result.reason === "invalid_practitioner") {
+      return jsonWithHeaders(errorBody("invalid_input", "Unknown or unbookable practitioner."), {
         status: 400,
         headers: rateLimit.headers,
       });
