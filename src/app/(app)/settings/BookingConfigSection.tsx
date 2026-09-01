@@ -4,6 +4,7 @@ import {useState} from "react";
 import {Button, Input} from "@/components/ui/controls";
 import {FormField, FormSection} from "@/components/ui/FormSection";
 import {useSnackbar} from "@/components/ui/Snackbar";
+import {TimezonePicker} from "@/components/pickers/TimezonePicker";
 import type {AvailabilityExceptionDoc, AvailabilityRuleDoc, BookingSettingsDoc} from "@/lib/models/Availability";
 
 const DAY_LABELS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
@@ -67,6 +68,10 @@ export function BookingConfigSection({
   }
 
   async function saveSettings() {
+    if (!timezone) {
+      snackbar.show("Choose a timezone before saving", "danger");
+      return;
+    }
     setSavingSettings(true);
     try {
       const res = await fetch("/api/availability/settings", {
@@ -141,8 +146,12 @@ export function BookingConfigSection({
   return (
     <>
       <FormSection title="Booking configuration" helperText="Governs the public booking page and the availability engine.">
-        <FormField label="Timezone" htmlFor="booking-timezone" helperText="An IANA zone, e.g. America/New_York.">
-          <Input id="booking-timezone" value={timezone} onChange={(e) => setTimezone(e.target.value)} />
+        <FormField
+          label="Timezone"
+          htmlFor="booking-timezone"
+          helperText="Search the clinic's IANA timezone by city or region, e.g. New York."
+        >
+          <TimezonePicker id="booking-timezone" ariaLabel="Timezone" value={timezone} onChange={setTimezone} />
         </FormField>
         <FormField label="Minimum notice (minutes)" htmlFor="min-notice">
           <Input
