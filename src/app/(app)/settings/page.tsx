@@ -14,6 +14,7 @@ import {listRecentAbuse} from "@/lib/abuseLog";
 import {AbuseLogSection} from "@/app/(app)/settings/AbuseLogSection";
 import {BookingConfigSection} from "@/app/(app)/settings/BookingConfigSection";
 import {IcsFeedSection} from "@/app/(app)/settings/IcsFeedSection";
+import {OperatorsSection} from "@/app/(app)/settings/OperatorsSection";
 import {SettingsForm} from "@/app/(app)/settings/SettingsForm";
 import {StaffSection} from "@/app/(app)/settings/StaffSection";
 import {toPlain} from "@/lib/toPlain";
@@ -81,6 +82,7 @@ export default async function SettingsPage() {
       <SettingsForm initial={settings} />
       <div className="mt-6 max-w-2xl space-y-6">
         <StaffSection initial={staff} isOwner={isOwner} currentStaffId={session?.user?.staffId} />
+        <OperatorsSection staff={staff} cloneAddress={settings.cloneAddress} isOwner={isOwner} />
         <BookingConfigSection settings={bookingSettings} rules={rules} exceptions={exceptions} practitioners={practitioners} />
         <IcsFeedSection initialToken={settings.icsFeedToken} publicBaseUrl={env.PUBLIC_BASE_URL} />
         <AbuseLogSection entries={abuseEntries} timeZone={bookingSettings.timezone} />

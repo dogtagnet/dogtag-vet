@@ -93,6 +93,18 @@ const CORS_HEADERS: Record<string, string> = {
  * run (or since the last `/__control/reset`). */
 let lastSendTransaction: Record<string, unknown> | null = null;
 
+/** WP4.7 A9 - the hash this stub actually REPLIED with for the most recent `eth_sendTransaction`
+ * (never a fresh `fakeTxHash()` - the same one `eth_sendTransaction`'s handler below both returns
+ * to the caller and stores here). Lets a test complete a full write-then-confirm round trip
+ * through a REAL browser wallet write it did not choose the hash for: click the write button,
+ * poll `getLastSentTxHash()` until the app's own request has actually landed here, THEN
+ * `setRpcReceipt(thatHash, "success")` so the app's `useWaitForTransactionReceipt` polling picks
+ * it up on its next tick - exactly the operator Add/Remove flow (`OperatorsSection.tsx`) needs to
+ * observe its own UI update after a write, which no existing e2e spec needed before (the one
+ * browser-driven write test, mint-issue-revert.spec.ts's gas-headroom assertion, only asserts on
+ * the SENT params and deliberately never carries the round trip through to a mined receipt). */
+let lastSentTxHash: string | null = null;
+
 function fakeTxHash(): Hex {
   return `0x${randomBytes(32).toString("hex")}`;
 }
@@ -107,6 +119,9 @@ function scenarioKey(functionName: string, address: string, args: readonly unkno
 
 function defaultResultFor(functionName: string): ScenarioResult {
   if (functionName === "isValid") return false;
+  // WP4.7 A9 - `operators` is a `mapping(address => bool)` getter; an address never added reads
+  // `false` on a real chain, exactly like `isValid`'s own unset-mapping default above.
+  if (functionName === "operators") return false;
   if (functionName === "rootIssuer") return "0x0000000000000000000000000000000000000000";
   return `0x${"0".repeat(64)}`; // profileRoot
 }
@@ -169,6 +184,10 @@ export function startRpcStub(): Server {
       sendJson(res, 200, {transaction: lastSendTransaction});
       return;
     }
+    if (req.method === "GET" && req.url === "/__control/last-sent-tx-hash") {
+      sendJson(res, 200, {hash: lastSentTxHash});
+      return;
+    }
 
     const bodyText = await readBody(req);
 
@@ -178,6 +197,7 @@ export function startRpcStub(): Server {
       receipts.clear();
       gasEstimate = 200_000n;
       lastSendTransaction = null;
+      lastSentTxHash = null;
       sendJson(res, 200, {ok: true});
       return;
     }
@@ -329,7 +349,9 @@ export function startRpcStub(): Server {
      * for it - `setRpcReceipt` stays the one way a test puts a hash into `receipts`. */
     if (rpcRequest.method === "eth_sendTransaction") {
       lastSendTransaction = (rpcRequest.params?.[0] as Record<string, unknown> | undefined) ?? null;
-      reply(fakeTxHash());
+      const hash = fakeTxHash();
+      lastSentTxHash = hash;
+      reply(hash);
       return;
     }
     if (rpcRequest.method === "eth_call") {
@@ -427,4 +449,14 @@ export async function getLastSendTransaction(): Promise<Record<string, unknown> 
   const res = await fetch(`${RPC_STUB_URL}/__control/last-send-transaction`);
   const body = (await res.json()) as {transaction: Record<string, unknown> | null};
   return body.transaction;
+}
+
+/** WP4.7 A9 - the hash this stub actually replied with for the most recent `eth_sendTransaction`
+ * (`null` if none since start/`resetRpcStub`) - see `lastSentTxHash`'s own doc comment above for
+ * why a test needs this (rather than a hash it chose itself) to complete a full write-then-confirm
+ * round trip through a real browser wallet write. */
+export async function getLastSentTxHash(): Promise<string | null> {
+  const res = await fetch(`${RPC_STUB_URL}/__control/last-sent-tx-hash`);
+  const body = (await res.json()) as {hash: string | null};
+  return body.hash;
 }
