@@ -5,10 +5,11 @@ import {DataTable} from "@/components/ui/DataTable";
 import {StatusBadge} from "@/components/ui/StatusBadge";
 import {connectToDatabase} from "@/lib/db";
 import {Service, type ServiceDoc} from "@/lib/models/Service";
+import {toPlain} from "@/lib/toPlain";
 
 export default async function ServicesPage() {
   await connectToDatabase();
-  const services = await Service.find({}).sort({name: 1}).lean<ServiceDoc[]>();
+  const services = await Service.find({}).sort({name: 1}).lean<ServiceDoc[]>().then(toPlain);
 
   return (
     <>

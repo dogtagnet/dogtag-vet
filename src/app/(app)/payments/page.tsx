@@ -10,6 +10,7 @@ import {getBookingSettings} from "@/lib/models/Availability";
 import {Payment, type PaymentDoc} from "@/lib/models/Payment";
 import {addAmounts} from "@/lib/payments/money";
 import {PaymentFilters} from "@/app/(app)/payments/PaymentFilters";
+import {toPlain} from "@/lib/toPlain";
 
 interface PaymentsSearchParams {
   status?: string;
@@ -23,7 +24,7 @@ export default async function PaymentsPage({searchParams}: {searchParams: Promis
   const filter: Record<string, unknown> = {};
   if (status) filter.status = status;
 
-  const payments = await Payment.find(filter).sort({createdAt: -1}).limit(500).lean<PaymentDoc[]>();
+  const payments = await Payment.find(filter).sort({createdAt: -1}).limit(500).lean<PaymentDoc[]>().then(toPlain);
 
   // Totals by (status, currency) for the currently filtered set - a compact strip, not a full
   // accounting breakdown (that lives at /accounting).

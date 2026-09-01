@@ -5,12 +5,13 @@ import {DataTable} from "@/components/ui/DataTable";
 import {SearchBox} from "@/components/ui/SearchBox";
 import {connectToDatabase} from "@/lib/db";
 import {Client, type ClientDoc} from "@/lib/models/Client";
+import {toPlain} from "@/lib/toPlain";
 
 export default async function ClientsPage({searchParams}: {searchParams: Promise<{q?: string}>}) {
   const {q} = await searchParams;
   await connectToDatabase();
   const filter = q ? {searchKey: {$regex: q.trim().toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}} : {};
-  const clients = await Client.find(filter).sort({name: 1}).limit(200).lean<ClientDoc[]>();
+  const clients = await Client.find(filter).sort({name: 1}).limit(200).lean<ClientDoc[]>().then(toPlain);
 
   return (
     <>

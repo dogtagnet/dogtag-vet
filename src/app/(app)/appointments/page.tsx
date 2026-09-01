@@ -10,6 +10,7 @@ import {connectToDatabase} from "@/lib/db";
 import {getBookingSettings} from "@/lib/models/Availability";
 import {Appointment, type AppointmentDoc} from "@/lib/models/Appointment";
 import {AppointmentFilters} from "@/app/(app)/appointments/AppointmentFilters";
+import {toPlain} from "@/lib/toPlain";
 
 interface AppointmentsSearchParams {
   q?: string;
@@ -41,7 +42,7 @@ export default async function AppointmentsPage({searchParams}: {searchParams: Pr
     };
   }
 
-  const appointments = await Appointment.find(filter).sort({startAt: 1}).limit(500).lean<AppointmentDoc[]>();
+  const appointments = await Appointment.find(filter).sort({startAt: 1}).limit(500).lean<AppointmentDoc[]>().then(toPlain);
 
   return (
     <>

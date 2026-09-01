@@ -6,10 +6,11 @@ import {connectToDatabase} from "@/lib/db";
 import {Payment, type PaymentDoc} from "@/lib/models/Payment";
 import {aggregateMonthlyTotals, type MonthlyTotal} from "@/lib/payments/accounting";
 import {paymentStatusLabel, paymentStatusTone} from "@/lib/paymentTone";
+import {toPlain} from "@/lib/toPlain";
 
 export default async function AccountingPage() {
   await connectToDatabase();
-  const payments = await Payment.find({}).select("createdAt status currency total").lean<PaymentDoc[]>();
+  const payments = await Payment.find({}).select("createdAt status currency total").lean<PaymentDoc[]>().then(toPlain);
   const rows = aggregateMonthlyTotals(payments);
 
   return (

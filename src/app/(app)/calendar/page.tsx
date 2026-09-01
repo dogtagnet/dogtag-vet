@@ -13,6 +13,7 @@ import {connectToDatabase} from "@/lib/db";
 import {Appointment, type AppointmentDoc} from "@/lib/models/Appointment";
 import {Service, type ServiceDoc} from "@/lib/models/Service";
 import {CalendarView} from "@/components/calendar/CalendarView";
+import {toPlain} from "@/lib/toPlain";
 
 export default async function CalendarPage({
   searchParams,
@@ -30,13 +31,13 @@ export default async function CalendarPage({
   const [appointments, services, rules, exceptions] = await Promise.all([
     Appointment.find({startAt: {$lt: range.toUtc}, endAt: {$gt: range.fromUtc}})
       .sort({startAt: 1})
-      .lean<AppointmentDoc[]>(),
-    Service.find({active: true}).sort({name: 1}).lean<ServiceDoc[]>(),
-    AvailabilityRule.find({}).lean<AvailabilityRuleDoc[]>(),
+      .lean<AppointmentDoc[]>().then(toPlain),
+    Service.find({active: true}).sort({name: 1}).lean<ServiceDoc[]>().then(toPlain),
+    AvailabilityRule.find({}).lean<AvailabilityRuleDoc[]>().then(toPlain),
     // Exceptions can override the normal weekly rules with EXTENDED hours (per wp4-vet.md) - slot
     // generation for booking already honors these; the grid below must too, or an appointment
     // booked into an exception's extended window renders nowhere (round-6 grader finding).
-    AvailabilityException.find({date: {$in: range.dates}}).lean<AvailabilityExceptionDoc[]>(),
+    AvailabilityException.find({date: {$in: range.dates}}).lean<AvailabilityExceptionDoc[]>().then(toPlain),
   ]);
 
   const {dayStartMinute, dayEndMinute, hasHoursOutsideRules} = computeCalendarWindow({

@@ -15,14 +15,15 @@ import {BookingConfigSection} from "@/app/(app)/settings/BookingConfigSection";
 import {IcsFeedSection} from "@/app/(app)/settings/IcsFeedSection";
 import {SettingsForm} from "@/app/(app)/settings/SettingsForm";
 import {StaffSection} from "@/app/(app)/settings/StaffSection";
+import {toPlain} from "@/lib/toPlain";
 
 export default async function SettingsPage() {
   await connectToDatabase();
   const [settings, bookingSettings, rules, exceptions, abuseEntries, staff, session] = await Promise.all([
     getClinicSettings(),
     getBookingSettings(),
-    AvailabilityRule.find({}).lean(),
-    AvailabilityException.find({}).sort({date: 1}).lean(),
+    AvailabilityRule.find({}).lean().then(toPlain),
+    AvailabilityException.find({}).sort({date: 1}).lean().then(toPlain),
     listRecentAbuse(),
     listStaff(),
     auth(),

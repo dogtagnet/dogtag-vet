@@ -14,16 +14,17 @@ import {Client, type ClientDoc} from "@/lib/models/Client";
 import {Pet, type PetDoc} from "@/lib/models/Pet";
 import {getServerEnv} from "@/lib/env";
 import {PaymentActions} from "@/app/(app)/payments/[id]/PaymentActions";
+import {toPlain} from "@/lib/toPlain";
 
 export default async function PaymentDetailPage({params}: {params: Promise<{id: string}>}) {
   const {id} = await params;
   await connectToDatabase();
-  const payment = await Payment.findOne({paymentId: id}).lean<PaymentDoc>();
+  const payment = await Payment.findOne({paymentId: id}).lean<PaymentDoc>().then(toPlain);
   if (!payment) notFound();
 
   const [client, pet, bookingSettings] = await Promise.all([
-    payment.clientId ? Client.findOne({clientId: payment.clientId}).lean<ClientDoc>() : Promise.resolve(null),
-    payment.petId ? Pet.findOne({petId: payment.petId}).lean<PetDoc>() : Promise.resolve(null),
+    payment.clientId ? Client.findOne({clientId: payment.clientId}).lean<ClientDoc>().then(toPlain) : Promise.resolve(null),
+    payment.petId ? Pet.findOne({petId: payment.petId}).lean<PetDoc>().then(toPlain) : Promise.resolve(null),
     getBookingSettings(),
   ]);
   const timeZone = bookingSettings.timezone;

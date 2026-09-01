@@ -17,16 +17,17 @@ import {Payment, type PaymentDoc} from "@/lib/models/Payment";
 import {getBookingSettings} from "@/lib/models/Availability";
 import {ClientForm} from "@/app/(app)/clients/ClientForm";
 import {WalletsPanel} from "@/app/(app)/clients/WalletsPanel";
+import {toPlain} from "@/lib/toPlain";
 
 const RECENT_LIMIT = 5;
 
 export default async function ClientDetailPage({params}: {params: Promise<{id: string}>}) {
   const {id} = await params;
   await connectToDatabase();
-  const client = await Client.findOne({clientId: id}).lean<ClientDoc>();
+  const client = await Client.findOne({clientId: id}).lean<ClientDoc>().then(toPlain);
   if (!client) notFound();
 
-  // `.lean()` still carries `_id` as a mongoose ObjectId (with its own `toJSON`) even though
+  // `.lean().then(toPlain)` still carries `_id` as a mongoose ObjectId (with its own `toJSON`) even though
   // `ClientDoc` never declares that field - passing it straight into a "use client" component's
   // props (`ClientForm` below) trips React/Next's server-to-client boundary warning ("Objects
   // with toJSON methods are not supported"), observed live while exercising this page end-to-end
@@ -36,9 +37,9 @@ export default async function ClientDetailPage({params}: {params: Promise<{id: s
   void clientMongoId; // deliberately discarded - see comment above
 
   const [pets, appointments, payments, bookingSettings] = await Promise.all([
-    Pet.find({petId: {$in: client.petIds}}).lean<PetDoc[]>(),
-    Appointment.find({clientId: client.clientId}).sort({startAt: -1}).limit(RECENT_LIMIT).lean<AppointmentDoc[]>(),
-    Payment.find({clientId: client.clientId}).sort({createdAt: -1}).limit(RECENT_LIMIT).lean<PaymentDoc[]>(),
+    Pet.find({petId: {$in: client.petIds}}).lean<PetDoc[]>().then(toPlain),
+    Appointment.find({clientId: client.clientId}).sort({startAt: -1}).limit(RECENT_LIMIT).lean<AppointmentDoc[]>().then(toPlain),
+    Payment.find({clientId: client.clientId}).sort({createdAt: -1}).limit(RECENT_LIMIT).lean<PaymentDoc[]>().then(toPlain),
     getBookingSettings(),
   ]);
   const timeZone = bookingSettings.timezone;

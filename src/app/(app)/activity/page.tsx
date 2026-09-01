@@ -11,6 +11,7 @@ import {addCalendarDays} from "@/lib/booking/dst";
 import {roaxPublicClient} from "@/lib/chainRead";
 import {reasonCodeLabel} from "@/lib/reasonCodes";
 import {ActivityFilters} from "@/app/(app)/activity/ActivityFilters";
+import {toPlain} from "@/lib/toPlain";
 
 function StatTile({label, value, hint}: {label: string; value: string; hint?: string}) {
   return (
@@ -52,7 +53,7 @@ export default async function Page({searchParams}: {searchParams: Promise<{type?
     ChainActivity.find(filter)
       .sort({blockNumber: -1, logIndex: -1})
       .limit(200)
-      .lean<ChainActivityDoc[]>(),
+      .lean<ChainActivityDoc[]>().then(toPlain),
     ChainActivity.distinct("type"),
     getClinicSettings(),
   ]);

@@ -5,6 +5,7 @@ import {formatUnixSeconds} from "@/lib/format";
 import {connectToDatabase} from "@/lib/db";
 import {getBookingSettings} from "@/lib/models/Availability";
 import {VerifySession, type VerifySessionDoc} from "@/lib/models/VerifySession";
+import {toPlain} from "@/lib/toPlain";
 
 /** `/verifications` - v1 VerificationLog vocabulary: disclosed keyPaths never values, never a
  * subject wallet (wp4-vet.md). `VerifySessionDoc` never stores a subject/owner wallet address at
@@ -13,7 +14,7 @@ import {VerifySession, type VerifySessionDoc} from "@/lib/models/VerifySession";
 export default async function Page() {
   await connectToDatabase();
   const [sessions, bookingSettings] = await Promise.all([
-    VerifySession.find({status: "recorded"}).sort({updatedAt: -1}).limit(200).lean<VerifySessionDoc[]>(),
+    VerifySession.find({status: "recorded"}).sort({updatedAt: -1}).limit(200).lean<VerifySessionDoc[]>().then(toPlain),
     getBookingSettings(),
   ]);
   const timeZone = bookingSettings.timezone;

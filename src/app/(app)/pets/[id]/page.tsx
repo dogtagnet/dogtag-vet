@@ -5,13 +5,14 @@ import {Client, type ClientDoc} from "@/lib/models/Client";
 import {Pet, type PetDoc} from "@/lib/models/Pet";
 import {PetForm} from "@/app/(app)/pets/PetForm";
 import {PetTagCard} from "@/components/pets/PetTagCard";
+import {toPlain} from "@/lib/toPlain";
 
 export default async function PetDetailPage({params}: {params: Promise<{id: string}>}) {
   const {id} = await params;
   await connectToDatabase();
-  const pet = await Pet.findOne({petId: id}).lean<PetDoc>();
+  const pet = await Pet.findOne({petId: id}).lean<PetDoc>().then(toPlain);
   if (!pet) notFound();
-  const owners = await Client.find({clientId: {$in: pet.ownerClientIds}}).lean<ClientDoc[]>();
+  const owners = await Client.find({clientId: {$in: pet.ownerClientIds}}).lean<ClientDoc[]>().then(toPlain);
 
   return (
     <>

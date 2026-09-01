@@ -7,12 +7,13 @@ import {StatusBadge} from "@/components/ui/StatusBadge";
 import {connectToDatabase} from "@/lib/db";
 import {Pet, type PetDoc} from "@/lib/models/Pet";
 import {dogTagStatusLabel, dogTagStatusTone} from "@/lib/tagStatusTone";
+import {toPlain} from "@/lib/toPlain";
 
 export default async function PetsPage({searchParams}: {searchParams: Promise<{q?: string}>}) {
   const {q} = await searchParams;
   await connectToDatabase();
   const filter = q ? {searchKey: {$regex: q.trim().toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}} : {};
-  const pets = await Pet.find(filter).sort({name: 1}).limit(200).lean<PetDoc[]>();
+  const pets = await Pet.find(filter).sort({name: 1}).limit(200).lean<PetDoc[]>().then(toPlain);
 
   return (
     <>
