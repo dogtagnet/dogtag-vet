@@ -221,37 +221,35 @@ export function PaymentForm() {
       <FormSection title="Line items">
         <div className="space-y-3">
           {lineItems.map((item, index) => (
+            // WP4.7 A7 - was three wrapper divs (Input's base class is w-full, which plain string
+            // concatenation could never override); controls.tsx now merges className via
+            // tailwind-merge (cn()) and FormField takes its own className (for sizing its outer
+            // box within this row), so none of the three is needed any more.
             <div key={index} className="flex items-end gap-2">
-              <div className="flex-1">
-                <FormField label="Description" htmlFor={`li-desc-${index}`}>
-                  <Input
-                    id={`li-desc-${index}`}
-                    value={item.description}
-                    onChange={(e) => updateLineItem(index, {description: e.target.value})}
-                  />
-                </FormField>
-              </div>
-              <div className="w-20">
-                <FormField label="Qty" htmlFor={`li-qty-${index}`}>
-                  <Input
-                    id={`li-qty-${index}`}
-                    type="number"
-                    min={0}
-                    value={item.qty}
-                    onChange={(e) => updateLineItem(index, {qty: e.target.value})}
-                  />
-                </FormField>
-              </div>
-              <div className="w-28">
-                <FormField label="Unit amount" htmlFor={`li-unit-${index}`}>
-                  <Input
-                    id={`li-unit-${index}`}
-                    value={item.unitAmount}
-                    onChange={(e) => updateLineItem(index, {unitAmount: e.target.value})}
-                    placeholder="0.00"
-                  />
-                </FormField>
-              </div>
+              <FormField label="Description" htmlFor={`li-desc-${index}`} className="min-w-0 flex-1">
+                <Input
+                  id={`li-desc-${index}`}
+                  value={item.description}
+                  onChange={(e) => updateLineItem(index, {description: e.target.value})}
+                />
+              </FormField>
+              <FormField label="Qty" htmlFor={`li-qty-${index}`} className="w-20 shrink-0">
+                <Input
+                  id={`li-qty-${index}`}
+                  type="number"
+                  min={0}
+                  value={item.qty}
+                  onChange={(e) => updateLineItem(index, {qty: e.target.value})}
+                />
+              </FormField>
+              <FormField label="Unit amount" htmlFor={`li-unit-${index}`} className="w-28 shrink-0">
+                <Input
+                  id={`li-unit-${index}`}
+                  value={item.unitAmount}
+                  onChange={(e) => updateLineItem(index, {unitAmount: e.target.value})}
+                  placeholder="0.00"
+                />
+              </FormField>
               <Button variant="ghost" type="button" onClick={() => removeLineItem(index)} disabled={lineItems.length === 1}>
                 Remove
               </Button>
@@ -267,17 +265,19 @@ export function PaymentForm() {
         <FormField label="Currency" htmlFor="payment-currency">
           <Input id="payment-currency" value={currency} onChange={(e) => setCurrency(e.target.value.toUpperCase())} maxLength={3} />
         </FormField>
+        {/* WP4.7 A7 - was two wrapper divs, same reason as the line-items row above. */}
         <div className="flex gap-2">
-          <div className="flex-1">
-            <FormField label="Tax label" htmlFor="payment-tax-label" helperText="Leave both fields blank for no tax">
-              <Input id="payment-tax-label" value={taxLabel} onChange={(e) => setTaxLabel(e.target.value)} placeholder="Sales tax" />
-            </FormField>
-          </div>
-          <div className="w-32">
-            <FormField label="Tax rate" htmlFor="payment-tax-rate">
-              <Input id="payment-tax-rate" value={taxRate} onChange={(e) => setTaxRate(e.target.value)} placeholder="0.0825" />
-            </FormField>
-          </div>
+          <FormField
+            label="Tax label"
+            htmlFor="payment-tax-label"
+            helperText="Leave both fields blank for no tax"
+            className="min-w-0 flex-1"
+          >
+            <Input id="payment-tax-label" value={taxLabel} onChange={(e) => setTaxLabel(e.target.value)} placeholder="Sales tax" />
+          </FormField>
+          <FormField label="Tax rate" htmlFor="payment-tax-rate" className="w-32 shrink-0">
+            <Input id="payment-tax-rate" value={taxRate} onChange={(e) => setTaxRate(e.target.value)} placeholder="0.0825" />
+          </FormField>
         </div>
         <FormField label="Due date" htmlFor="payment-due-date">
           <Input id="payment-due-date" type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} />
