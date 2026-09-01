@@ -45,6 +45,22 @@ export interface StaffDoc {
   name?: string;
   role: StaffRole;
   disabled: boolean;
+  /** WP4.7 D2: whether this staff row is a selectable practitioner for per-practitioner
+   * availability - only meaningful for `role` `vet`/`owner` (a `staff` row is never a
+   * practitioner regardless of this flag; the availability engine, A4, filters on both).
+   * Defaults false so every pre-existing row (and any newly-invited one that hasn't opted in)
+   * behaves exactly as it does today - Whole-clinic mode never even reads this field. */
+  bookable: boolean;
+  /** WP4.7 D2: falls back to the email local-part (the UI's job, not this field's) until set -
+   * shown on calendar chips/pickers instead of a raw email once a clinic has more than one
+   * practitioner. */
+  displayName?: string;
+  /** WP4.7 D4: this staff member's own wallet, recorded so the Settings "Issuance operators"
+   * panel can read its on-chain `operators(address)` status and submit `addOperator`/
+   * `removeOperator` for it. Always lowercased on write (`schemas/staff.ts`'s
+   * `lowercaseHexAddress`) - this app's own canonical casing for a field it compares by exact
+   * string equality, unlike `ClinicSettings`'s checksum-preserving address fields. */
+  walletAddress?: string;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -56,6 +72,9 @@ const staffSchema = new Schema<StaffDoc>(
     name: String,
     role: {type: String, enum: ["owner", "staff", "vet"], required: true, default: "staff"},
     disabled: {type: Boolean, required: true, default: false},
+    bookable: {type: Boolean, required: true, default: false},
+    displayName: String,
+    walletAddress: {type: String, lowercase: true},
   },
   {timestamps: true},
 );
@@ -123,7 +142,13 @@ export async function inviteStaff(email: string, role: StaffRole): Promise<Staff
 }
 
 export async function listStaff(): Promise<StaffDoc[]> {
-  return Staff.find({}).sort({createdAt: 1}).lean<StaffDoc[]>();
+  const staff = await Staff.find({}).sort({createdAt: 1}).lean<StaffDoc[]>();
+  // Back-compat: same reasoning as `getBookingSettings()`'s `schedulingMode` coalesce - `.lean()`
+  // returns a pre-existing row (any Staff invited before WP4.7) exactly as stored, with `bookable`
+  // entirely absent rather than defaulted, even though the type promises a real boolean. Coalesced
+  // here, once, so every caller (the roster table's checkbox, a future practitioner picker) can
+  // trust the type instead of each needing its own `?? false`.
+  return staff.map((s) => ({...s, bookable: s.bookable ?? false}));
 }
 
 export async function setStaffDisabled(staffId: string, disabled: boolean): Promise<StaffDoc | null> {
@@ -132,6 +157,34 @@ export async function setStaffDisabled(staffId: string, disabled: boolean): Prom
 
 export async function setStaffRole(staffId: string, role: StaffRole): Promise<StaffDoc | null> {
   return Staff.findOneAndUpdate({staffId}, {$set: {role}}, {new: true}).lean<StaffDoc>();
+}
+
+/**
+ * WP4.7 A3: updates the practitioner-profile fields (`bookable`, `displayName`, `walletAddress`) -
+ * owner-only via the same `PATCH /api/settings/staff/:staffId` route `setStaffRole`/
+ * `setStaffDisabled` back; self-service editing of one's own row is explicitly OUT of scope for
+ * this WP (an owner edits everyone's, including their own). `undefined` in `patch` means "leave
+ * unchanged" for every field EXCEPT `walletAddress`, which additionally accepts an explicit `null`
+ * to mean "clear it" (`$unset`) - a vet who no longer wants a wallet on file must be able to remove
+ * it, not merely overwrite it with a different one.
+ */
+export async function setStaffProfile(
+  staffId: string,
+  patch: {bookable?: boolean; displayName?: string; walletAddress?: string | null},
+): Promise<StaffDoc | null> {
+  const set: Partial<Pick<StaffDoc, "bookable" | "displayName" | "walletAddress">> = {};
+  const unset: Record<string, ""> = {};
+  if (patch.bookable !== undefined) set.bookable = patch.bookable;
+  if (patch.displayName !== undefined) set.displayName = patch.displayName;
+  if (patch.walletAddress === null) unset.walletAddress = "";
+  else if (patch.walletAddress !== undefined) set.walletAddress = patch.walletAddress;
+
+  const update: Record<string, unknown> = {};
+  if (Object.keys(set).length > 0) update.$set = set;
+  if (Object.keys(unset).length > 0) update.$unset = unset;
+  if (Object.keys(update).length === 0) return Staff.findOne({staffId}).lean<StaffDoc>();
+
+  return Staff.findOneAndUpdate({staffId}, update, {new: true}).lean<StaffDoc>();
 }
 
 export async function countActiveOwners(): Promise<number> {

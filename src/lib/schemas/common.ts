@@ -14,6 +14,13 @@ export const hexAddress = z
   .string()
   .regex(/^0x[0-9a-fA-F]{40}$/, "Must be a 0x-prefixed 40-hex-character address");
 
+/** `hexAddress`, normalized to lowercase on parse - for fields this app itself owns the canonical
+ * casing of (comparison/dedup by exact string equality, e.g. `Staff.walletAddress` matched against
+ * on-chain `operators(address)` reads - WP4.7 D4), as opposed to `hexAddress` alone, which several
+ * existing fields (`ClinicSettings.entityAccount`/`cloneAddress`/`operatorWallet`) deliberately keep
+ * un-transformed to preserve whatever checksum casing the wallet/chain itself returned. */
+export const lowercaseHexAddress = hexAddress.transform((v) => v.toLowerCase());
+
 export const hex32 = z
   .string()
   .regex(/^0x[0-9a-fA-F]{64}$/, "Must be a 0x-prefixed 32-byte hex value");

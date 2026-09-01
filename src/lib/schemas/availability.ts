@@ -7,6 +7,11 @@ export const availabilityRuleSchema = z.object({
   startMinute: z.number().int().min(0).max(1440),
   endMinute: z.number().int().min(0).max(1440),
   capacity: z.number().int().min(1).default(1),
+  // WP4.7 A3/D2: absent = the clinic-wide rule set (today's exact behavior); present = this ONE
+  // practitioner's own weekly hours. Not validated against the Staff collection here (this schema
+  // is DB-free by design, matching every other schema in this file) - the route/engine layer
+  // (A4/A5) is responsible for only ever writing a real bookable practitioner's staffId.
+  staffId: z.string().min(1).optional(),
 }).refine((v) => v.endMinute > v.startMinute, {
   message: "endMinute must be after startMinute",
   path: ["endMinute"],
@@ -24,6 +29,11 @@ export const availabilityExceptionSchema = z.object({
   closed: z.boolean().default(false),
   windows: z.array(availabilityWindowSchema).optional(),
   note: z.string().optional(),
+  // WP4.7 A3/D2/D3: absent = whole-clinic (today's exact behavior, and the ONLY value ever written
+  // before this WP); present = this one practitioner's own closure/override. See
+  // `models/Availability.ts`'s `AvailabilityExceptionDoc` doc comment for the compound
+  // (date, staffId) uniqueness this enables and the live-DB migration note.
+  staffId: z.string().min(1).optional(),
 });
 export type AvailabilityExceptionInput = z.infer<typeof availabilityExceptionSchema>;
 
@@ -37,5 +47,11 @@ export const bookingSettingsSchema = z.object({
   minNoticeMinutes: z.number().int().min(0),
   maxAdvanceDays: z.number().int().min(1),
   slotGranularityMinutes: z.number().int().min(5),
+  // WP4.7 D1 - optional here (unlike the mongoose schema's required-with-default): the existing
+  // `PATCH /api/availability/settings` caller (BookingConfigSection today) never sends this field
+  // at all, and `$set`-ing `parsed.data` must not silently reset schedulingMode back to "clinic"
+  // on every unrelated settings save once A5 adds a dedicated mode-toggle control that PATCHes it
+  // separately.
+  schedulingMode: z.enum(["clinic", "practitioner"]).optional(),
 });
 export type BookingSettingsInput = z.infer<typeof bookingSettingsSchema>;

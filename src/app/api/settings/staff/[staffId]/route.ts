@@ -1,36 +1,52 @@
 import {NextResponse} from "next/server";
 import {connectToDatabase} from "@/lib/db";
-import {countActiveOwners, Staff, setStaffDisabled, setStaffRole, wouldRemoveActiveOwnerStatus, type StaffDoc} from "@/lib/models/Staff";
+import {
+  countActiveOwners,
+  Staff,
+  setStaffDisabled,
+  setStaffProfile,
+  setStaffRole,
+  wouldRemoveActiveOwnerStatus,
+  type StaffDoc,
+} from "@/lib/models/Staff";
 import {updateStaffSchema} from "@/lib/schemas/staff";
 import {badRequest, notFound, requireOwnerSession} from "@/lib/staffApi";
 
 /**
- * `PATCH /api/settings/staff/:staffId {role?, disabled?}` - owner-only. Backs both "revoke access"
- * (`disabled: true` - a flag, never a delete; see `Staff.ts`'s doc comment on why) and changing a
- * staff member's role.
+ * `PATCH /api/settings/staff/:staffId {role?, disabled?, bookable?, displayName?, walletAddress?}`
+ * - owner-only. Backs "revoke access" (`disabled: true` - a flag, never a delete; see `Staff.ts`'s
+ * doc comment on why), changing a staff member's role, and (WP4.7 A3/D2/D4) the
+ * practitioner-profile fields: `bookable`, `displayName`, `walletAddress`. There is no self-service
+ * path for a vet to edit their own row - an owner edits everyone's, per
+ * `wp4.7-vet-role-practitioner-availability.md`'s A3 item.
  *
- * Two guardrails an owner cannot bypass through this route:
- * - An owner can never modify their OWN row here (demoting or disabling yourself locks you out
- *   with no one left to undo it from this same session) - use another owner account instead.
- * - The deployment must always keep at least one active (non-disabled) `owner`; a change that
- *   would drop the last one is refused.
+ * Guardrails an owner cannot bypass through this route:
+ * - An owner can never change their OWN `role` or `disabled` here (demoting or disabling yourself
+ *   locks you out with no one left to undo it from this same session) - use another owner account
+ *   instead. This does NOT extend to the profile fields: D2 explicitly allows an `owner` to also be
+ *   a practitioner (the common solo-vet-owner clinic shape), and there would be no other path at
+ *   all to mark that owner `bookable`/record their own wallet if this route refused its own row
+ *   unconditionally - so an owner MAY patch their own `bookable`/`displayName`/`walletAddress`.
+ * - The deployment must always keep at least one active (non-disabled) `owner`; a role/disabled
+ *   change that would drop the last one is refused.
  */
 export async function PATCH(request: Request, {params}: {params: Promise<{staffId: string}>}) {
   const {session, response} = await requireOwnerSession();
   if (response) return response;
 
   const {staffId} = await params;
-  if (staffId === session.user.staffId) {
-    return badRequest("Use another owner account to change your own access.");
-  }
-
   const body = await request.json().catch(() => null);
   const parsed = updateStaffSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
-      {error: {code: "invalid_input", message: "role or disabled is required.", details: parsed.error.flatten()}},
+      {error: {code: "invalid_input", message: "At least one field is required.", details: parsed.error.flatten()}},
       {status: 400},
     );
+  }
+
+  const editingOwnRow = staffId === session.user.staffId;
+  if (editingOwnRow && (parsed.data.role !== undefined || parsed.data.disabled !== undefined)) {
+    return badRequest("Use another owner account to change your own role or access.");
   }
 
   await connectToDatabase();
@@ -45,6 +61,14 @@ export async function PATCH(request: Request, {params}: {params: Promise<{staffI
   let updated = target;
   if (parsed.data.role !== undefined) updated = (await setStaffRole(staffId, parsed.data.role)) ?? updated;
   if (parsed.data.disabled !== undefined) updated = (await setStaffDisabled(staffId, parsed.data.disabled)) ?? updated;
+  if (parsed.data.bookable !== undefined || parsed.data.displayName !== undefined || parsed.data.walletAddress !== undefined) {
+    updated =
+      (await setStaffProfile(staffId, {
+        bookable: parsed.data.bookable,
+        displayName: parsed.data.displayName,
+        walletAddress: parsed.data.walletAddress,
+      })) ?? updated;
+  }
 
   return NextResponse.json(updated);
 }

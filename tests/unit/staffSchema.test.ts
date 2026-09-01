@@ -33,7 +33,7 @@ describe("updateStaffSchema - role enum", () => {
     expect(parsed.success).toBe(false);
   });
 
-  it("still requires role or disabled (unchanged back-compat refine)", () => {
+  it("still requires at least one field - an empty patch is rejected", () => {
     const parsed = updateStaffSchema.safeParse({});
     expect(parsed.success).toBe(false);
   });
@@ -41,5 +41,55 @@ describe("updateStaffSchema - role enum", () => {
   it("still accepts disabled alone with no role", () => {
     const parsed = updateStaffSchema.safeParse({disabled: true});
     expect(parsed.success).toBe(true);
+  });
+});
+
+/** WP4.7 A3/D2/D4: the practitioner-profile fields - each one alone satisfies the "at least one
+ * field" refine (extended from the original role-or-disabled-only version), and walletAddress is
+ * hex-validated + lowercased at the schema layer (defense in depth alongside `Staff.ts`'s
+ * mongoose-level `lowercase: true`). */
+describe("updateStaffSchema - practitioner profile fields (bookable/displayName/walletAddress)", () => {
+  it("bookable alone satisfies the at-least-one-field requirement", () => {
+    const parsed = updateStaffSchema.safeParse({bookable: true});
+    expect(parsed.success).toBe(true);
+    if (parsed.success) expect(parsed.data.bookable).toBe(true);
+  });
+
+  it("displayName alone satisfies the at-least-one-field requirement", () => {
+    const parsed = updateStaffSchema.safeParse({displayName: "Dr. Rivera"});
+    expect(parsed.success).toBe(true);
+    if (parsed.success) expect(parsed.data.displayName).toBe("Dr. Rivera");
+  });
+
+  it("rejects an empty-string displayName (would silently blank the field rather than being rejected)", () => {
+    const parsed = updateStaffSchema.safeParse({displayName: ""});
+    expect(parsed.success).toBe(false);
+  });
+
+  it("walletAddress alone satisfies the at-least-one-field requirement, and is lowercased", () => {
+    const parsed = updateStaffSchema.safeParse({walletAddress: "0x1234567890abcdef1234567890ABCDEF12345678"});
+    expect(parsed.success).toBe(true);
+    if (parsed.success) expect(parsed.data.walletAddress).toBe("0x1234567890abcdef1234567890abcdef12345678");
+  });
+
+  it("rejects a malformed walletAddress", () => {
+    const parsed = updateStaffSchema.safeParse({walletAddress: "not-an-address"});
+    expect(parsed.success).toBe(false);
+  });
+
+  it("accepts an explicit null walletAddress (clears a previously-recorded one)", () => {
+    const parsed = updateStaffSchema.safeParse({walletAddress: null});
+    expect(parsed.success).toBe(true);
+    if (parsed.success) expect(parsed.data.walletAddress).toBeNull();
+  });
+
+  it("back-compat: a plain role/disabled-only patch still parses with the new fields absent from the output", () => {
+    const parsed = updateStaffSchema.safeParse({role: "staff"});
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.bookable).toBeUndefined();
+      expect(parsed.data.displayName).toBeUndefined();
+      expect(parsed.data.walletAddress).toBeUndefined();
+    }
   });
 });
