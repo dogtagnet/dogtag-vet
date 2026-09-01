@@ -1,10 +1,7 @@
 import {afterAll, beforeAll, describe, expect, it} from "vitest";
-import {mkdtempSync, rmSync} from "node:fs";
-import {tmpdir} from "node:os";
-import {join} from "node:path";
-import {spawn, type ChildProcess} from "node:child_process";
 import mongoose, {Schema} from "mongoose";
 import {assertWalletActuallyPushed} from "@/lib/models/Client";
+import {startEphemeralMongod, stopEphemeralMongod, type EphemeralMongod} from "../helpers/ephemeralMongod";
 
 /**
  * WP4.5 track3-sig - the forensic repro, verbatim (plans/wp4.5-track3sig-plan.md fix 4): a
@@ -21,37 +18,15 @@ import {assertWalletActuallyPushed} from "@/lib/models/Client";
  */
 
 const REPRO_MONGO_PORT = 44_117; // >44000 per this track's isolation rule; ephemeral, this file's own.
-const REPRO_MONGO_URI = `mongodb://127.0.0.1:${REPRO_MONGO_PORT}/dogtag-vet-stale-model-repro`;
 
-let mongod: ChildProcess | undefined;
-let dbPath: string;
-
-async function waitForMongoReady(timeoutMs = 20_000): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  let lastError: unknown;
-  while (Date.now() < deadline) {
-    try {
-      const probe = await mongoose.createConnection(REPRO_MONGO_URI, {serverSelectionTimeoutMS: 1000}).asPromise();
-      await probe.close();
-      return;
-    } catch (error) {
-      lastError = error;
-      await new Promise((resolve) => setTimeout(resolve, 300));
-    }
-  }
-  throw new Error(`Repro mongod at ${REPRO_MONGO_URI} was not ready in time: ${String(lastError)}`);
-}
+let ephemeral: EphemeralMongod;
 
 beforeAll(async () => {
-  dbPath = mkdtempSync(join(tmpdir(), "dogtag-vet-stale-model-repro-"));
-  mongod = spawn("mongod", ["--dbpath", dbPath, "--port", String(REPRO_MONGO_PORT), "--bind_ip", "127.0.0.1"], {
-    stdio: "ignore",
-  });
-  await waitForMongoReady();
+  ephemeral = await startEphemeralMongod(REPRO_MONGO_PORT, "dogtag-vet-stale-model-repro");
 
   // Hard safety net (never rely on construction alone): this process's global mongoose connection
   // must be OUR ephemeral instance, never anything read from the environment.
-  await mongoose.connect(REPRO_MONGO_URI);
+  await mongoose.connect(ephemeral.uri);
   expect(mongoose.connection.host).toBe("127.0.0.1");
   expect(mongoose.connection.port).toBe(REPRO_MONGO_PORT);
   expect(mongoose.connection.name).toBe("dogtag-vet-stale-model-repro");
@@ -59,8 +34,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await mongoose.disconnect();
-  mongod?.kill();
-  if (dbPath) rmSync(dbPath, {recursive: true, force: true});
+  await stopEphemeralMongod(ephemeral);
 });
 
 interface OldClientDoc {

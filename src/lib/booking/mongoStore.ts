@@ -1,7 +1,7 @@
 import "server-only";
 import {CapacityBucket} from "@/lib/models/CapacityBucket";
 import {Appointment, type AppointmentDoc, type BookingIdentity} from "@/lib/models/Appointment";
-import {bucketKeysForInterval} from "@/lib/booking/buckets";
+import {scopedBucketKeys} from "@/lib/booking/buckets";
 import type {BookingStore} from "@/lib/booking/book";
 import type {OccupiedInterval} from "@/lib/booking/types";
 
@@ -12,6 +12,12 @@ export interface AppointmentDraft {
   petIds?: string[];
   serviceId?: string;
   staffName?: string;
+  /** WP4.7 A4 - see `AppointmentDoc.practitionerStaffId`'s own doc comment. */
+  practitionerStaffId?: string;
+  /** WP4.7 A4 - see `AppointmentDoc.bucketScope`'s own doc comment. Set by `createAppointment`
+   * (lifecycle.ts) to exactly what it asks `bookSlot` to claim, so the persisted record and the
+   * actual reservation can never drift apart. */
+  bucketScope?: string[];
   startAt: number;
   endAt: number;
   notes?: string;
@@ -61,9 +67,16 @@ export const mongoBookingStore: BookingStore<AppointmentDraft, AppointmentDoc> =
  * whenever a booked appointment is cancelled, so the slot becomes available again. `bufferBeforeMin`
  * /`bufferAfterMin` are the service's buffers *at cancellation time*; buffers are not stored on
  * the appointment itself (see wp4-vet.md's Appointment shape), so callers must look the service
- * back up (or pass 0/0 for an appointment with no service, e.g. an ad-hoc staff booking). */
+ * back up (or pass 0/0 for an appointment with no service, e.g. an ad-hoc staff booking).
+ *
+ * WP4.7 A4: replays the appointment's OWN persisted `bucketScope` (never a fresh "who's bookable
+ * now" lookup) via the same `scopedBucketKeys` the original claim used - see `AppointmentDoc.
+ * bucketScope`'s doc comment on why recomputing the scope at release time would be wrong (the
+ * practitioner roster can change between booking and cancellation). `bucketScope` absent (every
+ * clinic-mode appointment, and every one from before this field existed) falls back to the exact
+ * plain keys this function always used. */
 export async function releaseAppointmentBuckets(
-  appointment: Pick<AppointmentDoc, "startAt" | "endAt">,
+  appointment: Pick<AppointmentDoc, "startAt" | "endAt" | "bucketScope">,
   bufferBeforeMin: number,
   bufferAfterMin: number,
 ): Promise<void> {
@@ -71,7 +84,7 @@ export async function releaseAppointmentBuckets(
     start: appointment.startAt - bufferBeforeMin * 60,
     end: appointment.endAt + bufferAfterMin * 60,
   };
-  const keys = bucketKeysForInterval(occupied.start, occupied.end);
+  const keys = scopedBucketKeys(occupied.start, occupied.end, appointment.bucketScope);
   for (const key of keys) {
     await mongoBookingStore.releaseBucket(key);
   }

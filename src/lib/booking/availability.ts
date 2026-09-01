@@ -88,3 +88,95 @@ export function computeAvailability(params: ComputeAvailabilityParams): Availabl
   slots.sort((a, b) => a.startAt - b.startAt);
   return slots;
 }
+
+export interface PractitionerAvailabilityInput {
+  staffId: string;
+  /** This practitioner's OWN rules/exceptions only (`staffId`-matched, plus staffId-absent
+   * exceptions - see this function's own doc comment on the closures asymmetry) - pre-filtered by
+   * the caller (`queries.ts`), never filtered here. */
+  rules: AvailabilityRuleLike[];
+  exceptions: AvailabilityExceptionLike[];
+  /** This practitioner's own occupied intervals: their own appointments PLUS every UNASSIGNED
+   * appointment (D3 - "unassigned blocks ALL practitioners"), already buffered by the caller
+   * exactly like `ComputeAvailabilityParams.existingOccupied`. */
+  occupied: OccupiedInterval[];
+}
+
+export interface ComputePractitionerAvailabilityParams {
+  service: ServiceForAvailability;
+  practitioners: PractitionerAvailabilityInput[];
+  settings: BookingSettingsLike;
+  fromUtc: number;
+  toUtc: number;
+  now: number;
+}
+
+export interface PractitionerAvailableSlot {
+  startAt: number;
+  endAt: number;
+  /** Every practitioner free at this exact instant, sorted ascending for determinism. Non-empty by
+   * construction - "a slot exists iff practitionerIds is non-empty" (A4): a `[startAt, endAt)` no
+   * practitioner is free at is simply never added to the map below. */
+  practitionerIds: string[];
+}
+
+/**
+ * WP4.7 A4/D1/D2: the per-practitioner counterpart of `computeAvailability`, used only when
+ * `BookingSettings.schedulingMode === "practitioner"`. Deliberately calls `computeAvailability`
+ * ONCE PER PRACTITIONER rather than reimplementing its day/window/candidate-slot scan -
+ * Whole-clinic mode's own path (`computeAvailability` itself, above) is completely untouched by
+ * this WP, byte-for-byte identical to before it (proven by `tests/unit/availability.test.ts`
+ * passing with ZERO edits to its own expectations), and this function's correctness rests on
+ * reusing that exact same, already-proven engine per practitioner rather than a second, subtly
+ * different reimplementation of the same day/window/DST/buffer logic.
+ *
+ * D2: "a practitioner's capacity is intrinsically 1" - regardless of whatever `capacity` value
+ * happens to be stored on a practitioner-scoped rule/exception window (the settings UI, A5, is not
+ * trusted to always send 1; this is an ENGINE-level invariant). Every rule and exception window
+ * passed into `computeAvailability` below has its `capacity` forced to 1 here, before the call -
+ * `computeAvailability` itself never has to know practitioner mode exists.
+ *
+ * A slot's `practitionerIds` is every practitioner `computeAvailability` returned a slot for at
+ * that exact `[startAt, endAt)` - the union. D3's "unassigned blocks everyone" rule is encoded
+ * entirely in each practitioner's own `occupied` INPUT (the caller is responsible for including
+ * every unassigned appointment in every practitioner's list), so this function needs no separate
+ * "unassigned" handling of its own.
+ */
+export function computePractitionerAvailability(params: ComputePractitionerAvailabilityParams): PractitionerAvailableSlot[] {
+  const {service, practitioners, settings, fromUtc, toUtc, now} = params;
+
+  // Keyed on `startAt` alone (not a composite string key) - `noUncheckedIndexedAccess` makes
+  // splitting a composite key back into numbers awkward (`string | undefined`), and startAt alone
+  // is already a sufficient key: every candidate for a single `service` (fixed durationMinutes)
+  // has an `endAt` fully determined by its `startAt`.
+  const byStart = new Map<number, {endAt: number; staffIds: Set<string>}>();
+
+  for (const practitioner of practitioners) {
+    const forcedCapacityRules = practitioner.rules.map((rule) => ({...rule, capacity: 1}));
+    const forcedCapacityExceptions = practitioner.exceptions.map((exception) => ({
+      ...exception,
+      windows: exception.windows?.map((w) => ({...w, capacity: 1})),
+    }));
+
+    const slots = computeAvailability({
+      service,
+      rules: forcedCapacityRules,
+      exceptions: forcedCapacityExceptions,
+      settings,
+      existingOccupied: practitioner.occupied,
+      fromUtc,
+      toUtc,
+      now,
+    });
+
+    for (const slot of slots) {
+      const entry = byStart.get(slot.startAt);
+      if (entry) entry.staffIds.add(practitioner.staffId);
+      else byStart.set(slot.startAt, {endAt: slot.endAt, staffIds: new Set([practitioner.staffId])});
+    }
+  }
+
+  return Array.from(byStart.entries())
+    .map(([startAt, {endAt, staffIds}]) => ({startAt, endAt, practitionerIds: Array.from(staffIds).sort()}))
+    .sort((a, b) => a.startAt - b.startAt);
+}

@@ -1,9 +1,6 @@
 import {afterAll, afterEach, beforeAll, describe, expect, it, vi} from "vitest";
-import {mkdtempSync, rmSync} from "node:fs";
-import {tmpdir} from "node:os";
-import {join} from "node:path";
-import {spawn, type ChildProcess} from "node:child_process";
 import mongoose from "mongoose";
+import {startEphemeralMongod, stopEphemeralMongod, type EphemeralMongod} from "../helpers/ephemeralMongod";
 
 /**
  * WP4.7 A3 - back-compat proof for every schema addition (Staff.bookable/displayName/
@@ -34,36 +31,14 @@ import {AvailabilityException, AvailabilityRule, BookingSettings, getBookingSett
 import {listStaff, Staff, type StaffDoc} from "@/lib/models/Staff";
 import {requireOwnerSession, requireVetSession} from "@/lib/staffApi";
 
-const MONGO_PORT = 44_118;
-const MONGO_URI = `mongodb://127.0.0.1:${MONGO_PORT}/dogtag-vet-wp47-backcompat`;
+const MONGO_PORT = 44_118; // staleModelRepro already owns 44117.
 
-let mongod: ChildProcess | undefined;
-let dbPath: string;
-
-async function waitForMongoReady(timeoutMs = 20_000): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  let lastError: unknown;
-  while (Date.now() < deadline) {
-    try {
-      const probe = await mongoose.createConnection(MONGO_URI, {serverSelectionTimeoutMS: 1000}).asPromise();
-      await probe.close();
-      return;
-    } catch (error) {
-      lastError = error;
-      await new Promise((resolve) => setTimeout(resolve, 300));
-    }
-  }
-  throw new Error(`mongod at ${MONGO_URI} was not ready in time: ${String(lastError)}`);
-}
+let ephemeral: EphemeralMongod;
 
 beforeAll(async () => {
-  dbPath = mkdtempSync(join(tmpdir(), "dogtag-vet-wp47-backcompat-"));
-  mongod = spawn("mongod", ["--dbpath", dbPath, "--port", String(MONGO_PORT), "--bind_ip", "127.0.0.1"], {
-    stdio: "ignore",
-  });
-  await waitForMongoReady();
+  ephemeral = await startEphemeralMongod(MONGO_PORT, "dogtag-vet-wp47-backcompat");
 
-  process.env.MONGODB_URI = MONGO_URI;
+  process.env.MONGODB_URI = ephemeral.uri;
   await connectToDatabase();
   // Hard safety net, same as staleModelRepro: this process's global mongoose connection must be
   // OUR ephemeral instance, never anything read from a real deployment's environment.
@@ -79,8 +54,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await mongoose.connection.close();
-  mongod?.kill();
-  if (dbPath) rmSync(dbPath, {recursive: true, force: true});
+  await stopEphemeralMongod(ephemeral);
 });
 
 afterEach(async () => {

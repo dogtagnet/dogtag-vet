@@ -95,6 +95,25 @@ export interface AppointmentDoc {
   petIds: string[];
   serviceId?: string;
   staffName?: string;
+  /** WP4.7 A4/D2: the practitioner (a bookable Staff row's `staffId`) this appointment is
+   * assigned to - only meaningful in `schedulingMode: "practitioner"`. Absent means UNASSIGNED:
+   * either a legacy appointment that predates this field, or one a staff member deliberately
+   * created without picking a practitioner - both are treated identically by D3 ("unassigned
+   * blocks ALL practitioners"). Distinct from the legacy free-text `staffName` above, which stays
+   * display-only (A6 shows it read-only when set) and is never matched against a real Staff row. */
+  practitionerStaffId?: string;
+  /**
+   * WP4.7 A4: EXACTLY which capacity buckets this appointment's `bookSlot` call claimed
+   * (`scopedBucketKeys`'s `bucketScope` argument) - a snapshot of staffIds, not a live query,
+   * because "who is currently bookable" can change after this appointment is created and
+   * cancellation must release precisely what was reserved, never what a fresh lookup would
+   * reserve today. Absent means "today's plain clinic-mode bucket keys" (every appointment created
+   * in Whole-clinic mode, and every one created before this field existed - both release
+   * correctly via the exact same `undefined` fallback `scopedBucketKeys` already has). Present
+   * (non-empty) means practitioner-mode buckets: one staffId for a named/auto-assigned booking,
+   * several for an unassigned one that blocked every bookable practitioner at creation time.
+   */
+  bucketScope?: string[];
   startAt: number; // unix seconds
   endAt: number; // unix seconds
   status: AppointmentStatus;
@@ -137,6 +156,8 @@ const appointmentSchema = new Schema<AppointmentDoc>(
     petIds: {type: [String], default: [], index: true},
     serviceId: {type: String, index: true},
     staffName: String,
+    practitionerStaffId: {type: String, index: true},
+    bucketScope: {type: [String], default: undefined},
     startAt: {type: Number, required: true, index: true},
     endAt: {type: Number, required: true},
     status: {

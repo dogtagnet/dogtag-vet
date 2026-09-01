@@ -1,4 +1,4 @@
-import {bucketKeysForInterval} from "@/lib/booking/buckets";
+import {bucketKeysForInterval, scopedBucketKeys} from "@/lib/booking/buckets";
 import type {OccupiedInterval} from "@/lib/booking/types";
 
 /**
@@ -25,6 +25,15 @@ export interface BookingStore<TDraft, TRecord> {
 export interface BookSlotParams {
   occupied: OccupiedInterval;
   capacity: number;
+  /** WP4.7 A4: practitioner-mode bucket scoping (`scopedBucketKeys`) - a list of staffIds whose
+   * OWN `p:<staffId>:` bucket space this claim occupies (one entry for a named/auto-assigned
+   * practitioner, several for an unassigned appointment that must block every currently bookable
+   * practitioner per D3). Absent or empty = today's exact clinic-mode plain bucket keys. This MUST
+   * be persisted on the created record (the mongoose adapter's `insert` is where `AppointmentDraft.
+   * bucketScope` actually lands) so a later cancellation's `releaseAppointmentBuckets` can replay
+   * the IDENTICAL key set - recomputing "which practitioners are bookable now" at release time
+   * would be wrong if the roster changed in between. */
+  bucketScope?: string[];
 }
 
 export type BookSlotResult<TRecord> = {ok: true; record: TRecord} | {ok: false; reason: "slot_conflict"};
@@ -72,7 +81,7 @@ export async function bookSlot<TDraft, TRecord>(
   draft: TDraft,
   params: BookSlotParams,
 ): Promise<BookSlotResult<TRecord>> {
-  const bucketKeys = bucketKeysForInterval(params.occupied.start, params.occupied.end);
+  const bucketKeys = scopedBucketKeys(params.occupied.start, params.occupied.end, params.bucketScope);
   const claimed: string[] = [];
 
   for (const key of bucketKeys) {
