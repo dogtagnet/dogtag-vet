@@ -251,6 +251,32 @@ export function startRpcStub(): Server {
       });
       return;
     }
+    // `viem`'s `waitForTransactionReceipt` action also calls this one (alongside
+    // `eth_getTransactionReceipt` above) while polling - same "not yet mined" -> `null` semantics,
+    // and the same minimal-but-well-formed shape once `setRpcReceipt` has scripted an answer.
+    if (rpcRequest.method === "eth_getTransactionByHash") {
+      const txHash = (rpcRequest.params?.[0] as string | undefined)?.toLowerCase();
+      const status = txHash ? receipts.get(txHash) : undefined;
+      if (!status) {
+        reply(null);
+        return;
+      }
+      reply({
+        hash: txHash,
+        nonce: "0x0",
+        blockHash: `0x${"cc".repeat(32)}`,
+        blockNumber: `0x${blockNumber.toString(16)}`,
+        transactionIndex: "0x0",
+        from: "0x0000000000000000000000000000000000000001",
+        to: "0x0000000000000000000000000000000000000002",
+        value: "0x0",
+        gas: "0x1",
+        gasPrice: "0x1",
+        input: "0x",
+        type: "0x0",
+      });
+      return;
+    }
     if (rpcRequest.method === "eth_estimateGas") {
       reply(`0x${gasEstimate.toString(16)}`);
       return;

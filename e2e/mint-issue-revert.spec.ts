@@ -5,7 +5,7 @@ import {fileURLToPath} from "node:url";
 import {randomUUID} from "node:crypto";
 import {MongoClient} from "mongodb";
 import {E2E_MONGO_URI} from "./mongo-fixture";
-import {RPC_STUB_URL, resetRpcStub, setRpcReceipt, setRpcScenario} from "./rpcStub";
+import {RPC_STUB_URL, getLastSendTransaction, resetRpcStub, setRpcGasEstimate, setRpcReceipt, setRpcScenario} from "./rpcStub";
 
 // Same scratchpad directory calendar-services.spec.ts/booking-config-timezone.spec.ts/others
 // already write their own both-theme screenshots into - one shared, obviously-scratch location
@@ -168,6 +168,33 @@ async function seedReadySessionWithRevert(): Promise<{sessionId: string; root: s
     root,
     lastIssueError: ISSUE_TX_REVERTED_MESSAGE,
     failedIssueTxHashes: [oldTxHash],
+    protocolVersion: "dogtag-v2/1",
+    tokenExp: now + 600,
+    createdAt: new Date(),
+  });
+  return {sessionId, root, dogTagIdField};
+}
+
+/** Seeds a fresh `MintSession` at `status: "ready"` - no prior attempt, no `lastIssueError` - the
+ * ordinary "the device already bound its profile tree, issue it on chain" state the wizard's
+ * "Issue on chain" button appears for. WP4.5 grade-fix MAJOR 2's gas-wire-assertion test drives
+ * this one through a real click. */
+async function seedReadySession(): Promise<{sessionId: string; root: string; dogTagIdField: string}> {
+  const sessionId = randomUUID();
+  const root = randomHex(32);
+  const dogTagIdField = String(Math.floor(Math.random() * 1_000_000) + 1);
+  const now = Math.floor(Date.now() / 1000);
+  await mongoClient.db().collection("mintsessions").insertOne({
+    sessionId,
+    dogTagIdDec: dogTagIdField,
+    dogTagIdField,
+    ownerIdentity: {},
+    identityLeaves: [],
+    petName: "Blaze",
+    microchip: {},
+    profile: {weightHistory: []},
+    status: "ready",
+    root,
     protocolVersion: "dogtag-v2/1",
     tokenExp: now + 600,
     createdAt: new Date(),
@@ -510,4 +537,40 @@ test("UI: both-theme screenshots of the revert state", async ({page}) => {
     await setTheme(page, theme);
     await page.screenshot({path: `${SHOTS_DIR}/tag-issue-revert-${theme.toLowerCase()}.png`});
   }
+});
+
+/**
+ * WP4.5 grade-fix MAJOR 2 - the wire-level gas assertion the mint plan's own Tests section asked
+ * for: not that `legacyTxWithGas` COMPUTES headroom (tests/unit/chainWrite.test.ts, a fake
+ * PublicClient) or that a Node-side viem client relays it correctly
+ * (tests/unit/chainWriteGas.integration.test.ts) - both already passed - but that a REAL browser
+ * wallet write, through the mock connector exactly the same way a real MetaMask write would go,
+ * actually SENDS it. Before the CORS fix (rpcStub.ts, previous commit), every browser-side call to
+ * this stub failed preflight silently, so `legacyTxWithGas`'s fail-open `catch` always won and the
+ * wallet's own bare (un-headroomed) estimate went out instead - invisibly, since the write still
+ * "succeeded" as far as the wizard could tell. This is the assertion that would have caught that.
+ */
+test("UI: the Issue on chain click sends eth_sendTransaction with gas headroom over the stubbed estimate", async ({page}) => {
+  const {sessionId} = await seedReadySession();
+  await setRpcGasEstimate(335_037n);
+
+  await page.goto(`/tags/issue?session=${sessionId}`);
+  const issueButton = page.getByRole("button", {name: "Issue on chain"});
+  await expect(issueButton).toBeEnabled({timeout: 15_000});
+  await issueButton.click();
+
+  // The click's own handler posts the wallet's returned hash to `.../tx` (which flips the session
+  // to `issuing`) and starts polling - waiting for this text is waiting for the ENTIRE round trip
+  // (estimateGas through this stub, then the mock connector's own eth_sendTransaction through it,
+  // then the app's own POST) to have already happened, not a fixed sleep.
+  await expect(page.getByText("Waiting for the transaction to confirm...")).toBeVisible({timeout: 15_000});
+
+  const sent = await getLastSendTransaction();
+  expect(sent).not.toBeNull();
+  // 335_037 + 335_037/5 (67_007, truncated) + 30_000 = 432_044 - exactly legacyTxWithGas's own
+  // formula, over the wire, sent by the REAL wallet-write code path rather than asserted against
+  // the function's return value directly.
+  expect(sent?.gas).toBe(`0x${(432_044).toString(16)}`);
+  expect(sent?.type).toBe("0x0"); // ROAX-only-accepts-legacy, enforced by legacyTx
+  expect(String(sent?.to).toLowerCase()).toBe(CLONE_ADDRESS.toLowerCase());
 });
