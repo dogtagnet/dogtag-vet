@@ -1,5 +1,6 @@
 import {Schema} from "mongoose";
 import {getOrCreateModel} from "@/lib/models/registerModel";
+import {toPlain} from "@/lib/toPlain";
 import {randomUUID} from "node:crypto";
 
 export type StaffRole = "owner" | "staff" | "vet";
@@ -142,9 +143,15 @@ export async function listStaff(): Promise<StaffDoc[]> {
   // Back-compat: same reasoning as `getBookingSettings()`'s `schedulingMode` coalesce - `.lean()`
   // returns a pre-existing row (any Staff invited before WP4.7) exactly as stored, with `bookable`
   // entirely absent rather than defaulted, even though the type promises a real boolean. Coalesced
-  // here, once, so every caller (the roster table's checkbox, a future practitioner picker) can
-  // trust the type instead of each needing its own `?? false`.
-  return staff.map((s) => ({...s, bookable: s.bookable ?? false}));
+  // here, once, so every caller (the roster table's checkbox, the A5 practitioner picker) can trust
+  // the type instead of each needing its own `?? false`.
+  //
+  // toPlain() strips the lean doc's bson `_id` (found pre-existing while building A5's own visual
+  // check: settings/page.tsx passes this straight into <StaffSection initial={staff} /> across a
+  // Server-Component-to-Client-Component boundary, which Next.js logs as "Only plain objects can be
+  // passed..." for exactly this reason - unrelated to WP4.7's own changes here, but cheap to fix in
+  // passing since every other page-boundary query in this codebase already goes through toPlain()).
+  return toPlain(staff.map((s) => ({...s, bookable: s.bookable ?? false})));
 }
 
 export async function setStaffDisabled(staffId: string, disabled: boolean): Promise<StaffDoc | null> {

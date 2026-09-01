@@ -8,6 +8,7 @@ import {connectToDatabase} from "@/lib/db";
 import {AvailabilityException, AvailabilityRule, getBookingSettings} from "@/lib/models/Availability";
 import {getClinicSettings} from "@/lib/models/ClinicSettings";
 import {listStaff} from "@/lib/models/Staff";
+import {listBookablePractitioners} from "@/lib/booking/queries";
 import {getServerEnv} from "@/lib/env";
 import {listRecentAbuse} from "@/lib/abuseLog";
 import {AbuseLogSection} from "@/app/(app)/settings/AbuseLogSection";
@@ -19,13 +20,14 @@ import {toPlain} from "@/lib/toPlain";
 
 export default async function SettingsPage() {
   await connectToDatabase();
-  const [settings, bookingSettings, rules, exceptions, abuseEntries, staff, session] = await Promise.all([
+  const [settings, bookingSettings, rules, exceptions, abuseEntries, staff, practitioners, session] = await Promise.all([
     getClinicSettings(),
     getBookingSettings(),
     AvailabilityRule.find({}).lean().then(toPlain),
     AvailabilityException.find({}).sort({date: 1}).lean().then(toPlain),
     listRecentAbuse(),
     listStaff(),
+    listBookablePractitioners(),
     auth(),
   ]);
   const env = getServerEnv();
@@ -79,7 +81,7 @@ export default async function SettingsPage() {
       <SettingsForm initial={settings} />
       <div className="mt-6 max-w-2xl space-y-6">
         <StaffSection initial={staff} isOwner={isOwner} currentStaffId={session?.user?.staffId} />
-        <BookingConfigSection settings={bookingSettings} rules={rules} exceptions={exceptions} />
+        <BookingConfigSection settings={bookingSettings} rules={rules} exceptions={exceptions} practitioners={practitioners} />
         <IcsFeedSection initialToken={settings.icsFeedToken} publicBaseUrl={env.PUBLIC_BASE_URL} />
         <AbuseLogSection entries={abuseEntries} timeZone={bookingSettings.timezone} />
       </div>

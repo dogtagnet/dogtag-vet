@@ -75,6 +75,26 @@ export async function listBookablePractitioners(): Promise<PractitionerSummary[]
     .sort((a, b) => a.staffId.localeCompare(b.staffId));
 }
 
+/**
+ * WP4.7 D1's precondition for switching `schedulingMode` to "practitioner": at least one bookable
+ * practitioner must already have at least one weekly rule of their own, or the public availability
+ * response would go from "shows the clinic's hours" to "shows nothing, for anyone, silently" the
+ * moment the switch is saved. Enforced here (called from the settings PATCH route) rather than
+ * relying on the settings UI alone to prevent the switch - the UI's own guard is a convenience, not
+ * the source of truth, matching this codebase's general pattern of defense-in-depth on every
+ * consequential write.
+ *
+ * Short-circuits on an empty practitioner roster rather than letting `AvailabilityRule.exists`
+ * run with `staffId: {$in: []}` - that query also correctly matches nothing, but only by an
+ * accident of how Mongo treats an empty `$in` array, not because this function said so on purpose.
+ */
+export async function hasPractitionerReadyForSchedulingMode(): Promise<boolean> {
+  const practitioners = await listBookablePractitioners();
+  if (practitioners.length === 0) return false;
+  const staffIds = practitioners.map((p) => p.staffId);
+  return Boolean(await AvailabilityRule.exists({staffId: {$in: staffIds}}));
+}
+
 function toRuleLike(rule: AvailabilityRuleDoc): AvailabilityRuleLike {
   return {dayOfWeek: rule.dayOfWeek, startMinute: rule.startMinute, endMinute: rule.endMinute, capacity: rule.capacity};
 }
