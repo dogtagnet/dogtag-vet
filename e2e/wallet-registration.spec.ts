@@ -314,11 +314,13 @@ test("revoke flow: a registered wallet can be revoked from the panel with a two-
   // so the same non-exact match would still be a live hazard, and `{exact: true}` stays load-bearing
   // rather than a leftover from a bug that no longer applies.
   //
-  // 15s (not the 5s default): `handleRevoke` awaits its own POST then `router.refresh()`'s full
-  // server-component re-render before the badge flips - observed flaking here specifically (not
-  // the click itself) under full-suite system load, the same class of load-induced timing flake
-  // this file's own happy-path test already budgets extra time for (see its opening comment).
-  await expect(row.getByText("Revoked", {exact: true})).toBeVisible({timeout: 15_000});
+  // 20s (not the 5s default, and not this test's own PRIOR 15s either - still observed timing out
+  // at 15s specifically here, under full-suite load, with this track's own new specs added ahead
+  // of this file alphabetically): `handleRevoke` awaits its own POST then `router.refresh()`'s full
+  // server-component re-render before the badge flips - the same class of load-induced timing flake
+  // this file's own happy-path test budgets 20s for already (see its opening comment) - matched
+  // here rather than re-guessing a third value.
+  await expect(row.getByText("Revoked", {exact: true})).toBeVisible({timeout: 20_000});
 });
 
 /**
