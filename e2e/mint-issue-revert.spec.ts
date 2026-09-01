@@ -351,6 +351,56 @@ test("a receipt that reads back SUCCESS but still does not anchor stays on the e
 });
 
 /**
+ * WP4.5 grade-fix MAJOR 3 - the retry route's OWN confirmed-revert branch
+ * (src/app/api/tags/issue/[sessionId]/retry/route.ts:63-76) had zero coverage: every revert test
+ * above drives the SAME underlying `reconcileAnchoredSession` through the CONFIRM route instead.
+ * Reuses the exact recipe the test just above this one uses to produce an `error`/`verify` session
+ * with its `root`/`txHash` both still intact (seed `issuing` -> script the receipt as mined SUCCESS
+ * but non-anchoring -> confirm -> 400) - that state is the ONLY way to reach `/retry`'s revert
+ * branch at all, since the route requires `status: "error"` up front and this is the one path that
+ * reaches `error` without ever clearing `root`/`txHash`. Then flips that SAME tx's scripted receipt
+ * to reverted and calls `/retry`, landing squarely in the branch this test is actually about.
+ */
+test("retry on an error session whose tx later reads back reverted: reconciles straight to ready on the SAME root, never arms a fresh bind token", async ({page}) => {
+  const {sessionId, root, txHash} = await seedIssuingSession();
+  await setRpcReceipt(txHash, "success"); // mined, but (unscripted) profileRoot/isValid disagree
+  const firstConfirm = await page.request.post(`/api/tags/issue/${sessionId}/confirm`);
+  expect(firstConfirm.status()).toBe(400);
+
+  const midway = await mongoClient.db().collection("mintsessions").findOne({sessionId});
+  expect(midway?.status).toBe("error");
+  expect(midway?.errorStage).toBe("verify");
+  expect(midway?.root).toBe(root);
+  expect(midway?.txHash).toBe(txHash); // still intact - retry's revert branch needs this precondition
+
+  // The SAME tx now reads back as a confirmed revert instead of a merely-non-anchoring success.
+  await setRpcReceipt(txHash, "reverted");
+
+  const retryRes = await page.request.post(`/api/tags/issue/${sessionId}/retry`, {
+    data: {operatorAddress: "0x1234567890123456789012345678901234567890"},
+  });
+  expect(retryRes.ok()).toBe(true);
+  const retryBody = await retryRes.json();
+  expect(retryBody.status).toBe("ready");
+  expect(retryBody.root).toBe(root); // the SAME root - never discarded/re-armed
+  expect(retryBody.lastIssueError).toMatch(/reverted/i);
+
+  const stored = await mongoClient.db().collection("mintsessions").findOne({sessionId});
+  expect(stored?.status).toBe("ready");
+  expect(stored?.root).toBe(root);
+  expect(stored?.lastIssueError).toMatch(/reverted/i);
+  expect(stored?.failedIssueTxHashes).toEqual([txHash]);
+  expect(stored?.txHash).toBeUndefined(); // the dead tx must not linger as if it were still live
+  expect(stored?.errorStage).toBeUndefined(); // cleared, not left over from the PRIOR error round
+
+  // This branch returns EARLY (route.ts:63-76), before the "arm a fresh bind token" code below it
+  // ever runs - no BindToken.create for this session, unlike the OTHER retry outcome (a genuine
+  // fresh-token re-arm) which would have created exactly one.
+  const bindTokenCount = await mongoClient.db().collection("bindtokens").countDocuments({sessionId});
+  expect(bindTokenCount).toBe(0);
+});
+
+/**
  * WP4.5 track 3's OTHER live-hot-fixed UI bug (commit 2eb9e51): the bound-state "Sign issuer
  * attestation" button flipped to a done badge via LOCAL React state only, which reverted to
  * offering the button again on a reload even though the attestation was genuinely already stored -
