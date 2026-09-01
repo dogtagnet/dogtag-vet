@@ -1,5 +1,6 @@
 import "server-only";
-import {bookSlot} from "@/lib/booking/book";
+import {bookSlot, claimBucketSet, releaseAll} from "@/lib/booking/book";
+import {scopedBucketKeys} from "@/lib/booking/buckets";
 import {calendarRangeFor} from "@/lib/booking/calendarRange";
 import {localDateMinuteToUtcSeconds, utcSecondsToLocalDateStr, utcSecondsToLocalMinuteOfDay} from "@/lib/booking/dst";
 import {mongoBookingStore, releaseAppointmentBuckets, type AppointmentDraft} from "@/lib/booking/mongoStore";
@@ -211,6 +212,149 @@ async function autoAssignAndCreate(
     // candidate selection above and this claim - try the next one rather than failing outright.
   }
   return {ok: false, reason: "slot_conflict"};
+}
+
+export type ReassignPractitionerResult =
+  | {ok: true; appointment: AppointmentDoc}
+  | {ok: false; reason: "slot_conflict"}
+  | {ok: false; reason: "outside_hours"}
+  | {ok: false; reason: "invalid_practitioner"}
+  | {ok: false; reason: "not_found"};
+
+/**
+ * WP4.7 A6 - moves an EXISTING appointment onto a different practitioner (or to/from unassigned),
+ * in practitioner-scheduling mode. This is a mini re-book, not a plain field update: the
+ * appointment's `bucketScope` IS its live capacity reservation, so moving it to a new scope means
+ * releasing the old claim and creating a new one - two writes to the capacity ledger that must
+ * never both partially apply.
+ *
+ * Ordering is the entire correctness argument here: the NEW scope is claimed BEFORE the OLD one is
+ * released, and the Appointment record is updated to the new practitioner/scope BEFORE the old
+ * scope's buckets are released. If the new practitioner's claim fails (already booked, outside
+ * their hours, invalid/no-longer-bookable), the appointment keeps its OLD practitioner and OLD
+ * buckets, completely untouched - claiming first means a failure here can simply be reported,
+ * nothing to unwind. The reverse order (release old, then try to claim new) would leave a window
+ * where a concurrent booking takes the just-freed slot and this appointment ends up with no valid
+ * practitioner and no bucket at all - exactly the double-booking/orphaned-appointment hazard the
+ * whole bucket-ledger design exists to prevent. The same reasoning applies one level in: the
+ * Appointment record commits to the NEW scope before the OLD scope is released, not after - a
+ * failure between those two steps leaves the OLD scope's buckets stuck claimed (a clinic's
+ * practitioner capacity reads one short of true until an operator notices and corrects it
+ * manually), which is a conservative, self-limiting failure - never a double-booking, the only
+ * outcome this function must never produce.
+ *
+ * A TERMINAL appointment (cancelled/no_show) already released its buckets - see
+ * `setAppointmentTerminalStatus` - so reassigning its practitioner is a plain field update with no
+ * bucket claim/release at all; there is no live capacity to move.
+ *
+ * The old and new scopes can share staffIds - concretely, unassigned -> a practitioner who was
+ * already one of the blocked ones (D3's unassigned scope is every bookable practitioner), or the
+ * reverse. Claiming the FULL new scope while the full old one is still held would try to claim a
+ * bucket this same appointment already holds a reservation in, at whatever the NEW capacity happens
+ * to be - which can be lower than what the OLD claim already pushed that bucket's count to (found
+ * by this function's own test suite: reassigning unassigned -> A failed every time, because A's
+ * bucket already sat at count 1 from the unassigned claim, and re-claiming it at capacity 1 read as
+ * already full). Only the staffIds actually being ADDED are claimed; only the ones actually being
+ * DROPPED are released; anything in both stays completely untouched throughout.
+ */
+export async function reassignPractitioner(
+  appointmentId: string,
+  newPractitionerStaffId: string | null,
+): Promise<ReassignPractitionerResult> {
+  const appointment = await Appointment.findOne({appointmentId}).lean<AppointmentDoc>();
+  if (!appointment) return {ok: false, reason: "not_found"};
+
+  const currentStaffId = appointment.practitionerStaffId ?? null;
+  if (currentStaffId === newPractitionerStaffId) return {ok: true, appointment};
+
+  if (CAPACITY_RELEASING_STATUSES.includes(appointment.status)) {
+    const setOps: Record<string, unknown> = {};
+    const unsetOps: Record<string, ""> = {};
+    if (newPractitionerStaffId === null) unsetOps.practitionerStaffId = "";
+    else setOps.practitionerStaffId = newPractitionerStaffId;
+    await Appointment.updateOne({appointmentId}, {
+      ...(Object.keys(setOps).length > 0 ? {$set: setOps} : {}),
+      ...(Object.keys(unsetOps).length > 0 ? {$unset: unsetOps} : {}),
+    });
+    return {ok: true, appointment: {...appointment, practitionerStaffId: newPractitionerStaffId ?? undefined}};
+  }
+
+  const config = await loadAvailabilityConfig();
+  if (config.settings.schedulingMode !== "practitioner") {
+    // No per-practitioner scope exists to move between in clinic mode. Not normally reachable (the
+    // UI only offers the practitioner picker in practitioner mode) - defends the route against a
+    // stale client or a direct API call while the clinic is in clinic mode.
+    return {ok: false, reason: "invalid_practitioner"};
+  }
+
+  const service = appointment.serviceId ? await Service.findOne({serviceId: appointment.serviceId}).lean<ServiceDoc>() : null;
+  const bufferBeforeMin = service?.bufferBeforeMin ?? 0;
+  const bufferAfterMin = service?.bufferAfterMin ?? 0;
+  const occupied: OccupiedInterval = {
+    start: appointment.startAt - bufferBeforeMin * 60,
+    end: appointment.endAt + bufferAfterMin * 60,
+  };
+
+  let newScope: string[];
+  let capacity: number;
+  if (newPractitionerStaffId === null) {
+    // D3 - an unassigned appointment blocks every CURRENTLY bookable practitioner.
+    const bookable = await listBookablePractitioners();
+    newScope = bookable.map((p) => p.staffId);
+    capacity = UNBOUNDED_CAPACITY;
+  } else {
+    const practitioner = await Staff.findOne({
+      staffId: newPractitionerStaffId,
+      role: {$in: ["vet", "owner"]},
+      bookable: true,
+      disabled: false,
+    }).lean<StaffDoc>();
+    if (!practitioner) return {ok: false, reason: "invalid_practitioner"};
+
+    const rulesMap = await loadPractitionerRulesAndExceptions([newPractitionerStaffId]);
+    const own = rulesMap.get(newPractitionerStaffId) ?? {rules: [], exceptions: []};
+    const resolved = resolveClinicWindow(appointment, bufferBeforeMin, bufferAfterMin, config.settings, own.rules, own.exceptions);
+    if (!resolved.ok) return {ok: false, reason: "outside_hours"};
+    newScope = [newPractitionerStaffId]; // D2: a practitioner's capacity is intrinsically 1.
+    capacity = 1;
+  }
+
+  // The old and new scopes can share staffIds (most concretely: unassigned -> a named practitioner
+  // who was already one of the blocked ones, or the reverse) - this appointment's OWN old claim
+  // already holds that staffId's bucket, so re-claiming it here (at capacity 1, say, when the old
+  // unassigned claim put it at UNBOUNDED_CAPACITY's count) would self-conflict against a
+  // reservation this same appointment already holds, not against anyone else's. Only the staffIds
+  // that are actually NEW claim anything; only the ones actually being DROPPED get released. The
+  // overlapping staffIds are left completely untouched - correctly claimed before, during, and
+  // after this reassignment.
+  const oldStaffIds = new Set(appointment.bucketScope ?? []);
+  const newStaffIds = new Set(newScope);
+  const staffIdsToClaim = newScope.filter((id) => !oldStaffIds.has(id));
+  const staffIdsToRelease = (appointment.bucketScope ?? []).filter((id) => !newStaffIds.has(id));
+
+  const claimKeys = scopedBucketKeys(occupied.start, occupied.end, staffIdsToClaim);
+  const claim = await claimBucketSet(mongoBookingStore, claimKeys, capacity);
+  if (!claim.ok) return {ok: false, reason: "slot_conflict"};
+
+  const setOps: Record<string, unknown> = {bucketScope: newScope};
+  const unsetOps: Record<string, ""> = {};
+  if (newPractitionerStaffId === null) unsetOps.practitionerStaffId = "";
+  else setOps.practitionerStaffId = newPractitionerStaffId;
+  await Appointment.updateOne({appointmentId}, {
+    $set: setOps,
+    ...(Object.keys(unsetOps).length > 0 ? {$unset: unsetOps} : {}),
+  });
+
+  // The record now points at the NEW scope - only now release the staffIds actually being DROPPED
+  // (never the full old scope wholesale - see this block's own comment above on why overlapping
+  // staffIds must never be touched).
+  const releaseKeys = scopedBucketKeys(occupied.start, occupied.end, staffIdsToRelease);
+  await releaseAll(mongoBookingStore, releaseKeys);
+
+  return {
+    ok: true,
+    appointment: {...appointment, practitionerStaffId: newPractitionerStaffId ?? undefined, bucketScope: newScope},
+  };
 }
 
 /**

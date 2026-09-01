@@ -14,7 +14,7 @@ import {startEphemeralMongod, stopEphemeralMongod, type EphemeralMongod} from ".
  * ISOLATION: own ephemeral mongod, port 44120 (44117/44118/44119 already taken by sibling suites).
  */
 import {connectToDatabase} from "@/lib/db";
-import {createAppointment, setAppointmentTerminalStatus} from "@/lib/booking/lifecycle";
+import {createAppointment, reassignPractitioner, setAppointmentTerminalStatus} from "@/lib/booking/lifecycle";
 import {Appointment} from "@/lib/models/Appointment";
 import {AvailabilityException, AvailabilityRule, BookingSettings} from "@/lib/models/Availability";
 import {Staff} from "@/lib/models/Staff";
@@ -316,5 +316,200 @@ describe("setAppointmentTerminalStatus - cancellation releases exactly what was 
       enforceCapacity: true,
     });
     expect(nowFree.ok).toBe(true);
+  });
+});
+
+describe("reassignPractitioner - WP4.7 A6, claim-new-before-release-old", () => {
+  it("reassigns A -> B when B is free: B's buckets claimed, A's released, both fields updated", async () => {
+    await setPractitionerMode();
+    const vetA = await Staff.create({email: "a@example.com", role: "vet", bookable: true});
+    const vetB = await Staff.create({email: "b@example.com", role: "vet", bookable: true});
+    await AvailabilityRule.create({dayOfWeek: THURSDAY, startMinute: 9 * 60, endMinute: 17 * 60, staffId: vetA.staffId});
+    await AvailabilityRule.create({dayOfWeek: THURSDAY, startMinute: 9 * 60, endMinute: 17 * 60, staffId: vetB.staffId});
+
+    const booked = await createAppointment(draftAt({startAt: thu9am, endAt: thu9am + 1800, practitionerStaffId: vetA.staffId}), {
+      enforceCapacity: true,
+    });
+    expect(booked.ok).toBe(true);
+    if (!booked.ok) return;
+
+    const reassigned = await reassignPractitioner(booked.appointment.appointmentId, vetB.staffId);
+    expect(reassigned.ok).toBe(true);
+    if (reassigned.ok) {
+      expect(reassigned.appointment.practitionerStaffId).toBe(vetB.staffId);
+      expect(reassigned.appointment.bucketScope).toEqual([vetB.staffId]);
+    }
+
+    // B's slot is now taken - a second booking for B at the same time must conflict.
+    const bBusy = await createAppointment(draftAt({startAt: thu9am, endAt: thu9am + 1800, practitionerStaffId: vetB.staffId}), {
+      enforceCapacity: true,
+    });
+    expect(bBusy).toEqual({ok: false, reason: "slot_conflict"});
+
+    // A's slot was released - a fresh booking for A at the same time must now succeed.
+    const aFree = await createAppointment(draftAt({startAt: thu9am, endAt: thu9am + 1800, practitionerStaffId: vetA.staffId}), {
+      enforceCapacity: true,
+    });
+    expect(aFree.ok).toBe(true);
+  });
+
+  it("refuses A -> B when B is already booked at that time, and leaves the appointment on A with A's buckets still claimed", async () => {
+    await setPractitionerMode();
+    const vetA = await Staff.create({email: "a@example.com", role: "vet", bookable: true});
+    const vetB = await Staff.create({email: "b@example.com", role: "vet", bookable: true});
+    await AvailabilityRule.create({dayOfWeek: THURSDAY, startMinute: 9 * 60, endMinute: 17 * 60, staffId: vetA.staffId});
+    await AvailabilityRule.create({dayOfWeek: THURSDAY, startMinute: 9 * 60, endMinute: 17 * 60, staffId: vetB.staffId});
+
+    const bookedA = await createAppointment(draftAt({startAt: thu9am, endAt: thu9am + 1800, practitionerStaffId: vetA.staffId}), {
+      enforceCapacity: true,
+    });
+    expect(bookedA.ok).toBe(true);
+    if (!bookedA.ok) return;
+    const bookedB = await createAppointment(draftAt({startAt: thu9am, endAt: thu9am + 1800, practitionerStaffId: vetB.staffId}), {
+      enforceCapacity: true,
+    });
+    expect(bookedB.ok).toBe(true);
+
+    const reassigned = await reassignPractitioner(bookedA.appointment.appointmentId, vetB.staffId);
+    expect(reassigned).toEqual({ok: false, reason: "slot_conflict"});
+
+    // The appointment must be COMPLETELY unchanged - still on A, still holding A's own bucket.
+    const stillA = await Appointment.findOne({appointmentId: bookedA.appointment.appointmentId}).lean();
+    expect(stillA?.practitionerStaffId).toBe(vetA.staffId);
+    expect(stillA?.bucketScope).toEqual([vetA.staffId]);
+
+    // A's slot must STILL be claimed (the failed reassignment must not have released it) - a fresh
+    // attempt to double-book A at this exact time must still conflict.
+    const aStillBusy = await createAppointment(draftAt({startAt: thu9am, endAt: thu9am + 1800, practitionerStaffId: vetA.staffId}), {
+      enforceCapacity: true,
+    });
+    expect(aStillBusy).toEqual({ok: false, reason: "slot_conflict"});
+  });
+
+  it("reassigns A -> unassigned (blocks every bookable practitioner) and unassigned -> A (narrows back to one)", async () => {
+    await setPractitionerMode();
+    const vetA = await Staff.create({email: "a@example.com", role: "vet", bookable: true});
+    const vetB = await Staff.create({email: "b@example.com", role: "vet", bookable: true});
+    await AvailabilityRule.create({dayOfWeek: THURSDAY, startMinute: 9 * 60, endMinute: 17 * 60, staffId: vetA.staffId});
+    await AvailabilityRule.create({dayOfWeek: THURSDAY, startMinute: 9 * 60, endMinute: 17 * 60, staffId: vetB.staffId});
+
+    const booked = await createAppointment(draftAt({startAt: thu9am, endAt: thu9am + 1800, practitionerStaffId: vetA.staffId}), {
+      enforceCapacity: true,
+    });
+    expect(booked.ok).toBe(true);
+    if (!booked.ok) return;
+
+    const toUnassigned = await reassignPractitioner(booked.appointment.appointmentId, null);
+    expect(toUnassigned.ok).toBe(true);
+    if (toUnassigned.ok) {
+      expect(toUnassigned.appointment.practitionerStaffId).toBeUndefined();
+      expect(toUnassigned.appointment.bucketScope?.sort()).toEqual([vetA.staffId, vetB.staffId].sort());
+    }
+
+    // Unassigned now blocks BOTH practitioners, not just A.
+    const bBlocked = await createAppointment(draftAt({startAt: thu9am, endAt: thu9am + 1800, practitionerStaffId: vetB.staffId}), {
+      enforceCapacity: true,
+    });
+    expect(bBlocked).toEqual({ok: false, reason: "slot_conflict"});
+
+    const backToA = await reassignPractitioner(booked.appointment.appointmentId, vetA.staffId);
+    expect(backToA.ok).toBe(true);
+    if (backToA.ok) expect(backToA.appointment.bucketScope).toEqual([vetA.staffId]);
+
+    // Narrowed back to just A - B must now be free.
+    const bNowFree = await createAppointment(draftAt({startAt: thu9am, endAt: thu9am + 1800, practitionerStaffId: vetB.staffId}), {
+      enforceCapacity: true,
+    });
+    expect(bNowFree.ok).toBe(true);
+  });
+
+  it("refuses reassignment to a practitioner whose hours don't cover the existing time, leaving the appointment unchanged", async () => {
+    await setPractitionerMode();
+    const vetA = await Staff.create({email: "a@example.com", role: "vet", bookable: true});
+    const vetB = await Staff.create({email: "b@example.com", role: "vet", bookable: true});
+    await AvailabilityRule.create({dayOfWeek: THURSDAY, startMinute: 9 * 60, endMinute: 17 * 60, staffId: vetA.staffId});
+    // vet-b works afternoons only - does not cover thu9am at all.
+    await AvailabilityRule.create({dayOfWeek: THURSDAY, startMinute: 13 * 60, endMinute: 17 * 60, staffId: vetB.staffId});
+
+    const booked = await createAppointment(draftAt({startAt: thu9am, endAt: thu9am + 1800, practitionerStaffId: vetA.staffId}), {
+      enforceCapacity: true,
+    });
+    expect(booked.ok).toBe(true);
+    if (!booked.ok) return;
+
+    const reassigned = await reassignPractitioner(booked.appointment.appointmentId, vetB.staffId);
+    expect(reassigned).toEqual({ok: false, reason: "outside_hours"});
+
+    const stillA = await Appointment.findOne({appointmentId: booked.appointment.appointmentId}).lean();
+    expect(stillA?.practitionerStaffId).toBe(vetA.staffId);
+    expect(stillA?.bucketScope).toEqual([vetA.staffId]);
+  });
+
+  it("rejects reassignment to an unknown or non-bookable practitioner, leaving the appointment unchanged", async () => {
+    await setPractitionerMode();
+    const vetA = await Staff.create({email: "a@example.com", role: "vet", bookable: true});
+    const notBookable = await Staff.create({email: "nb@example.com", role: "vet", bookable: false});
+    await AvailabilityRule.create({dayOfWeek: THURSDAY, startMinute: 9 * 60, endMinute: 17 * 60, staffId: vetA.staffId});
+
+    const booked = await createAppointment(draftAt({startAt: thu9am, endAt: thu9am + 1800, practitionerStaffId: vetA.staffId}), {
+      enforceCapacity: true,
+    });
+    expect(booked.ok).toBe(true);
+    if (!booked.ok) return;
+
+    const toUnknown = await reassignPractitioner(booked.appointment.appointmentId, "does-not-exist");
+    expect(toUnknown).toEqual({ok: false, reason: "invalid_practitioner"});
+    const toNotBookable = await reassignPractitioner(booked.appointment.appointmentId, notBookable.staffId);
+    expect(toNotBookable).toEqual({ok: false, reason: "invalid_practitioner"});
+
+    const stillA = await Appointment.findOne({appointmentId: booked.appointment.appointmentId}).lean();
+    expect(stillA?.practitionerStaffId).toBe(vetA.staffId);
+  });
+
+  it("a no-op reassignment (same practitioner) succeeds without touching any bucket", async () => {
+    await setPractitionerMode();
+    const vetA = await Staff.create({email: "a@example.com", role: "vet", bookable: true});
+    await AvailabilityRule.create({dayOfWeek: THURSDAY, startMinute: 9 * 60, endMinute: 17 * 60, staffId: vetA.staffId});
+
+    const booked = await createAppointment(draftAt({startAt: thu9am, endAt: thu9am + 1800, practitionerStaffId: vetA.staffId}), {
+      enforceCapacity: true,
+    });
+    expect(booked.ok).toBe(true);
+    if (!booked.ok) return;
+
+    const noop = await reassignPractitioner(booked.appointment.appointmentId, vetA.staffId);
+    expect(noop).toEqual({ok: true, appointment: booked.appointment});
+
+    // Still exactly one claim on A's slot - a second booking still conflicts, not two independent
+    // over-claims from a buggy release+reclaim on a no-op.
+    const stillBusy = await createAppointment(draftAt({startAt: thu9am, endAt: thu9am + 1800, practitionerStaffId: vetA.staffId}), {
+      enforceCapacity: true,
+    });
+    expect(stillBusy).toEqual({ok: false, reason: "slot_conflict"});
+  });
+
+  it("reassigning a CANCELLED appointment's practitioner is a plain field update - no bucket claim, since a terminal appointment already released its buckets", async () => {
+    await setPractitionerMode();
+    const vetA = await Staff.create({email: "a@example.com", role: "vet", bookable: true});
+    const vetB = await Staff.create({email: "b@example.com", role: "vet", bookable: true});
+    await AvailabilityRule.create({dayOfWeek: THURSDAY, startMinute: 9 * 60, endMinute: 17 * 60, staffId: vetA.staffId});
+    await AvailabilityRule.create({dayOfWeek: THURSDAY, startMinute: 9 * 60, endMinute: 17 * 60, staffId: vetB.staffId});
+
+    const booked = await createAppointment(draftAt({startAt: thu9am, endAt: thu9am + 1800, practitionerStaffId: vetA.staffId}), {
+      enforceCapacity: true,
+    });
+    expect(booked.ok).toBe(true);
+    if (!booked.ok) return;
+    await setAppointmentTerminalStatus(booked.appointment.appointmentId, "cancelled");
+
+    const reassigned = await reassignPractitioner(booked.appointment.appointmentId, vetB.staffId);
+    expect(reassigned.ok).toBe(true);
+    if (reassigned.ok) expect(reassigned.appointment.practitionerStaffId).toBe(vetB.staffId);
+
+    // B must NOT have had a bucket claimed by this - B's slot at this exact time is still free.
+    const bFree = await createAppointment(draftAt({startAt: thu9am, endAt: thu9am + 1800, practitionerStaffId: vetB.staffId}), {
+      enforceCapacity: true,
+    });
+    expect(bFree.ok).toBe(true);
   });
 });

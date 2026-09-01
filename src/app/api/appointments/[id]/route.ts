@@ -1,7 +1,7 @@
 import {NextResponse} from "next/server";
 import {resolveTagging} from "@/lib/booking/appointmentTagging";
 import {isValidStatusTransition} from "@/lib/booking/appointmentStatusGuard";
-import {setAppointmentTerminalStatus} from "@/lib/booking/lifecycle";
+import {reassignPractitioner, setAppointmentTerminalStatus} from "@/lib/booking/lifecycle";
 import {connectToDatabase} from "@/lib/db";
 import {Appointment, type AppointmentDoc} from "@/lib/models/Appointment";
 import {updateAppointmentSchema} from "@/lib/schemas/appointment";
@@ -75,6 +75,21 @@ export async function PATCH(request: Request, {params}: {params: Promise<{id: st
   const update: Record<string, unknown> = {$set: setOps};
   if (Object.keys(unsetOps).length > 0) update.$unset = unsetOps;
   await Appointment.updateOne({appointmentId: id}, update);
+
+  // WP4.7 A6 - after status/tagging above, not before: a combined cancel-and-reassign in the same
+  // request must reassign against the NOW-cancelled status (reassignPractitioner re-reads fresh),
+  // which correctly takes its plain-field-update path rather than trying to move live buckets a
+  // cancellation already released. `practitionerId` uses the same absent/null/value convention as
+  // `clientId` - only act on it when the key is actually present in the patch.
+  if (parsed.data.practitionerId !== undefined) {
+    const reassigned = await reassignPractitioner(id, parsed.data.practitionerId);
+    if (!reassigned.ok) {
+      if (reassigned.reason === "not_found") return notFound("Appointment not found.");
+      if (reassigned.reason === "slot_conflict") return badRequest("That practitioner is already booked at this time.");
+      if (reassigned.reason === "outside_hours") return badRequest("That practitioner's hours do not cover this appointment's time.");
+      return badRequest("That practitioner is not bookable.");
+    }
+  }
 
   const updated = await Appointment.findOne({appointmentId: id}).lean<AppointmentDoc>();
   return NextResponse.json(updated);

@@ -82,27 +82,47 @@ export async function bookSlot<TDraft, TRecord>(
   params: BookSlotParams,
 ): Promise<BookSlotResult<TRecord>> {
   const bucketKeys = scopedBucketKeys(params.occupied.start, params.occupied.end, params.bucketScope);
-  const claimed: string[] = [];
-
-  for (const key of bucketKeys) {
-    const acquired = await store.reserveBucket(key, params.capacity);
-    if (!acquired) {
-      await releaseAll(store, claimed);
-      return {ok: false, reason: "slot_conflict"};
-    }
-    claimed.push(key);
-  }
+  const claim = await claimBucketSet(store, bucketKeys, params.capacity);
+  if (!claim.ok) return {ok: false, reason: "slot_conflict"};
 
   try {
     const record = await store.insert(draft);
     return {ok: true, record};
   } catch (err) {
-    await releaseAll(store, claimed);
+    await releaseAll(store, claim.claimedKeys);
     throw err;
   }
 }
 
-async function releaseAll<TDraft, TRecord>(store: BookingStore<TDraft, TRecord>, keys: string[]): Promise<void> {
+export type ClaimBucketSetResult = {ok: true; claimedKeys: string[]} | {ok: false};
+
+/**
+ * The ordered-claim-with-rollback loop at the heart of `bookSlot` above, extracted so WP4.7 A6's
+ * practitioner reassignment (`lifecycle.ts`'s `reassignPractitioner`) can reuse the identical
+ * correctness properties - ascending key order (the anti-livelock property `bookSlot`'s own doc
+ * comment explains) and rolling back only what THIS attempt itself claimed - rather than
+ * duplicating this loop and risking the two copies drifting apart. Reassignment claims a bucket set
+ * for an ALREADY-EXISTING appointment (an update, not `store.insert`), which is the only reason
+ * this isn't simply `bookSlot` itself.
+ */
+export async function claimBucketSet<TDraft, TRecord>(
+  store: BookingStore<TDraft, TRecord>,
+  keys: string[],
+  capacity: number,
+): Promise<ClaimBucketSetResult> {
+  const claimed: string[] = [];
+  for (const key of keys) {
+    const acquired = await store.reserveBucket(key, capacity);
+    if (!acquired) {
+      await releaseAll(store, claimed);
+      return {ok: false};
+    }
+    claimed.push(key);
+  }
+  return {ok: true, claimedKeys: claimed};
+}
+
+export async function releaseAll<TDraft, TRecord>(store: BookingStore<TDraft, TRecord>, keys: string[]): Promise<void> {
   for (const key of keys) await store.releaseBucket(key);
 }
 

@@ -58,6 +58,11 @@ export const createAppointmentFromLocalTimeSchema = z
     petIds: z.array(z.string()).optional(),
     clientName: z.string().trim().optional(),
     petName: z.string().trim().optional(),
+    /** WP4.7 A6 - practitioner-scheduling mode only (ignored otherwise, same as booking's own
+     * practitionerId - see bookAppointmentRequestSchema's doc comment). Absent means unassigned in
+     * practitioner mode (D3: blocks every bookable practitioner), matching this calendar
+     * click-to-create action's existing `enforceCapacity: false` staff-booking semantics. */
+    practitionerId: z.string().trim().min(1).optional(),
   })
   .superRefine(refineTaggedOrWalkIn);
 export type CreateAppointmentFromLocalTimeInput = z.infer<typeof createAppointmentFromLocalTimeSchema>;
@@ -78,6 +83,12 @@ export const updateAppointmentSchema = z.object({
   clientId: z.string().min(1).nullable().optional(),
   petIds: z.array(z.string()).optional(),
   notes: z.string().max(2000).optional(),
+  /** WP4.7 A6 - same absent/null/value convention as `clientId` above: omitting the key leaves the
+   * practitioner untouched, `null` explicitly moves the appointment to unassigned (D3), and a
+   * staffId reassigns it - see `reassignPractitioner`'s own doc comment for what that actually
+   * does to the capacity ledger. Practitioner-scheduling mode only; the route refuses this in
+   * clinic mode via reassignPractitioner's own `invalid_practitioner` result. */
+  practitionerId: z.string().min(1).nullable().optional(),
 });
 export type UpdateAppointmentInput = z.infer<typeof updateAppointmentSchema>;
 

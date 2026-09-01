@@ -54,9 +54,16 @@ export async function POST(request: Request) {
     petIds: resolved.result.setPetIds,
     clientName: resolved.result.clientName,
     petName: resolved.result.petName,
+    practitionerStaffId: parsed.data.practitionerId,
   };
 
   const result = await createAppointment(draft, {enforceCapacity: false});
-  if (!result.ok) return badRequest("Could not create this appointment.");
+  if (!result.ok) {
+    // enforceCapacity is false for every staff booking, so "outside_hours"/"slot_conflict" are not
+    // reachable here (see createAppointment's own dispatch) - only a requested practitioner that
+    // does not exist, or is no longer bookable, can fail this call.
+    if (result.reason === "invalid_practitioner") return badRequest("That practitioner is not bookable.");
+    return badRequest("Could not create this appointment.");
+  }
   return NextResponse.json(result.appointment, {status: 201});
 }
