@@ -5,7 +5,7 @@ import Link from "next/link";
 import {useRouter} from "next/navigation";
 import {AddressChip} from "@/components/ui/AddressChip";
 import {Banner} from "@/components/ui/Banner";
-import {Button, Textarea} from "@/components/ui/controls";
+import {Button, Select, Textarea} from "@/components/ui/controls";
 import {Combobox} from "@/components/pickers/Combobox";
 import {FormSection} from "@/components/ui/FormSection";
 import {KeyValuePanel, type KeyValueRow} from "@/components/ui/KeyValuePanel";
@@ -17,14 +17,20 @@ import {formatUnixSeconds} from "@/lib/format";
 import {appointmentSourceLabel, appointmentStatusLabel, appointmentStatusTone} from "@/lib/appointmentTone";
 import {availableStatusActions} from "@/lib/booking/appointmentStatusGuard";
 import type {AppointmentDoc, AppointmentStatus, TagResolution} from "@/lib/models/Appointment";
+import type {SchedulingMode} from "@/lib/models/Availability";
 import type {ClientDoc} from "@/lib/models/Client";
 import type {PetDoc} from "@/lib/models/Pet";
+import type {PractitionerSummary} from "@/lib/booking/queries";
 
 interface PatchBody {
   status?: AppointmentStatus;
   clientId?: string | null;
   petIds?: string[];
   notes?: string;
+  /** WP4.7 A6 - null unassigns (D3), a staffId reassigns, absent (never sent by this file's own
+   * callers) leaves it untouched - see reassignPractitioner's own doc comment for the ledger
+   * mechanics this triggers server-side. */
+  practitionerId?: string | null;
 }
 
 async function patchAppointment(appointmentId: string, body: PatchBody): Promise<{ok: boolean; message?: string}> {
@@ -97,6 +103,69 @@ function NotesSection({appointmentId, notes, onSaved}: {appointmentId: string; n
       <div className="flex justify-end">
         <Button variant="secondary" size="sm" onClick={handleSave} disabled={saving}>
           {saving ? "Saving..." : "Save notes"}
+        </Button>
+      </div>
+    </FormSection>
+  );
+}
+
+/**
+ * WP4.7 A6 - reassigns this appointment's practitioner (or moves it to/from unassigned), only
+ * rendered in practitioner-scheduling mode. Goes through the same `patchAppointment` chokepoint as
+ * every other save on this page, which is what makes `reassignPractitioner`'s claim-new-before-
+ * release-old bucket dance (lifecycle.ts) reachable from here at all - this component itself knows
+ * nothing about buckets, only about a practitionerId value and a Save button, exactly like the
+ * pre-existing EditTaggingSection's own division of concerns.
+ *
+ * `staffName` is the LEGACY free-text field this WP does not touch (AppointmentDoc's own doc
+ * comment: "stays display-only... never matched against a real Staff row") - shown read-only,
+ * directly above the new Select, so staff can see an appointment's old note without it being
+ * confused for (or edited through) the new assignment.
+ */
+function PractitionerSection({
+  appointmentId,
+  practitionerStaffId,
+  staffName,
+  practitioners,
+  onSaved,
+}: {
+  appointmentId: string;
+  practitionerStaffId?: string;
+  staffName?: string;
+  practitioners: PractitionerSummary[];
+  onSaved: () => void;
+}) {
+  const [value, setValue] = useState(practitionerStaffId ?? "");
+  const [saving, setSaving] = useState(false);
+  const snackbar = useSnackbar();
+  const changed = value !== (practitionerStaffId ?? "");
+
+  async function handleSave() {
+    setSaving(true);
+    const result = await patchAppointment(appointmentId, {practitionerId: value || null});
+    setSaving(false);
+    if (!result.ok) {
+      snackbar.show(result.message ?? "Could not reassign this appointment", "danger");
+      return;
+    }
+    snackbar.show("Practitioner updated", "ok");
+    onSaved();
+  }
+
+  return (
+    <FormSection title="Practitioner" helperText="Who this appointment is assigned to.">
+      {staffName && <p className="text-caption text-ink-faint">Legacy staff note (read-only, not a practitioner assignment): {staffName}</p>}
+      <Select aria-label="Practitioner" value={value} onChange={(e) => setValue(e.target.value)}>
+        <option value="">Unassigned</option>
+        {practitioners.map((p) => (
+          <option key={p.staffId} value={p.staffId}>
+            {p.name}
+          </option>
+        ))}
+      </Select>
+      <div className="flex justify-end">
+        <Button size="sm" onClick={handleSave} disabled={saving || !changed}>
+          {saving ? "Saving..." : "Save practitioner"}
         </Button>
       </div>
     </FormSection>
@@ -412,12 +481,16 @@ export function AppointmentDetailPanel({
   pets,
   serviceName,
   timeZone,
+  schedulingMode,
+  practitioners,
 }: {
   appointment: AppointmentDoc;
   client: ClientDoc | null;
   pets: PetDoc[];
   serviceName?: string;
   timeZone: string;
+  schedulingMode: SchedulingMode;
+  practitioners: PractitionerSummary[];
 }) {
   const router = useRouter();
 
@@ -480,6 +553,15 @@ export function AppointmentDetailPanel({
     <div className="max-w-2xl space-y-6">
       <KeyValuePanel title="Details" rows={rows} />
       <StatusActions appointmentId={appointment.appointmentId} status={appointment.status} onSaved={refresh} />
+      {schedulingMode === "practitioner" && (
+        <PractitionerSection
+          appointmentId={appointment.appointmentId}
+          practitionerStaffId={appointment.practitionerStaffId}
+          staffName={appointment.staffName}
+          practitioners={practitioners}
+          onSaved={refresh}
+        />
+      )}
       <NotesSection appointmentId={appointment.appointmentId} notes={appointment.notes} onSaved={refresh} />
       <KeyValuePanel title="Tagged to" rows={taggingRows} />
       {appointment.source === "mobile" && <ProvenanceBox appointment={appointment} onSaved={refresh} />}

@@ -18,9 +18,35 @@ export interface BookableService {
 interface Slot {
   startAt: string; // ISO instant, as returned by GET /v1/booking/availability
   endAt: string;
+  /** WP4.7 D5 - present only in practitioner-scheduling mode: every currently-free practitioner
+   * for this slot (a UNION - which one actually gets it if more than one is free is decided by
+   * the server's auto-assign at booking time, not knowable here). Absent in clinic mode. */
+  practitionerIds?: string[];
+}
+
+interface WizardPractitioner {
+  id: string;
+  name: string;
 }
 
 type Step = "pick" | "details" | "done";
+
+/**
+ * Time-only, clinic-timezone label for a slot button ("3:30 PM") - the date is already shown once,
+ * unambiguously, in the Date field above the whole list of slot buttons, so repeating it on every
+ * single button would be redundant.
+ *
+ * This replaces a pre-existing (pre-WP4.7, unrelated to this WP) bug found while adding the
+ * practitioner subtitle below each slot's time here: the old code called
+ * `formatUnixSeconds(...).split(", ").slice(1).join(", ")`, apparently assuming a weekday-prefixed
+ * date format ("Tuesday, Sep 1, 2026, 3:30 PM") so slicing off index 0 would drop just the weekday.
+ * `formatUnixSeconds`'s `dateStyle: "medium"` never includes a weekday - its actual output is "Sep
+ * 1, 2026, 3:30 PM" (three comma-separated parts, not four), so slicing off index 0 dropped "Sep
+ * 1" instead, leaving every slot button reading a nonsensical "2026, 3:30 PM".
+ */
+function formatSlotTime(isoInstant: string, timeZone: string): string {
+  return new Date(isoInstant).toLocaleTimeString("en-US", {hour: "numeric", minute: "2-digit", timeZone});
+}
 
 /**
  * The interactive half of `/book`: pick a service, pick a date, pick an open slot, then hand over
@@ -46,6 +72,8 @@ export function BookingWizard({
   const maxDate = useMemo(() => addCalendarDays(today, maxAdvanceDays), [today, maxAdvanceDays]);
   const [dateStr, setDateStr] = useState(today);
   const [slots, setSlots] = useState<Slot[] | null>(null);
+  const [wizardPractitioners, setWizardPractitioners] = useState<WizardPractitioner[]>([]);
+  const [practitionerFilter, setPractitionerFilter] = useState("");
   const [loadingSlots, setLoadingSlots] = useState(false);
   const [selectedSlot, setSelectedSlot] = useState<Slot | null>(null);
   const [name, setName] = useState("");
@@ -63,12 +91,14 @@ export function BookingWizard({
     setLoadingSlots(true);
     setError(null);
     setSelectedSlot(null);
+    setPractitionerFilter("");
     try {
       const fromUtc = localDateMinuteToUtcSeconds(dateStr, 0, timeZone);
       const nextDay = addCalendarDays(dateStr, 1);
       const toUtc = localDateMinuteToUtcSeconds(nextDay, 0, timeZone);
       if (fromUtc === null || toUtc === null) {
         setSlots([]);
+        setWizardPractitioners([]);
         return;
       }
       const params = new URLSearchParams({
@@ -80,13 +110,24 @@ export function BookingWizard({
       const body = await res.json().catch(() => null);
       if (!res.ok) throw new Error(body?.error?.message ?? "Could not load availability.");
       setSlots(body.slots ?? []);
+      // WP4.7 D5 - absent entirely in clinic mode (the route's own byte-parity guarantee - see
+      // its wire-shape test), not just an empty array, so this coalesces defensively either way.
+      setWizardPractitioners(body.practitioners ?? []);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not load availability.");
       setSlots([]);
+      setWizardPractitioners([]);
     } finally {
       setLoadingSlots(false);
     }
   }
+
+  const practitionerName = (id: string) => wizardPractitioners.find((p) => p.id === id)?.name ?? "a practitioner";
+
+  /** Client-side only - the server already returned the full union in one request, so narrowing
+   * which slots are VISIBLE never needs a second round trip against the rate-limited availability
+   * endpoint (this file's own doc comment on why fetches only ever happen on an explicit action). */
+  const visibleSlots = practitionerFilter ? (slots ?? []).filter((s) => s.practitionerIds?.includes(practitionerFilter)) : (slots ?? []);
 
   async function submitBooking() {
     if (!selectedSlot || !selectedService) return;
@@ -106,6 +147,10 @@ export function BookingWizard({
           client: {name: name.trim(), email: email.trim(), phone: phone.trim() || undefined},
           petName: petName.trim() || undefined,
           notes: notes.trim() || undefined,
+          // WP4.7 D5 - only meaningful in practitioner mode (the route ignores it otherwise, per
+          // bookAppointmentRequestSchema's own doc comment); absent (not just "") when the visitor
+          // never narrowed to one practitioner, so the server's own deterministic auto-assign picks.
+          practitionerId: practitionerFilter || undefined,
         }),
       });
       const body = await res.json().catch(() => null);
@@ -140,6 +185,7 @@ export function BookingWizard({
           <p className="text-caption uppercase tracking-wide text-ink-muted">Confirming</p>
           <p className="mt-1 text-emphasized text-ink">{selectedService.name}</p>
           <p className="text-body text-ink-muted">{formatUnixSeconds(Math.floor(new Date(selectedSlot.startAt).getTime() / 1000), timeZone, true)}</p>
+          {practitionerFilter && <p className="text-body text-ink-muted">with {practitionerName(practitionerFilter)}</p>}
         </div>
 
         <FormField label="Your name" htmlFor="book-name">
@@ -211,28 +257,49 @@ export function BookingWizard({
         </div>
       </FormField>
 
+      {wizardPractitioners.length > 0 && (
+        // WP4.7 D5 - client-side narrowing only (see loadSlots's doc comment); absent entirely in
+        // clinic mode, where wizardPractitioners is always empty.
+        <FormField label="Practitioner" htmlFor="book-practitioner" helperText="Optional - leave as Any to be matched automatically.">
+          <Select id="book-practitioner" value={practitionerFilter} onChange={(e) => setPractitionerFilter(e.target.value)}>
+            <option value="">Any practitioner</option>
+            {wizardPractitioners.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}
+              </option>
+            ))}
+          </Select>
+        </FormField>
+      )}
+
       {error && <p className="text-body text-danger">{error}</p>}
 
       {slots !== null && (
         <div>
           <p className="mb-2 text-body font-medium text-ink">Open times</p>
-          {slots.length === 0 ? (
-            <p className="text-body text-ink-faint">No open times on this date - try another day.</p>
+          {visibleSlots.length === 0 ? (
+            <p className="text-body text-ink-faint">
+              {slots.length === 0 ? "No open times on this date - try another day." : "No open times for that practitioner on this date - try another day or Any practitioner."}
+            </p>
           ) : (
             <div className="flex flex-wrap gap-2">
-              {slots.map((slot) => (
-                <button
-                  key={slot.startAt}
-                  type="button"
-                  onClick={() => {
-                    setSelectedSlot(slot);
-                    setStep("details");
-                  }}
-                  className="rounded-control border border-border px-3 py-1.5 text-body text-ink hover:border-brand hover:bg-brand-soft hover:text-brand"
-                >
-                  {formatUnixSeconds(Math.floor(new Date(slot.startAt).getTime() / 1000), timeZone).split(", ").slice(1).join(", ")}
-                </button>
-              ))}
+              {visibleSlots.map((slot) => {
+                const withNames = slot.practitionerIds?.map(practitionerName).join(" or ");
+                return (
+                  <button
+                    key={slot.startAt}
+                    type="button"
+                    onClick={() => {
+                      setSelectedSlot(slot);
+                      setStep("details");
+                    }}
+                    className="rounded-control border border-border px-3 py-1.5 text-left text-body text-ink hover:border-brand hover:bg-brand-soft hover:text-brand"
+                  >
+                    <div>{formatSlotTime(slot.startAt, timeZone)}</div>
+                    {withNames && <div className="text-caption text-ink-faint">{withNames}</div>}
+                  </button>
+                );
+              })}
             </div>
           )}
         </div>

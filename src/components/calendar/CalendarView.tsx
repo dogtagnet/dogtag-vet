@@ -10,8 +10,10 @@ import {ClientPicker} from "@/components/pickers/ClientPicker";
 import {PetMultiPicker} from "@/components/pickers/PetMultiPicker";
 import {appointmentStatusLabel, appointmentStatusTone} from "@/lib/appointmentTone";
 import type {AppointmentStatus} from "@/lib/models/Appointment";
+import type {SchedulingMode} from "@/lib/models/Availability";
 import type {ClientDoc} from "@/lib/models/Client";
 import type {PetDoc} from "@/lib/models/Pet";
+import type {PractitionerSummary} from "@/lib/booking/queries";
 
 export interface CalendarAppointment {
   appointmentId: string;
@@ -21,6 +23,13 @@ export interface CalendarAppointment {
   clientName: string;
   petName: string;
   serviceId?: string;
+  /** WP4.7 A4/A6 - see `AppointmentDoc.practitionerStaffId`'s own doc comment. Absent means
+   * unassigned (D3) whenever `schedulingMode` is "practitioner"; simply unused in clinic mode. */
+  practitionerStaffId?: string;
+  /** WP4.7 A6 - the legacy free-text field, shown read-only on the detail page when set. Never
+   * rendered here on the calendar grid itself (there is no room in a chip for it); carried through
+   * so `AppointmentDetailPanel` doesn't need a second fetch just to display it. */
+  staffName?: string;
 }
 
 export interface CalendarService {
@@ -44,10 +53,61 @@ export interface CalendarViewProps {
    * understand why the grid runs earlier/later than the usual business hours, rather than the grid
    * silently stretching with no explanation. */
   hasHoursOutsideRules?: boolean;
+  /** WP4.7 A6. Clinic mode's rendering below is completely unaffected by anything in this section -
+   * no practitioner filter, no accent badges, no day-view columns - matching every other surface in
+   * this WP that keeps clinic mode byte-identical to its pre-WP4.7 behavior. */
+  schedulingMode: SchedulingMode;
+  /** Every currently bookable practitioner, sorted by staffId (`listBookablePractitioners`'s own
+   * sort) - the SAME order every other WP4.7 A6 surface uses, so a practitioner's accent color
+   * (keyed by index into this list) never disagrees between the calendar, a chip, and anywhere
+   * else it might be shown. */
+  practitioners: PractitionerSummary[];
 }
 
 const ROW_MINUTES = 30;
 const ROW_HEIGHT_PX = 32;
+
+/** Sentinel for the practitioner filter's "Unassigned" option - a plain HTML `<select>` only
+ * carries string values, and "" is already taken by "All practitioners" (matching this file's own
+ * status filter's "" = "All statuses" convention). */
+const UNASSIGNED_FILTER = "__unassigned__";
+
+/** The 5-tone palette this app already uses for appointment status (`appointmentTone.ts`,
+ * `StatusBadge`) - reused here as WP4.7 A6's practitioner accent palette rather than inventing a
+ * second one, and specifically NOT a set of new hex values: every one of these classes resolves to
+ * a `tailwind.config.ts` color token (that file's own doc comment: nothing in this app hardcodes a
+ * color). Cycling through 5 tones for what could be any number of practitioners means two
+ * practitioners can land on the same tone once a clinic has more than 5 bookable ones - acceptable
+ * for a cosmetic scanning aid (the column header / Select already disambiguates who is who), not
+ * worth a bespoke larger palette. */
+const toneClasses = {
+  ok: "bg-ok-soft text-ok",
+  warn: "bg-warn-soft text-warn",
+  danger: "bg-danger-soft text-danger",
+  info: "bg-info-soft text-info",
+  neutral: "bg-neutral-status-soft text-neutral-status",
+} as const;
+type Tone = keyof typeof toneClasses;
+const ACCENT_TONES: Tone[] = ["ok", "warn", "danger", "info", "neutral"];
+
+/** Deterministic accent tone for `staffId`, keyed by its index in `practitioners` AS PASSED IN
+ * (callers pass the already-`listBookablePractitioners`-sorted list, never re-sorted here, so
+ * every caller on the page agrees on who gets which color). `undefined`/unassigned and an unknown
+ * staffId both fall back to "neutral" - the same tone the Unassigned column itself uses. */
+function practitionerAccentTone(practitioners: PractitionerSummary[], staffId: string | undefined): Tone {
+  if (!staffId) return "neutral";
+  const index = practitioners.findIndex((p) => p.staffId === staffId);
+  return index === -1 ? "neutral" : (ACCENT_TONES[index % ACCENT_TONES.length] ?? "neutral");
+}
+
+/** "Dr. Jane Smith" -> "JS"; a single-word name (a bare email local-part fallback, e.g. "owner")
+ * -> "OW". Initials read faster than a full name in a dense calendar cell (WP4.7 A6). */
+function practitionerInitials(name: string): string {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return "?";
+  if (parts.length === 1) return (parts[0] ?? "").slice(0, 2).toUpperCase();
+  return `${(parts[0] ?? "")[0] ?? ""}${(parts[parts.length - 1] ?? "")[0] ?? ""}`.toUpperCase();
+}
 
 /** Local (clinic-timezone, not browser-timezone) date string and minute-of-day for a UTC
  * unix-seconds instant, computed via `Intl.DateTimeFormat` so it is correct regardless of which
@@ -88,12 +148,40 @@ function weekdayLabel(dateStr: string): string {
   return new Date(Date.UTC(year, month - 1, day)).toLocaleDateString(undefined, {weekday: "short", timeZone: "UTC"});
 }
 
+type PositionedAppointment = CalendarAppointment & {localMinute: number; durationMinutes: number};
+
+interface GridColumn {
+  key: string;
+  /** Which date a slot click in this column resolves to. */
+  date: string;
+  /** The practitioner a slot click in this column should pre-select - `undefined` for the
+   * Unassigned column and for every column outside day-view-practitioner-columns mode. */
+  practitionerStaffId?: string;
+  headerPrimary: string;
+  headerSecondary?: string;
+  accentTone?: Tone;
+  appointments: PositionedAppointment[];
+}
+
 export function CalendarView(props: CalendarViewProps) {
-  const {dates, timezone, view, anchorDate, dayStartMinute, dayEndMinute, appointments, services, hasHoursOutsideRules} = props;
+  const {
+    dates,
+    timezone,
+    view,
+    anchorDate,
+    dayStartMinute,
+    dayEndMinute,
+    appointments,
+    services,
+    hasHoursOutsideRules,
+    schedulingMode,
+    practitioners,
+  } = props;
   const router = useRouter();
   const snackbar = useSnackbar();
-  const [draft, setDraft] = useState<{date: string; minute: number} | null>(null);
+  const [draft, setDraft] = useState<{date: string; minute: number; practitionerStaffId?: string} | null>(null);
   const [statusFilter, setStatusFilter] = useState<AppointmentStatus | "">("");
+  const [practitionerFilter, setPractitionerFilter] = useState("");
 
   const rows = useMemo(() => {
     const list: number[] = [];
@@ -102,9 +190,11 @@ export function CalendarView(props: CalendarViewProps) {
   }, [dayStartMinute, dayEndMinute]);
 
   const appointmentsByDate = useMemo(() => {
-    const map = new Map<string, (CalendarAppointment & {localMinute: number; durationMinutes: number})[]>();
+    const map = new Map<string, PositionedAppointment[]>();
     for (const apt of appointments) {
       if (statusFilter && apt.status !== statusFilter) continue;
+      if (practitionerFilter === UNASSIGNED_FILTER && apt.practitionerStaffId) continue;
+      if (practitionerFilter && practitionerFilter !== UNASSIGNED_FILTER && apt.practitionerStaffId !== practitionerFilter) continue;
       const {date, minuteOfDay} = localParts(apt.startAt, timezone);
       const durationMinutes = Math.round((apt.endAt - apt.startAt) / 60);
       const list = map.get(date) ?? [];
@@ -112,7 +202,55 @@ export function CalendarView(props: CalendarViewProps) {
       map.set(date, list);
     }
     return map;
-  }, [appointments, timezone, statusFilter]);
+  }, [appointments, timezone, statusFilter, practitionerFilter]);
+
+  // WP4.7 A6 - DAY view's own columns become "one per bookable practitioner (+ Unassigned when it
+  // has anything)" instead of "one per date" the moment practitioner scheduling is on. WEEK view,
+  // and DAY view in clinic mode, keep exactly today's date-column layout - only the practitioner
+  // filter above (already folded into appointmentsByDate) and each chip's accent badge below
+  // change anything for them.
+  const showPractitionerColumns = view === "day" && schedulingMode === "practitioner";
+
+  const columns = useMemo<GridColumn[]>(() => {
+    if (!showPractitionerColumns) {
+      return dates.map((d) => ({
+        key: d,
+        date: d,
+        headerPrimary: weekdayLabel(d),
+        headerSecondary: d.slice(5),
+        appointments: appointmentsByDate.get(d) ?? [],
+      }));
+    }
+
+    const dayDate = dates[0] ?? anchorDate;
+    const dayAppointments = appointmentsByDate.get(dayDate) ?? [];
+    const relevantPractitioners =
+      practitionerFilter && practitionerFilter !== UNASSIGNED_FILTER
+        ? practitioners.filter((p) => p.staffId === practitionerFilter)
+        : practitioners;
+    const cols: GridColumn[] = relevantPractitioners.map((p) => ({
+      key: p.staffId,
+      date: dayDate,
+      practitionerStaffId: p.staffId,
+      headerPrimary: p.name,
+      headerSecondary: practitionerInitials(p.name),
+      accentTone: practitionerAccentTone(practitioners, p.staffId),
+      appointments: dayAppointments.filter((a) => a.practitionerStaffId === p.staffId),
+    }));
+
+    const unassigned = dayAppointments.filter((a) => !a.practitionerStaffId);
+    if (practitionerFilter === UNASSIGNED_FILTER || (practitionerFilter === "" && unassigned.length > 0)) {
+      cols.push({
+        key: "unassigned",
+        date: dayDate,
+        practitionerStaffId: undefined,
+        headerPrimary: "Unassigned",
+        accentTone: "neutral",
+        appointments: unassigned,
+      });
+    }
+    return cols;
+  }, [showPractitionerColumns, dates, anchorDate, appointmentsByDate, practitionerFilter, practitioners]);
 
   function navigate(nextDate: string, nextView: "week" | "day" = view) {
     router.push(`/calendar?date=${nextDate}&view=${nextView}`);
@@ -130,6 +268,13 @@ export function CalendarView(props: CalendarViewProps) {
         <div className="mb-4">
           <Banner tone="info" title="Showing hours outside the normal schedule">
             This range includes an availability exception or a booked appointment outside the clinic&apos;s standard weekly hours, so the grid has widened to show it.
+          </Banner>
+        </div>
+      )}
+      {showPractitionerColumns && columns.length === 0 && (
+        <div className="mb-4">
+          <Banner tone="warn" title="No bookable practitioners">
+            Mark at least one vet or owner bookable under Settings to see per-practitioner columns here.
           </Banner>
         </div>
       )}
@@ -159,6 +304,22 @@ export function CalendarView(props: CalendarViewProps) {
               </option>
             ))}
           </Select>
+          {schedulingMode === "practitioner" && (
+            <Select
+              value={practitionerFilter}
+              onChange={(e) => setPractitionerFilter(e.target.value)}
+              className="w-auto"
+              aria-label="Filter by practitioner"
+            >
+              <option value="">All practitioners</option>
+              {practitioners.map((p) => (
+                <option key={p.staffId} value={p.staffId}>
+                  {p.name}
+                </option>
+              ))}
+              <option value={UNASSIGNED_FILTER}>Unassigned</option>
+            </Select>
+          )}
           <div className="inline-flex rounded-control border border-border">
             <button
               type="button"
@@ -181,16 +342,29 @@ export function CalendarView(props: CalendarViewProps) {
       <div className="overflow-x-auto rounded-card border border-border bg-surface shadow-card">
         <div
           className="grid"
-          style={{gridTemplateColumns: `64px repeat(${dates.length}, minmax(140px, 1fr))`}}
+          style={{gridTemplateColumns: `64px repeat(${Math.max(columns.length, 1)}, minmax(140px, 1fr))`}}
         >
           <div className="sticky top-0 z-10 border-b border-r border-border bg-surface-2" />
-          {dates.map((d) => (
+          {columns.map((col) => (
             <div
-              key={d}
+              key={col.key}
               className="sticky top-0 z-10 border-b border-l border-border bg-surface-2 px-2 py-2 text-center"
             >
-              <div className="text-caption uppercase tracking-wide text-ink-muted">{weekdayLabel(d)}</div>
-              <div className="text-body font-medium text-ink">{d.slice(5)}</div>
+              {col.accentTone ? (
+                <div className="flex items-center justify-center gap-1.5">
+                  <span
+                    className={`inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-badge text-[10px] font-medium ${toneClasses[col.accentTone]}`}
+                  >
+                    {col.headerSecondary}
+                  </span>
+                  <span className="truncate text-body font-medium text-ink">{col.headerPrimary}</span>
+                </div>
+              ) : (
+                <>
+                  <div className="text-caption uppercase tracking-wide text-ink-muted">{col.headerPrimary}</div>
+                  <div className="text-body font-medium text-ink">{col.headerSecondary}</div>
+                </>
+              )}
             </div>
           ))}
 
@@ -202,8 +376,8 @@ export function CalendarView(props: CalendarViewProps) {
               >
                 {minute % 60 === 0 ? formatMinuteLabel(minute) : ""}
               </div>
-              {dates.map((d) => {
-                const cellAppointments = (appointmentsByDate.get(d) ?? []).filter(
+              {columns.map((col) => {
+                const cellAppointments = col.appointments.filter(
                   (a) => a.localMinute >= minute && a.localMinute < minute + ROW_MINUTES,
                 );
                 return (
@@ -216,14 +390,14 @@ export function CalendarView(props: CalendarViewProps) {
                   // slot button underneath - stopPropagation() below is defense in depth for that,
                   // not what actually fixes it.
                   <div
-                    key={`${d}-${minute}`}
+                    key={`${col.key}-${minute}`}
                     className="relative border-l border-t border-border"
                     style={{height: ROW_HEIGHT_PX}}
                   >
                     <button
                       type="button"
-                      onClick={() => setDraft({date: d, minute})}
-                      aria-label={`New appointment ${d} ${formatMinuteLabel(minute)}`}
+                      onClick={() => setDraft({date: col.date, minute, practitionerStaffId: col.practitionerStaffId})}
+                      aria-label={`New appointment ${col.date} ${formatMinuteLabel(minute)}${col.practitionerStaffId ? ` with ${col.headerPrimary}` : ""}`}
                       className="absolute inset-0 text-left hover:bg-surface-2"
                     />
                     {cellAppointments.map((a) => (
@@ -242,6 +416,15 @@ export function CalendarView(props: CalendarViewProps) {
                         data-tone={appointmentStatusTone[a.status]}
                       >
                         <ToneBox tone={appointmentStatusTone[a.status]}>
+                          {schedulingMode === "practitioner" && (
+                            <span
+                              className={`mr-1 inline-flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-badge align-middle text-[8px] font-semibold ${toneClasses[practitionerAccentTone(practitioners, a.practitionerStaffId)]}`}
+                            >
+                              {a.practitionerStaffId
+                                ? practitionerInitials(practitioners.find((p) => p.staffId === a.practitionerStaffId)?.name ?? "?")
+                                : "?"}
+                            </span>
+                          )}
                           {a.clientName} - {a.petName}
                         </ToneBox>
                       </button>
@@ -259,6 +442,9 @@ export function CalendarView(props: CalendarViewProps) {
           date={draft.date}
           minute={draft.minute}
           services={services}
+          schedulingMode={schedulingMode}
+          practitioners={practitioners}
+          initialPractitionerStaffId={draft.practitionerStaffId}
           onClose={() => setDraft(null)}
           onCreated={() => {
             setDraft(null);
@@ -275,24 +461,22 @@ function ToneBox({tone, children}: {tone: keyof typeof toneClasses; children: Re
   return <div className={`h-full w-full truncate rounded-control px-1 ${toneClasses[tone]}`}>{children}</div>;
 }
 
-const toneClasses = {
-  ok: "bg-ok-soft text-ok",
-  warn: "bg-warn-soft text-warn",
-  danger: "bg-danger-soft text-danger",
-  info: "bg-info-soft text-info",
-  neutral: "bg-neutral-status-soft text-neutral-status",
-} as const;
-
 function CreateAppointmentPanel({
   date,
   minute,
   services,
+  schedulingMode,
+  practitioners,
+  initialPractitionerStaffId,
   onClose,
   onCreated,
 }: {
   date: string;
   minute: number;
   services: CalendarService[];
+  schedulingMode: SchedulingMode;
+  practitioners: PractitionerSummary[];
+  initialPractitionerStaffId?: string;
   onClose: () => void;
   onCreated: () => void;
 }) {
@@ -302,6 +486,7 @@ function CreateAppointmentPanel({
   const [clientName, setClientName] = useState("");
   const [petName, setPetName] = useState("");
   const [serviceId, setServiceId] = useState(services[0]?.serviceId ?? "");
+  const [practitionerStaffId, setPractitionerStaffId] = useState(initialPractitionerStaffId ?? "");
   const [notes, setNotes] = useState("");
   const [saving, setSaving] = useState(false);
   const snackbar = useSnackbar();
@@ -342,6 +527,7 @@ function CreateAppointmentPanel({
           durationMinutes,
           serviceId: serviceId || undefined,
           notes,
+          practitionerId: practitionerStaffId || undefined,
           ...(walkIn
             ? {clientName, petName}
             : {clientId: selectedClient!.clientId, petIds: selectedPets.map((p) => p.petId)}),
@@ -407,6 +593,16 @@ function CreateAppointmentPanel({
               </Link>{" "}
               to pick it here.
             </p>
+          )}
+          {schedulingMode === "practitioner" && (
+            <Select aria-label="Practitioner" value={practitionerStaffId} onChange={(e) => setPractitionerStaffId(e.target.value)}>
+              <option value="">Unassigned (auto-assign not used for staff bookings)</option>
+              {practitioners.map((p) => (
+                <option key={p.staffId} value={p.staffId}>
+                  {p.name}
+                </option>
+              ))}
+            </Select>
           )}
           <Textarea placeholder="Notes" rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} />
         </div>

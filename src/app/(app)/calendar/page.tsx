@@ -12,6 +12,7 @@ import {
 import {connectToDatabase} from "@/lib/db";
 import {Appointment, type AppointmentDoc} from "@/lib/models/Appointment";
 import {Service, type ServiceDoc} from "@/lib/models/Service";
+import {listBookablePractitioners} from "@/lib/booking/queries";
 import {CalendarView} from "@/components/calendar/CalendarView";
 import {toPlain} from "@/lib/toPlain";
 
@@ -28,7 +29,7 @@ export default async function CalendarPage({
   const days = view === "day" ? 1 : 7;
   const range = calendarRangeFor(rangeStart, days, settings.timezone);
 
-  const [appointments, services, rules, exceptions] = await Promise.all([
+  const [appointments, services, rules, exceptions, practitioners] = await Promise.all([
     Appointment.find({startAt: {$lt: range.toUtc}, endAt: {$gt: range.fromUtc}})
       .sort({startAt: 1})
       .lean<AppointmentDoc[]>().then(toPlain),
@@ -38,6 +39,9 @@ export default async function CalendarPage({
     // generation for booking already honors these; the grid below must too, or an appointment
     // booked into an exception's extended window renders nowhere (round-6 grader finding).
     AvailabilityException.find({date: {$in: range.dates}}).lean<AvailabilityExceptionDoc[]>().then(toPlain),
+    // WP4.7 A6 - the practitioner filter/columns/accent system; empty in clinic mode (no bookable
+    // practitioners need to exist there) and harmless to fetch either way.
+    listBookablePractitioners(),
   ]);
 
   const {dayStartMinute, dayEndMinute, hasHoursOutsideRules} = computeCalendarWindow({
@@ -66,8 +70,12 @@ export default async function CalendarPage({
           clientName: a.clientName,
           petName: a.petName,
           serviceId: a.serviceId,
+          practitionerStaffId: a.practitionerStaffId,
+          staffName: a.staffName,
         }))}
         services={services.map((s) => ({serviceId: s.serviceId, name: s.name, durationMinutes: s.durationMinutes}))}
+        schedulingMode={settings.schedulingMode ?? "clinic"}
+        practitioners={practitioners}
       />
     </>
   );

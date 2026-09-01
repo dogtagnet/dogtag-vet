@@ -7,6 +7,7 @@ import {Client, type ClientDoc} from "@/lib/models/Client";
 import {Pet, type PetDoc} from "@/lib/models/Pet";
 import {Service, type ServiceDoc} from "@/lib/models/Service";
 import {getBookingSettings} from "@/lib/models/Availability";
+import {listBookablePractitioners} from "@/lib/booking/queries";
 import {AppointmentDetailPanel} from "@/app/(app)/appointments/[id]/AppointmentDetailPanel";
 import {toPlain} from "@/lib/toPlain";
 
@@ -29,11 +30,12 @@ export default async function AppointmentDetailPage({params}: {params: Promise<{
   if (!appointment) notFound();
 
   const petIds = appointment.petIds ?? [];
-  const [client, fetchedPets, service, bookingSettings] = await Promise.all([
+  const [client, fetchedPets, service, bookingSettings, practitioners] = await Promise.all([
     appointment.clientId ? Client.findOne({clientId: appointment.clientId}).lean<ClientDoc>().then(toPlain) : Promise.resolve(null),
     petIds.length > 0 ? Pet.find({petId: {$in: petIds}}).lean<PetDoc[]>().then(toPlain) : Promise.resolve([]),
     appointment.serviceId ? Service.findOne({serviceId: appointment.serviceId}).lean<ServiceDoc>().then(toPlain) : Promise.resolve(null),
     getBookingSettings(),
+    listBookablePractitioners(),
   ]);
   // `Pet.find({$in: ...})` does not preserve petIds' order - restore it so this page's pet order
   // matches the stored petName's order everywhere it's shown (see orderPetsByPetIds's doc comment).
@@ -48,6 +50,8 @@ export default async function AppointmentDetailPage({params}: {params: Promise<{
         pets={pets.map((pet) => omitMongoId(pet))}
         serviceName={service?.name}
         timeZone={bookingSettings.timezone}
+        schedulingMode={bookingSettings.schedulingMode ?? "clinic"}
+        practitioners={practitioners}
       />
     </>
   );
