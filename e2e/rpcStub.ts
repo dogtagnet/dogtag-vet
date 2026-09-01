@@ -1,4 +1,5 @@
 import {createServer, type IncomingMessage, type Server, type ServerResponse} from "node:http";
+import {randomBytes} from "node:crypto";
 import {decodeFunctionData, encodeFunctionResult} from "viem";
 import type {Abi, Address, Hex} from "viem";
 // Playwright loads e2e spec/support files through Node's own native ESM loader (unlike the Next.js
@@ -26,10 +27,27 @@ import vetIssuerAbiJson from "../protocol/contracts/exports/abi/VetIssuer.json" 
  * (zero bytes32 / zero address / false) rather than an RPC error - matching what a real chain
  * actually returns for an unset mapping entry, and keeping every test that only cares about ONE of
  * the three reads free of needing to script the other two.
+ *
+ * WP4.5 grade-fix MAJOR 2: every response (including error replies) carries permissive CORS
+ * headers, and a bare `OPTIONS` preflight is answered before any body is even read - required for
+ * the env-gated `mock` wagmi connector (`src/lib/wagmi.ts`) to reach this stub at all. Without
+ * this, every BROWSER-side `fetch` here (viem's `PublicClient.estimateContractGas`, and the mock
+ * connector's own `eth_sendTransaction` relay - both plain cross-origin POSTs with a
+ * `content-type: application/json` body, which is not CORS-simple and so always preflights) died
+ * at the preflight `OPTIONS` request before the browser ever sent the real one, silently
+ * up-leveled by `legacyTxWithGas`'s fail-open `catch` into "no gas field, wallet estimates as
+ * before" - the exact reason this stub's `eth_estimateGas`/`eth_sendTransaction` scripting was
+ * never actually exercised end to end despite being implemented. A Node-side `fetch` (this same
+ * file's own control-plane helpers below, and `tests/unit/chainWriteGas.integration.test.ts`'s
+ * direct `viem` client) never preflights, which is exactly why that integration test already
+ * passed while the real browser path silently never worked.
  */
 const ABIS: Abi[] = [dogTagSBTConsentAbiJson as unknown as Abi, vetIssuerFactoryAbiJson as unknown as Abi, vetIssuerAbiJson as unknown as Abi];
 
-export const RPC_STUB_PORT = 45_601;
+// Overridable for the same reason playwright.config.ts's E2E_WEB_PORT and mongo-fixture.ts's
+// E2E_MONGO_PORT are - a copy of this checkout synced elsewhere needs to run its own stub without
+// colliding with one already bound to the default port. Default unchanged for every normal run.
+export const RPC_STUB_PORT = Number(process.env.E2E_RPC_STUB_PORT ?? 45_601);
 export const RPC_STUB_URL = `http://127.0.0.1:${RPC_STUB_PORT}`;
 
 type ScenarioResult = string | boolean;
@@ -56,6 +74,28 @@ const receipts = new Map<string, "success" | "reverted">();
  * a plausible mid-size estimate so a test that never bothers scripting one still gets a sane value
  * rather than the ABI-default `0n`. */
 let gasEstimate = 200_000n;
+
+/** Every response - including error replies and the `OPTIONS` preflight itself - carries these so
+ * a real browser (not just this file's own Node-side `fetch` control-plane helpers) can actually
+ * read the response instead of failing at the CORS layer. A wildcard origin is fine: this stub
+ * only ever runs on `127.0.0.1` for the duration of one e2e run, holds no credentials, and no
+ * response here is ever privileged. */
+const CORS_HEADERS: Record<string, string> = {
+  "access-control-allow-origin": "*",
+  "access-control-allow-methods": "POST, GET, OPTIONS",
+  "access-control-allow-headers": "content-type",
+};
+
+/** WP4.5 grade-fix MAJOR 2 - the most recent `eth_sendTransaction` params this stub received,
+ * exactly as sent (never re-derived), so a test can assert on the gas/type/to the app's own wallet
+ * write actually carried, the same way `setRpcReceipt`/`setRpcGasEstimate` let a test script an
+ * INPUT rather than only ever reading one back. `null` until the first `eth_sendTransaction` of a
+ * run (or since the last `/__control/reset`). */
+let lastSendTransaction: Record<string, unknown> | null = null;
+
+function fakeTxHash(): Hex {
+  return `0x${randomBytes(32).toString("hex")}`;
+}
 
 function canonicalArgKey(args: readonly unknown[]): string {
   return JSON.stringify(args.map((a) => (typeof a === "bigint" ? a.toString() : String(a).toLowerCase())));
@@ -102,7 +142,7 @@ async function readBody(req: IncomingMessage): Promise<string> {
 
 function sendJson(res: ServerResponse, status: number, body: unknown): void {
   const text = JSON.stringify(body);
-  res.writeHead(status, {"content-type": "application/json", "content-length": Buffer.byteLength(text)});
+  res.writeHead(status, {...CORS_HEADERS, "content-type": "application/json", "content-length": Buffer.byteLength(text)});
   res.end(text);
 }
 
@@ -116,6 +156,20 @@ let activeServer: Server | undefined;
 
 export function startRpcStub(): Server {
   const server = createServer(async (req, res) => {
+    // Answered BEFORE reading any body: a browser's CORS preflight is a bare `OPTIONS` with no
+    // body at all (and must not need one), and it must come back fast with the headers above or
+    // the browser never sends the real request that follows.
+    if (req.method === "OPTIONS") {
+      res.writeHead(204, CORS_HEADERS);
+      res.end();
+      return;
+    }
+
+    if (req.method === "GET" && req.url === "/__control/last-send-transaction") {
+      sendJson(res, 200, {transaction: lastSendTransaction});
+      return;
+    }
+
     const bodyText = await readBody(req);
 
     if (req.method === "POST" && req.url === "/__control/reset") {
@@ -123,6 +177,7 @@ export function startRpcStub(): Server {
       forceCallFailure = false;
       receipts.clear();
       gasEstimate = 200_000n;
+      lastSendTransaction = null;
       sendJson(res, 200, {ok: true});
       return;
     }
@@ -204,6 +259,53 @@ export function startRpcStub(): Server {
       reply("0x1");
       return;
     }
+    // WP4.5 grade-fix MAJOR 2: none of these three carry test-visible behavior on their own - a
+    // real transaction's nonce/priority-fee/base-fee don't matter to anything this stub is used to
+    // prove - but viem's `sendTransaction`/`prepareTransactionRequest` may call any of them while
+    // filling in a JSON-RPC (connector) account's transaction before the ACTUAL
+    // `eth_sendTransaction` it cares about, and an unhandled one here would throw OUTSIDE
+    // `legacyTxWithGas`'s own try/catch (that only wraps the gas estimate), failing the write
+    // itself rather than just falling back to a bare estimate. Answered with simple, always-valid
+    // values rather than omitted and diagnosed one crash at a time.
+    if (rpcRequest.method === "eth_getTransactionCount") {
+      reply("0x0");
+      return;
+    }
+    if (rpcRequest.method === "eth_maxPriorityFeePerGas") {
+      reply("0x1");
+      return;
+    }
+    if (rpcRequest.method === "eth_feeHistory") {
+      reply({oldestBlock: "0x1", baseFeePerGas: ["0x1", "0x1"], gasUsedRatio: [0.5], reward: [["0x1"]]});
+      return;
+    }
+    if (rpcRequest.method === "eth_getBlockByNumber" || rpcRequest.method === "eth_getBlockByHash") {
+      reply({
+        number: `0x${blockNumber.toString(16)}`,
+        hash: `0x${"bb".repeat(32)}`,
+        parentHash: `0x${"0".repeat(64)}`,
+        baseFeePerGas: "0x1",
+        gasLimit: "0x1c9c380",
+        gasUsed: "0x0",
+        timestamp: `0x${Math.floor(Date.now() / 1000).toString(16)}`,
+        transactions: [],
+      });
+      return;
+    }
+    /** WP4.5 grade-fix MAJOR 2 - the mock connector's `getProvider` (`@wagmi/core`'s own `mock.ts`)
+     * relays any method it does not special-case, `eth_sendTransaction` included, straight to this
+     * stub via a real HTTP POST exactly like a real unlocked-account node's own `eth_sendTransaction`
+     * contract: the caller (viem, via wagmi) hands over an UNSIGNED `{from, to, data, gas, type,
+     * ...}` and the "node" is trusted to sign and broadcast it - so this stub does not need to
+     * validate or sign anything to stand in for that, only record exactly what it received (for a
+     * test to assert on, `getLastSendTransaction` below) and answer with a well-formed tx hash
+     * matching `POST .../tx`'s own `/^0x[0-9a-fA-F]{64}$/` validation. Never auto-mines a receipt
+     * for it - `setRpcReceipt` stays the one way a test puts a hash into `receipts`. */
+    if (rpcRequest.method === "eth_sendTransaction") {
+      lastSendTransaction = (rpcRequest.params?.[0] as Record<string, unknown> | undefined) ?? null;
+      reply(fakeTxHash());
+      return;
+    }
     if (rpcRequest.method === "eth_call") {
       if (forceCallFailure) {
         replyError("stub: simulated RPC failure");
@@ -230,6 +332,12 @@ export function startRpcStub(): Server {
       return;
     }
 
+    // Logged (not just returned as a JSON-RPC error) so an unexpected method viem/wagmi needs but
+    // this stub does not yet answer shows up directly in the Playwright/vitest run's own output -
+    // Playwright's `global-setup.ts` starts this stub in the SAME process as the test runner
+    // itself, so this line lands in the same terminal, not a subprocess log a failure would
+    // otherwise hide behind a generic timeout.
+    console.error(`[rpcStub] unsupported method: ${rpcRequest.method}`);
     replyError(`stub: unsupported method ${rpcRequest.method}`);
   });
   server.listen(RPC_STUB_PORT);
@@ -283,4 +391,14 @@ export async function setRpcGasEstimate(gas: bigint): Promise<void> {
     headers: {"content-type": "application/json"},
     body: JSON.stringify({gas: gas.toString()}),
   });
+}
+
+/** WP4.5 grade-fix MAJOR 2 - the most recent `eth_sendTransaction` params this stub actually
+ * received (or `null` if none since start/`resetRpcStub`), exactly as sent: the wire-level proof
+ * that the app's own gas headroom (`legacyTxWithGas`) reached the wallet write, not just the
+ * `PublicClient`'s separate `eth_estimateGas` call. */
+export async function getLastSendTransaction(): Promise<Record<string, unknown> | null> {
+  const res = await fetch(`${RPC_STUB_URL}/__control/last-send-transaction`);
+  const body = (await res.json()) as {transaction: Record<string, unknown> | null};
+  return body.transaction;
 }
