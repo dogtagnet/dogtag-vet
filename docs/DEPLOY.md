@@ -53,6 +53,12 @@ Two ways to get one without owning server infrastructure:
 
 No inbound firewall rule or port forward is needed anywhere in this path - `cloudflared` makes an outbound connection to Cloudflare, which is what a residential or clinic-office network almost always allows by default.
 
+### Operator wallet gas
+
+The wallet you connect during setup submits every on-chain write this app makes - issuing a tag, revoking or reactivating one, and relaying a verification signature - so it needs a native PLASMA balance to pay gas.
+Gas is fronted by that operator wallet and refunded by the clinic's clone on success.
+A failed attempt is not refunded - keep the wallet topped up rather than relying on refunds to cover the next attempt.
+
 ## Kubernetes (Helm)
 
 `helm/dogtag-vet/` deploys the web app and the worker as two Deployments; it does not manage MongoDB - see "Managed Mongo" below.
