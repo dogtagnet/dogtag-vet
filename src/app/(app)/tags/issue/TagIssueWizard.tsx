@@ -82,6 +82,9 @@ export function TagIssueWizard() {
   const [session, setSession] = useState<SessionPoll | null>(null);
   const [issuing, setIssuing] = useState(false);
   const [pendingTxHash, setPendingTxHash] = useState<`0x${string}` | undefined>(undefined);
+  // Flips the bound-state "Sign issuer attestation" button to a done badge once the signed
+  // attestation is stored (live incident: the button silently kept offering itself after success).
+  const [attestationSigned, setAttestationSigned] = useState(false);
 
   // The replace wizard (wp4-vet.md: "replace ... start new mint session for the same pet, and
   // after the new tag binds, prompt revoke of the old tag with REASON_REPLACED"). `replacingPet`
@@ -332,6 +335,7 @@ export function TagIssueWizard() {
         return;
       }
       snackbar.show("Issuer attestation signed and stored", "ok");
+      setAttestationSigned(true);
     } catch (err) {
       snackbar.show(err instanceof Error ? err.message : "Signature was rejected", "danger");
     }
@@ -415,7 +419,11 @@ export function TagIssueWizard() {
           {session.status === "bound" && (
             <div className="mt-4 space-y-4">
               <p className="text-body text-ok">Tag bound successfully.</p>
-              <Button onClick={handleSignAttestation}>Sign issuer attestation</Button>
+              {attestationSigned ? (
+                <StatusBadge label="Issuer attestation signed" tone="ok" />
+              ) : (
+                <Button onClick={handleSignAttestation}>Sign issuer attestation</Button>
+              )}
               {replacingPet?.dogTag.status === "active" && !previousTagRevoked && (
                 <Banner tone="warn" title="Revoke the previous tag">
                   <p className="mb-3">
