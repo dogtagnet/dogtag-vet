@@ -2,7 +2,7 @@
 
 import {useEffect, useState} from "react";
 import Link from "next/link";
-import {useAccount, useWaitForTransactionReceipt, useWriteContract} from "wagmi";
+import {useAccount, usePublicClient, useWaitForTransactionReceipt, useWriteContract} from "wagmi";
 import {DataTable} from "@/components/ui/DataTable";
 import {StatusBadge} from "@/components/ui/StatusBadge";
 import {HashCell} from "@/components/ui/HashCell";
@@ -10,7 +10,7 @@ import {Button, Select} from "@/components/ui/controls";
 import {useSnackbar} from "@/components/ui/Snackbar";
 import {vetIssuerAbi} from "@/lib/abi";
 import {roax} from "@/lib/chains";
-import {legacyTx} from "@/lib/chainWrite";
+import {legacyTxWithGas} from "@/lib/chainWrite";
 import {REASON_CODES, reasonCodeHash, type ReasonCodeName} from "@/lib/reasonCodes";
 import {formatUnixSeconds} from "@/lib/format";
 import {dogTagStatusLabel, dogTagStatusTone, mintSessionStatusLabel, mintSessionStatusTone} from "@/lib/tagStatusTone";
@@ -28,6 +28,7 @@ interface TagsResponse {
 export function TagsTable({timeZone}: {timeZone: string}) {
   const {address, chainId} = useAccount();
   const {writeContractAsync} = useWriteContract();
+  const publicClient = usePublicClient();
   const snackbar = useSnackbar();
   const [data, setData] = useState<TagsResponse | null>(null);
   const [busyPetId, setBusyPetId] = useState<string | null>(null);
@@ -68,11 +69,14 @@ export function TagsTable({timeZone}: {timeZone: string}) {
     setBusyPetId(pet.petId);
     try {
       const hash = await writeContractAsync(
-        legacyTx({
+        // Headroom over the bare estimate - see legacyTxWithGas's doc comment for the incident
+        // txs the refund tail starved at the wallet's own estimate.
+        await legacyTxWithGas(publicClient, {
           address: pet.dogTag.cloneAddress as `0x${string}`,
           abi: vetIssuerAbi,
           functionName: action === "revoke" ? "revokeTag" : "reactivateTag",
           args: [BigInt(pet.dogTag.dogTagIdField), reasonCodeHash(reasonCode)],
+          account: address,
         }),
       );
       setPendingTx({hash, petId: pet.petId, action, reasonCode});

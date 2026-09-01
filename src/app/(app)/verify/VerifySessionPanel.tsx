@@ -1,7 +1,7 @@
 "use client";
 
 import {useEffect, useRef, useState} from "react";
-import {useAccount, useWaitForTransactionReceipt, useWriteContract} from "wagmi";
+import {useAccount, usePublicClient, useWaitForTransactionReceipt, useWriteContract} from "wagmi";
 import {Banner} from "@/components/ui/Banner";
 import {Button, Input, Select} from "@/components/ui/controls";
 import {FormField, FormSection} from "@/components/ui/FormSection";
@@ -11,7 +11,7 @@ import {HashCell} from "@/components/ui/HashCell";
 import {useSnackbar} from "@/components/ui/Snackbar";
 import {verificationRegistryConsentAbi} from "@/lib/abi";
 import {roax} from "@/lib/chains";
-import {legacyTx} from "@/lib/chainWrite";
+import {legacyTxWithGas} from "@/lib/chainWrite";
 import {publicEnv} from "@/lib/env.public";
 import {verifySessionStatusLabel, verifySessionStatusTone} from "@/lib/verifySessionTone";
 import type {PetDoc} from "@/lib/models/Pet";
@@ -37,6 +37,7 @@ interface SessionState {
 export function VerifySessionPanel() {
   const {address, chainId} = useAccount();
   const {writeContractAsync} = useWriteContract();
+  const publicClient = usePublicClient();
   const snackbar = useSnackbar();
 
   const [purpose, setPurpose] = useState("");
@@ -105,7 +106,9 @@ export function VerifySessionPanel() {
     setSubmitting(true);
     try {
       const hash = await writeContractAsync(
-        legacyTx({
+        // Headroom over the bare estimate - see legacyTxWithGas's doc comment for the incident
+        // txs the refund tail starved at the wallet's own estimate.
+        await legacyTxWithGas(publicClient, {
           address: publicEnv.verificationRegistryAddress as `0x${string}`,
           abi: verificationRegistryConsentAbi,
           functionName: "recordVerificationZK",
@@ -115,6 +118,7 @@ export function VerifySessionPanel() {
             session.proof.c.map(BigInt) as [bigint, bigint],
             session.proof.pubSignals.map(BigInt) as [bigint, bigint, bigint, bigint, bigint, bigint, bigint],
           ],
+          account: address,
         }),
       );
       setPendingTxHash(hash);
