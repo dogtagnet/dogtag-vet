@@ -23,6 +23,7 @@ export function toRegistrationSessionRow(doc: WalletRegistrationSessionDoc): Reg
     deadline: doc.deadline,
     consumed: doc.consumed,
     consumedAt: doc.consumedAt,
+    outcome: doc.outcome,
   };
 }
 
@@ -77,5 +78,9 @@ export const mongoRegistrationStore: RegistrationFlowStore = {
     ).lean<Pick<ClientDoc, "wallets">>();
     const wallet = client?.wallets?.[0];
     return wallet ? {address: wallet.address} : null;
+  },
+
+  async recordOutcome(token, outcome) {
+    await WalletRegistrationSession.updateOne({token}, {$set: {outcome}});
   },
 };

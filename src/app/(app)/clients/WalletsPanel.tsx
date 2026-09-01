@@ -14,7 +14,7 @@ import {QrSurface} from "@/components/ui/QrSurface";
 import {StatusBadge} from "@/components/ui/StatusBadge";
 import {useSnackbar} from "@/components/ui/Snackbar";
 import {formatUnixSeconds} from "@/lib/format";
-import {registrationStatusLabel, registrationStatusTone} from "@/lib/registrationStatusTone";
+import {registrationFailedLabel, registrationFailedMessage, registrationStatusLabel, registrationStatusTone} from "@/lib/registrationStatusTone";
 import {decodeReceiptPayload, receiptExportJson} from "@/lib/registration/receipt";
 import {decodeMobileBookingPayload} from "@/lib/booking/mobileEip712";
 import type {RegistrationStatus} from "@/lib/registration/flow";
@@ -31,6 +31,9 @@ interface StartSessionResponse {
 
 interface ActiveSession extends StartSessionResponse {
   status: RegistrationStatus;
+  /** Only ever meaningful (and only ever set) alongside `status: "failed"` - see
+   * `registrationFailedLabel`/`registrationFailedMessage`'s own doc comments. */
+  outcome?: "registered" | "signature_invalid";
 }
 
 /** Small text field bound to one wallet's label, saving on blur only when the trimmed value
@@ -264,8 +267,8 @@ export function WalletsPanel({clientId, wallets, timeZone}: {clientId: string; w
     pollRef.current = setInterval(async () => {
       const res = await fetch(`/api/clients/${clientId}/wallet-registrations/${registrationId}`);
       if (!res.ok) return;
-      const body = (await res.json()) as {status: RegistrationStatus; wallet?: string};
-      setSession((prev) => (prev ? {...prev, status: body.status} : prev));
+      const body = (await res.json()) as {status: RegistrationStatus; wallet?: string; outcome?: "registered" | "signature_invalid"};
+      setSession((prev) => (prev ? {...prev, status: body.status, outcome: body.outcome} : prev));
       if (body.status === "registered") {
         stopPolling();
         snackbar.show(`Wallet ${body.wallet} registered`, "ok");
@@ -413,11 +416,12 @@ export function WalletsPanel({clientId, wallets, timeZone}: {clientId: string; w
            * same as every other save in this app. */}
 
           {(session.status === "failed" || session.status === "expired") && (
-            <Banner tone="danger" title={registrationStatusLabel[session.status]}>
+            <Banner
+              tone="danger"
+              title={session.status === "failed" ? registrationFailedLabel(session.outcome) : registrationStatusLabel.expired}
+            >
               <p className="mb-3">
-                {session.status === "failed"
-                  ? "The signature did not match this wallet. This code cannot be reused - generate a new one."
-                  : "This code expired before it was used. Generate a new one."}
+                {session.status === "failed" ? registrationFailedMessage(session.outcome) : "This code expired before it was used. Generate a new one."}
               </p>
               <Button onClick={handleRegister} disabled={starting}>
                 Generate a new code

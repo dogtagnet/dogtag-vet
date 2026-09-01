@@ -38,6 +38,19 @@ export interface RegistrationSessionRow {
   deadline: number; // unix seconds
   consumed: boolean;
   consumedAt?: number;
+  /** WP4.5 track3-sig fix 3 - the TRUE reason `completeRegistration` ended the way it did, set by
+   * that function itself at the moment it knows (never re-derived later). Absent on every session
+   * from before this field existed (backward-safe - `getRegistrationSessionStatus` falls back to
+   * its pre-existing consumed-with-no-wallet inference for those). Deliberately only two values:
+   * `"registered"` mirrors what `findClientWalletByRegistrationId` would independently confirm
+   * anyway (never the sole source of truth for the "registered" status itself - see that function's
+   * own doc comment on why), while `"signature_invalid"` is the ONE case that earns the "signature
+   * did not match" accusation. Every OTHER way this can end (`already_registered`, `not_found`, a
+   * `recordOutcome` write itself failing) deliberately leaves this unset, so the status poll's
+   * "failed" copy stays honest by DEFAULT (a plain, non-accusatory "could not be completed") unless
+   * this specifically says otherwise - the false-accusation incident this whole fix responds to was
+   * exactly a case where the signature was fine and something else silently failed. */
+  outcome?: "registered" | "signature_invalid";
 }
 
 /** The full wallet entry `appendWalletToClient` pushes onto `Client.wallets[]` - structurally
@@ -73,10 +86,31 @@ export interface RegistrationFlowStore {
    * flag on the session row that a crash between the append and a second write could leave
    * inconsistent. */
   findClientWalletByRegistrationId(clientId: string, registrationId: string): Promise<{address: string} | null>;
+  /** Persists `RegistrationSessionRow.outcome` (WP4.5 track3-sig fix 3) - best-effort bookkeeping,
+   * never load-bearing for `completeRegistration`'s own return value: a failure here must not turn
+   * a genuine `signature_invalid`/success outcome into something else, so `completeRegistration`
+   * never lets a `recordOutcome` failure affect what it returns to its caller. */
+  recordOutcome(token: string, outcome: "registered" | "signature_invalid"): Promise<void>;
 }
 
 function isConsumedOrExpired(session: RegistrationSessionRow, now: number): boolean {
   return session.consumed || now > session.deadline;
+}
+
+/** `RegistrationFlowStore.recordOutcome` is explicitly best-effort (see its own doc comment) -
+ * this is the one place that swallows its failure, so neither call site in `completeRegistration`
+ * below has to remember to. */
+async function recordOutcomeBestEffort(
+  store: RegistrationFlowStore,
+  token: string,
+  outcome: "registered" | "signature_invalid",
+): Promise<void> {
+  try {
+    await store.recordOutcome(token, outcome);
+  } catch {
+    // Truthful-status bookkeeping only - never lets a write failure here change what
+    // completeRegistration itself returns to its caller.
+  }
 }
 
 function buildMessage(session: RegistrationSessionRow, wallet: Address): ClientRegistrationMessage {
@@ -178,9 +212,11 @@ export async function completeRegistration(
       signature: input.signature as Hex,
     });
   } catch {
+    await recordOutcomeBestEffort(store, input.token, "signature_invalid");
     return {ok: false, code: "signature_invalid"};
   }
   if (recovered.toLowerCase() !== input.wallet.toLowerCase()) {
+    await recordOutcomeBestEffort(store, input.token, "signature_invalid");
     return {ok: false, code: "signature_invalid"};
   }
 
@@ -201,6 +237,9 @@ export async function completeRegistration(
   if (appendResult === "not_found") return {ok: false, code: "not_found"};
   if (appendResult === "already_registered") return {ok: false, code: "already_registered"};
 
+  // Deliberately NOT recorded for `not_found`/`already_registered` above (see `outcome`'s own doc
+  // comment) - both leave the session's `outcome` unset, falling back to today's inference.
+  await recordOutcomeBestEffort(store, input.token, "registered");
   return {ok: true, clientId: session.clientId, wallet: walletLower, receiptHash};
 }
 
@@ -214,7 +253,7 @@ export const STATUS_GRACE_PERIOD_SECS = 3600;
 export type RegistrationStatus = "waiting" | "registered" | "failed" | "expired";
 
 export type GetRegistrationStatusResult =
-  | {ok: true; status: RegistrationStatus; wallet?: string}
+  | {ok: true; status: RegistrationStatus; wallet?: string; outcome?: "registered" | "signature_invalid"}
   | {ok: false; status: 404};
 
 /**
@@ -235,6 +274,16 @@ export type GetRegistrationStatusResult =
  * Once past the grace window with still no matching wallet, this reports `expired` instead -
  * from the staff's perspective a `failed` registration this old is exactly as actionable as a
  * `waiting` one that plain timed out: generate a fresh code.
+ *
+ * WP4.5 track3-sig fix 3: `failed` alone used to be the ONLY signal the panel had, and its copy
+ * ("Signature didn't match") assumed every `failed` was a bad signature - a false accusation on
+ * the forensic incident, where the real cause was a server-side write that silently never landed.
+ * `outcome` (the session row's own `RegistrationSessionRow.outcome`, set by `completeRegistration`
+ * itself at the moment it knows) is passed straight through on `failed` so the caller can tell a
+ * CONFIRMED bad signature apart from every other way this can end up `failed` - absent `outcome`
+ * (a session from before this field existed, or any outcome this repo deliberately never records -
+ * see that field's own doc comment) means "not confirmed as a signature problem", not "assume it
+ * was one".
  *
  * `clientId` scopes the lookup: a `registrationId` that resolves to a DIFFERENT client's session
  * reports 404, identically to a `registrationId` that does not exist at all - the route path
@@ -258,5 +307,6 @@ export async function getRegistrationSessionStatus(
   if (registeredWallet) return {ok: true, status: "registered", wallet: registeredWallet.address};
 
   const pastGrace = session.consumedAt !== undefined && now > session.consumedAt + STATUS_GRACE_PERIOD_SECS;
-  return {ok: true, status: pastGrace ? "expired" : "failed"};
+  if (pastGrace) return {ok: true, status: "expired"};
+  return {ok: true, status: "failed", outcome: session.outcome};
 }

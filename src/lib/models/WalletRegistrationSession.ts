@@ -31,6 +31,9 @@ export interface WalletRegistrationSessionDoc {
    * `registered`/`failed` for `STATUS_GRACE_PERIOD_SECS` measured from this timestamp
    * (`lib/registration/flow.ts`), then reports the session as gone. */
   consumedAt?: number;
+  /** WP4.5 track3-sig fix 3 - see `lib/registration/flow.ts`'s `RegistrationSessionRow.outcome`
+   * doc comment for the full rationale; this is that same field, persisted. */
+  outcome?: "registered" | "signature_invalid";
   createdAt: Date;
 }
 
@@ -49,6 +52,7 @@ const walletRegistrationSessionSchema = new Schema<WalletRegistrationSessionDoc>
     deadline: {type: Number, required: true},
     consumed: {type: Boolean, required: true, default: false},
     consumedAt: Number,
+    outcome: {type: String, enum: ["registered", "signature_invalid"]},
   },
   {timestamps: {createdAt: true, updatedAt: false}},
 );

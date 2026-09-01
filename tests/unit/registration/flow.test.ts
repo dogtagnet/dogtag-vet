@@ -60,6 +60,10 @@ function makeStore(session: RegistrationSessionRow, existingClientIds: string[] 
       const found = (walletsByClient.get(clientId) ?? []).find((w) => w.registrationId === registrationId);
       return found ? {address: found.address} : null;
     },
+    async recordOutcome(token, outcome) {
+      const row = sessions.get(token);
+      if (row) row.outcome = outcome;
+    },
   };
   return {store, sessions, walletsByClient};
 }
@@ -232,6 +236,57 @@ describe("completeRegistration (POST /w/:token/complete)", () => {
     expect(result).toEqual({ok: false, code: "not_found"});
   });
 
+  it("WP4.5 track3-sig: persists outcome 'registered' on the session row after a successful completion", async () => {
+    const session = newSessionFixture();
+    const {store, sessions} = makeStore(session);
+    const account = privateKeyToAccount(generatePrivateKey());
+    const {wallet, signature} = await signFor(session, account);
+    const result = await completeRegistration(store, {token: session.token, wallet, signature}, NOW + 5);
+    expect(result.ok).toBe(true);
+    expect(sessions.get(session.token)?.outcome).toBe("registered");
+  });
+
+  it("WP4.5 track3-sig: persists outcome 'signature_invalid' when the signature does not recover to the claimed wallet", async () => {
+    const session = newSessionFixture();
+    const {store, sessions} = makeStore(session);
+    const signer = privateKeyToAccount(generatePrivateKey());
+    const claimedWallet = privateKeyToAccount(generatePrivateKey()).address;
+    const {signature} = await signFor(session, signer, claimedWallet);
+    await completeRegistration(store, {token: session.token, wallet: claimedWallet, signature}, NOW + 5);
+    expect(sessions.get(session.token)?.outcome).toBe("signature_invalid");
+  });
+
+  it("WP4.5 track3-sig: persists outcome 'signature_invalid' for a structurally malformed signature too", async () => {
+    const session = newSessionFixture();
+    const {store, sessions} = makeStore(session);
+    const wallet = privateKeyToAccount(generatePrivateKey()).address;
+    await completeRegistration(store, {token: session.token, wallet, signature: `0x${"00".repeat(65)}`}, NOW + 5);
+    expect(sessions.get(session.token)?.outcome).toBe("signature_invalid");
+  });
+
+  it("WP4.5 track3-sig: does NOT persist an outcome for already_registered - that is not a signature problem, and no new outcome should overwrite whatever this session's own outcome already was", async () => {
+    const session = newSessionFixture();
+    const {store, walletsByClient, sessions} = makeStore(session);
+    const account = privateKeyToAccount(generatePrivateKey());
+    walletsByClient.set(session.clientId, [{address: account.address.toLowerCase(), registrationId: "some-other-registration"}]);
+    const {wallet, signature} = await signFor(session, account);
+    const result = await completeRegistration(store, {token: session.token, wallet, signature}, NOW + 5);
+    expect(result).toEqual({ok: false, code: "already_registered"});
+    expect(sessions.get(session.token)?.outcome).toBeUndefined();
+  });
+
+  it("WP4.5 track3-sig: a recordOutcome failure never changes completeRegistration's own return value (best-effort only)", async () => {
+    const session = newSessionFixture();
+    const {store} = makeStore(session);
+    store.recordOutcome = async () => {
+      throw new Error("simulated write failure");
+    };
+    const account = privateKeyToAccount(generatePrivateKey());
+    const {wallet, signature} = await signFor(session, account);
+    const result = await completeRegistration(store, {token: session.token, wallet, signature}, NOW + 5);
+    expect(result.ok).toBe(true);
+  });
+
   it("a lost tryConsume race (concurrent completion already won) is expired_or_reused, never double-appends", async () => {
     const session = newSessionFixture();
     const {store, walletsByClient} = makeStore(session);
@@ -295,6 +350,21 @@ describe("getRegistrationSessionStatus (staff poll)", () => {
     const {store} = makeStore(session);
     const result = await getRegistrationSessionStatus(store, session.clientId, session.registrationId, NOW + 10);
     expect(result).toEqual({ok: true, status: "failed"});
+  });
+
+  it("WP4.5 track3-sig: failed WITH outcome signature_invalid when that was recorded - the one case that earns the accusation", async () => {
+    const session = newSessionFixture({consumed: true, consumedAt: NOW, outcome: "signature_invalid"});
+    const {store} = makeStore(session);
+    const result = await getRegistrationSessionStatus(store, session.clientId, session.registrationId, NOW + 10);
+    expect(result).toEqual({ok: true, status: "failed", outcome: "signature_invalid"});
+  });
+
+  it("WP4.5 track3-sig: failed with NO outcome field at all when none was ever recorded (backward-safe - a session from before this field existed, or a recording failure) - never silently implies signature_invalid", async () => {
+    const session = newSessionFixture({consumed: true, consumedAt: NOW});
+    const {store} = makeStore(session);
+    const result = await getRegistrationSessionStatus(store, session.clientId, session.registrationId, NOW + 10);
+    expect(result).toEqual({ok: true, status: "failed"});
+    expect("outcome" in result && result.outcome).toBeFalsy();
   });
 
   it("expired: consumed, no matching wallet, and past the post-consume grace window - the session is now simply gone", async () => {

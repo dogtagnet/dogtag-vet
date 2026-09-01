@@ -20,5 +20,9 @@ export async function GET(_request: Request, {params}: {params: Promise<{id: str
   const result = await getRegistrationSessionStatus(mongoRegistrationStore, id, registrationId, now);
   if (!result.ok) return notFound("Wallet registration session not found.");
 
-  return NextResponse.json({status: result.status, wallet: result.wallet});
+  // WP4.5 track3-sig fix 3: `outcome` is only ever meaningful (and only ever set) alongside
+  // `status: "failed"` - see `getRegistrationSessionStatus`'s own doc comment - but passed through
+  // unconditionally here rather than gated on that status, so the panel's copy logic is the one
+  // place responsible for deciding when it matters, not this route.
+  return NextResponse.json({status: result.status, wallet: result.wallet, outcome: result.outcome});
 }
