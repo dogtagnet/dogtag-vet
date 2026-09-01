@@ -139,7 +139,11 @@ test.describe.serial("booking configuration timezone picker (WP4.5 issue 2)", ()
 
     await expect(page.getByText("America/Los_Angeles", {exact: true})).toBeVisible();
     await page.getByRole("button", {name: "Save booking configuration"}).click();
-    await expect(page.getByText("Booking settings saved")).toBeVisible();
+    // Generous, not the 5s default: a plain settings PATCH with no real-network dependency, but
+    // under incidental system load (e.g. deep into the full suite) the round trip plus the
+    // transient snackbar can occasionally take longer than the default budget - see
+    // appointment-tagging.spec.ts's identical note on its own save-snackbar assertions.
+    await expect(page.getByText("Booking settings saved")).toBeVisible({timeout: 10_000});
 
     const settings = await getSettings(page);
     expect(settings.timezone).toBe("America/Los_Angeles");
@@ -181,7 +185,7 @@ test.describe.serial("booking configuration timezone picker (WP4.5 issue 2)", ()
     await expect(combobox).toHaveValue("NotAZone");
 
     await page.getByRole("button", {name: "Save booking configuration"}).click();
-    await expect(page.getByText("Choose a timezone before saving")).toBeVisible();
+    await expect(page.getByText("Choose a timezone before saving")).toBeVisible({timeout: 10_000});
 
     const settings = await getSettings(page);
     expect(settings.timezone).toBe("America/New_York"); // unchanged - the previous test's afterEach restored it
