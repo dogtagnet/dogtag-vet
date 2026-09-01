@@ -117,7 +117,12 @@ test.describe.serial("calendar service dropdown (WP4.5 issue 1)", () => {
     // Generous, not the 5s default - see booking-config-timezone.spec.ts's identical note on its
     // own save-snackbar assertion (observed flaking under full-suite system load).
     await expect(page.getByText("Service created")).toBeVisible({timeout: 10_000});
-    await expect(page).toHaveURL(/\/services\/[0-9a-f-]+$/);
+    // Also generous: the router.push redirect this snackbar accompanies lands on /services/[id],
+    // never visited earlier in this run - its first on-demand dev-mode compile stacks on top of
+    // the same system load, and was observed missing the 5s default here specifically (the
+    // snackbar itself was already up) - the same class of cold-navigation slowness
+    // appointment-tagging.spec.ts's own post-click navigations already budget 15s for.
+    await expect(page).toHaveURL(/\/services\/[0-9a-f-]+$/, {timeout: 15_000});
     const serviceId = new URL(page.url()).pathname.split("/").filter(Boolean).pop()!;
 
     const date = futureDate(60);
@@ -133,8 +138,11 @@ test.describe.serial("calendar service dropdown (WP4.5 issue 1)", () => {
     await page.getByRole("button", {name: "Create"}).click();
     await expect(page.getByText("Appointment created")).toBeVisible({timeout: 10_000});
 
+    // Generous too: the chip's appearance depends on onCreated's router.refresh() (a fresh server
+    // round trip re-rendering CalendarView), the same load-sensitive mechanism as the two waits
+    // above, not just local client state.
     const chip = page.getByRole("button", {name: /Dental Walk-in E2E - Dental Pet E2E/});
-    await expect(chip).toBeVisible();
+    await expect(chip).toBeVisible({timeout: 10_000});
     await chip.click();
     await expect(page).toHaveURL(/\/appointments\/[0-9a-f-]+$/, {timeout: 15_000});
     const appointmentId = new URL(page.url()).pathname.split("/").filter(Boolean).pop()!;
