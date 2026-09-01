@@ -1,6 +1,6 @@
 import {NextResponse} from "next/server";
 import {connectToDatabase} from "@/lib/db";
-import {countActiveOwners, Staff, setStaffDisabled, setStaffRole, type StaffDoc} from "@/lib/models/Staff";
+import {countActiveOwners, Staff, setStaffDisabled, setStaffRole, wouldRemoveActiveOwnerStatus, type StaffDoc} from "@/lib/models/Staff";
 import {updateStaffSchema} from "@/lib/schemas/staff";
 import {badRequest, notFound, requireOwnerSession} from "@/lib/staffApi";
 
@@ -37,10 +37,7 @@ export async function PATCH(request: Request, {params}: {params: Promise<{staffI
   const target = await Staff.findOne({staffId}).lean<StaffDoc>();
   if (!target) return notFound("Staff member not found.");
 
-  const removesOwnerStatus =
-    target.role === "owner" &&
-    !target.disabled &&
-    ((parsed.data.role !== undefined && parsed.data.role !== "owner") || parsed.data.disabled === true);
+  const removesOwnerStatus = wouldRemoveActiveOwnerStatus(target, parsed.data);
   if (removesOwnerStatus && (await countActiveOwners()) <= 1) {
     return badRequest("At least one active owner must remain - invite or promote another owner first.");
   }

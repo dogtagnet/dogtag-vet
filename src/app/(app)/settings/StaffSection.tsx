@@ -6,6 +6,7 @@ import {FormField, FormSection} from "@/components/ui/FormSection";
 import {StatusBadge} from "@/components/ui/StatusBadge";
 import {Button, Input, Select} from "@/components/ui/controls";
 import {useSnackbar} from "@/components/ui/Snackbar";
+import {staffRoleLabel, staffRoleOptions} from "@/lib/staffRoleTone";
 import type {StaffDoc, StaffRole} from "@/lib/models/Staff";
 
 /** `/settings`'s staff-access panel: the invite-only admin surface `auth.ts`'s sign-in gate
@@ -75,7 +76,7 @@ export function StaffSection({initial, isOwner, currentStaffId}: {initial: Staff
       <DataTable
         columns={[
           {key: "email", header: "Email", render: (s: StaffDoc) => s.email},
-          {key: "role", header: "Role", render: (s: StaffDoc) => (s.role === "owner" ? "Owner" : "Staff")},
+          {key: "role", header: "Role", render: (s: StaffDoc) => staffRoleLabel[s.role]},
           {
             key: "status",
             header: "Status",
@@ -100,8 +101,11 @@ export function StaffSection({initial, isOwner, currentStaffId}: {initial: Staff
                             onChange={(e) => update(s.staffId, {role: e.target.value as StaffRole})}
                             aria-label={`Role for ${s.email}`}
                           >
-                            <option value="staff">Staff</option>
-                            <option value="owner">Owner</option>
+                            {staffRoleOptions.map((option) => (
+                              <option key={option} value={option}>
+                                {staffRoleLabel[option]}
+                              </option>
+                            ))}
                           </Select>
                         </div>
                         {s.disabled ? (
@@ -136,8 +140,11 @@ export function StaffSection({initial, isOwner, currentStaffId}: {initial: Staff
           </div>
           <div className="w-32 shrink-0">
             <Select value={role} onChange={(e) => setRole(e.target.value as StaffRole)} aria-label="Role to invite as">
-              <option value="staff">Staff</option>
-              <option value="owner">Owner</option>
+              {staffRoleOptions.map((option) => (
+                <option key={option} value={option}>
+                  {staffRoleLabel[option]}
+                </option>
+              ))}
             </Select>
           </div>
           <Button className="shrink-0" onClick={invite} disabled={busy}>

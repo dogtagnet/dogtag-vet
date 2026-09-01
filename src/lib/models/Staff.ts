@@ -2,13 +2,20 @@ import {Schema} from "mongoose";
 import {getOrCreateModel} from "@/lib/models/registerModel";
 import {randomUUID} from "node:crypto";
 
-export type StaffRole = "owner" | "staff";
+export type StaffRole = "owner" | "staff" | "vet";
 
 /**
  * A staff account's role, keyed by email and independent of whichever Auth.js adapter/provider
  * authenticated the sign-in (Google, email magic link, or the dev-only credentials provider) -
  * the `jwt` callback in src/lib/auth.ts looks this up by email and stamps `role` onto the token.
  * The FIRST staff record ever created becomes `owner`; every one after that defaults to `staff`.
+ *
+ * WP4.7 adds `vet`: whitelisted (app-side gate, `requireVetSession` in `staffApi.ts`) to reach the
+ * DogTag issuance surfaces alongside `owner`. The actual authority is on-chain (`VetIssuer`'s own
+ * `operators` whitelist, granted per the vet's personal wallet - see `wp4.7-vet-role-practitioner-
+ * availability.md` D4); this app-side role is UX plus defense in depth, never the source of truth.
+ * `vet` is also a practitioner-eligible role for per-practitioner availability (D2) - see
+ * `Staff.bookable` below.
  *
  * `disabled` gates sign-in for Google/email magic-link (never for the dev-only credentials
  * provider, which stays open by design - see `auth.ts`'s `signIn` callback): a staff row must
@@ -34,7 +41,7 @@ const staffSchema = new Schema<StaffDoc>(
     staffId: {type: String, required: true, unique: true, default: () => randomUUID()},
     email: {type: String, required: true, unique: true, lowercase: true, trim: true},
     name: String,
-    role: {type: String, enum: ["owner", "staff"], required: true, default: "staff"},
+    role: {type: String, enum: ["owner", "staff", "vet"], required: true, default: "staff"},
     disabled: {type: Boolean, required: true, default: false},
   },
   {timestamps: true},
@@ -116,4 +123,26 @@ export async function setStaffRole(staffId: string, role: StaffRole): Promise<St
 
 export async function countActiveOwners(): Promise<number> {
   return Staff.countDocuments({role: "owner", disabled: false});
+}
+
+/**
+ * Whether applying `patch` to `target` would strip `target`'s CURRENT "active owner" status - i.e.
+ * it is right now an active (non-disabled) owner, and the patch would either move its role away
+ * from `owner` (to `staff` OR the newer `vet` - any non-owner role trips this, not a hardcoded
+ * `"staff"` check) or disable it outright. Pure and DB-free by design: `PATCH
+ * /api/settings/staff/:staffId` (`api/settings/staff/[staffId]/route.ts`) combines this with a
+ * fresh `countActiveOwners()` read to refuse a change that would leave zero active owners, and
+ * keeping the boolean math here (rather than inline in the route) lets it be unit-tested directly -
+ * see `tests/unit/models/staffRoleGuard.test.ts` - without a database, including the owner -> vet
+ * demotion path this function's own guard against a hardcoded two-role check exists to catch.
+ */
+export function wouldRemoveActiveOwnerStatus(
+  target: Pick<StaffDoc, "role" | "disabled">,
+  patch: {role?: StaffRole; disabled?: boolean},
+): boolean {
+  return (
+    target.role === "owner" &&
+    !target.disabled &&
+    ((patch.role !== undefined && patch.role !== "owner") || patch.disabled === true)
+  );
 }
