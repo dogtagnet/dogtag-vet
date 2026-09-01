@@ -87,9 +87,23 @@ Any appointment that already exists with no practitioner assigned becomes "Unass
 Switching back to Whole clinic at any time is equally safe and immediate - it simply stops consulting per-practitioner rules/exceptions and per-practitioner appointment assignment, reverting to the exact clinic-wide computation this app used before this feature existed; no data is lost either direction, so the switch can be rehearsed on a live deployment during a quiet period before committing to it.
 
 **One-time database migration required before the first per-practitioner date exception on an existing deployment:** a database created before this feature shipped still carries an old unique index that allows only one date exception per calendar date, clinic-wide.
-Giving two different practitioners their own exception on the same date (routine once practitioners have independent schedules - two vets taking different days off that happen to coincide) fails with a database error until you run this once, against that deployment's own database: `db.availabilityexceptions.dropIndex("date_1")`.
-A brand-new deployment (a fresh Docker Compose install, a fresh Helm install, a fresh managed-Mongo database) never had the old index and needs no action - running the command there returns an "index not found with name [date_1]" error rather than silently doing nothing, and that specific error is the expected, harmless signal that this step was already unnecessary, not a sign anything is broken.
-Running the drop a second time against a database it already succeeded on returns the same "index not found" error for the same reason (the index is already gone) and is equally safe to ignore.
+Giving two different practitioners their own exception on the same date (routine once practitioners have independent schedules - two vets taking different days off that happen to coincide) fails with a database error until you run a one-time migration against that deployment's own database.
+
+**Run this check FIRST, against that deployment's own database - it only reads, it never changes anything:**
+```
+db.availabilityexceptions.getIndexes().filter(i => i.name === "date_1")
+```
+`date_1` exists on EVERY deployment, including a brand-new one that has never needed this migration - this app's schema also declares a plain, non-unique index on `date` for lookup performance, and Mongo names that index `date_1` automatically, the exact same name the OLD legacy unique index used.
+The presence of `date_1` by itself tells you nothing; only the **`unique` field in the printed result** does.
+A `date_1` with `unique: true` is the legacy index this migration exists for.
+A `date_1` with `unique` false or absent means this deployment already has the correct (non-unique) index and needs no action at all - do not run the drop command below "just to be safe" in this case, see the warning two paragraphs down.
+
+Only when the check above prints `unique: true`, migrate by running this once: `db.availabilityexceptions.dropIndex("date_1")`.
+Afterward, confirm two things: `date_1_staffId_1` is present (the compound index that actually enforces per-practitioner uniqueness, and was already there before you ran anything) and, after this app's next restart, that `date_1` has come back on its own as a plain non-unique index (mongoose recreates it automatically on boot - no manual `createIndex` needed).
+
+**Never run `dropIndex("date_1")` just to check what happens, and never run it a second time "to be sure."** On a database whose `date_1` is already the correct non-unique index - every brand-new deployment, and any deployment that already migrated - the command does not error or no-op: it succeeds and silently removes a real, wanted index, which mongoose will only recreate on the next process restart. Always run the read-only check above first, and only drop when it shows `unique: true`.
+
+One more thing you may see and can ignore: a pre-migration boot logs a `MongoServerError: An existing index has the same name as the requested index` (`IndexOptionsConflict`) for `date_1`, because mongoose is trying (and failing) to create its own non-unique `date_1` alongside the legacy unique one already occupying that name. This is expected log noise until the migration runs - the compound `date_1_staffId_1` index still gets created successfully regardless, so per-practitioner uniqueness is already correctly enforced even before you run the migration above; the migration only unblocks two DIFFERENT practitioners sharing one calendar date.
 
 ## Kubernetes (Helm)
 

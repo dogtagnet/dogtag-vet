@@ -217,3 +217,50 @@ describe("requireVetSession / requireOwnerSession - role x disabled matrix, re-r
     expect(after.response).toBeNull();
   });
 });
+
+describe("AvailabilityException date_1 index - WP4.7A FIX ROUND 1 (MAJOR-2)", () => {
+  /**
+   * The grade round 1 defect: `docs/DEPLOY.md` claimed `dropIndex("date_1")` throws "index not
+   * found" on a fresh or already-migrated database, and that this is the all-clear signal telling
+   * an operator the migration is unnecessary. Both claims are false - `date: {..., index: true}`
+   * (this model, above) creates a plain index literally named `date_1` on EVERY deployment, so the
+   * command always succeeds. This is the assertion whose absence let that wrong claim ship.
+   */
+  it("a fresh database's date_1 index is present but NON-unique - the actual DEPLOY.md discriminator", async () => {
+    const indexes = (await AvailabilityException.collection.indexes()) as Array<{name?: string; unique?: boolean}>;
+    const dateIndex = indexes.find((i) => i.name === "date_1");
+    expect(dateIndex).toBeDefined();
+    expect(dateIndex?.unique).toBeFalsy();
+  });
+
+  it("only a LEGACY unique date_1 (the pre-WP4.7 shape) causes the cross-practitioner E11000 - dropping exactly that index is what the migration fixes", async () => {
+    // Simulate a pre-existing deployment: replace today's correctly-shaped non-unique `date_1`
+    // with the OLD single-field UNIQUE index this WP's migration note describes. The compound
+    // (date, staffId) index this WP added is untouched throughout.
+    await AvailabilityException.collection.dropIndex("date_1");
+    await AvailabilityException.collection.createIndex({date: 1}, {unique: true, name: "date_1"});
+
+    try {
+      await AvailabilityException.create({date: "2027-03-01", closed: true, staffId: "vet-a"});
+      // Two DIFFERENT practitioners, same date - the compound index alone would allow this (the
+      // (date, staffId) pairs differ), so a failure here can only come from the legacy date_1.
+      await expect(
+        AvailabilityException.create({date: "2027-03-01", closed: true, staffId: "vet-b"}),
+      ).rejects.toMatchObject({code: 11000});
+
+      // The documented migration - dropping the legacy unique date_1 - is what actually resolves
+      // it, matching the corrected DEPLOY.md discriminator (only ever run the drop when unique:
+      // true was observed).
+      await AvailabilityException.collection.dropIndex("date_1");
+      await AvailabilityException.create({date: "2027-03-02", closed: true, staffId: "vet-c"});
+      await expect(
+        AvailabilityException.create({date: "2027-03-02", closed: true, staffId: "vet-d"}),
+      ).resolves.toBeDefined();
+    } finally {
+      // Restore this schema's own correctly-shaped (non-unique) date_1 regardless of outcome, so
+      // no other test in this file/suite ever sees the simulated legacy shape.
+      await AvailabilityException.collection.dropIndex("date_1").catch(() => {});
+      await AvailabilityException.collection.createIndex({date: 1}, {name: "date_1"});
+    }
+  });
+});
