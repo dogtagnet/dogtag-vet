@@ -5,29 +5,13 @@ import {randomUUID} from "node:crypto";
 export type StaffRole = "owner" | "staff" | "vet";
 
 /**
- * Whether `role` may reach the DogTag issuance surfaces (WP4.7 A2) - `vet` and `owner` both
- * qualify, `staff` and an absent/unauthenticated role do not. The single predicate every gated
- * surface shares - `requireVetSession` below, `/tags` + `/tags/issue`'s page-level redirect, and
- * the sidebar's nav-group visibility (`Sidebar.tsx`) - rather than each re-deriving its own and
- * risking drift (e.g. one of them regressing to a hardcoded `=== "vet"` that forgets `owner`). See
- * `tests/unit/models/staffRoleGuard.test.ts` for the role x surface matrix this makes trivial to
- * state once.
+ * `isVetOrOwner` and `practitionerDisplayName` used to live here, but both are pure functions with
+ * no dependency on mongoose/node:crypto, and this file is NOT client-safe to import values from
+ * (it registers a Mongoose model and uses `node:crypto` at module scope) - a client component
+ * doing `import {isVetOrOwner} from "@/lib/models/Staff"` drags this entire module into its bundle.
+ * They now live in `@/lib/staffRoleTone`, which only ever takes `import type` from here and is
+ * safe to import a value from anywhere, client or server. Import them from there.
  */
-export function isVetOrOwner(role: StaffRole | undefined | null): boolean {
-  return role === "vet" || role === "owner";
-}
-
-/**
- * A bookable practitioner's display name for calendar chips, the practitioner picker (A5/A6), and
- * the public availability response's `practitioners[].name` (D5) - `displayName` when set (D2),
- * else the email's local part (everything before `@`) as a reasonable default rather than showing
- * a full email address (or nothing) on a public-facing slot button. Pure and reused everywhere a
- * practitioner needs a human-readable name so this fallback rule lives in exactly one place.
- */
-export function practitionerDisplayName(staff: Pick<StaffDoc, "displayName" | "email">): string {
-  if (staff.displayName?.trim()) return staff.displayName.trim();
-  return staff.email.split("@")[0] ?? staff.email;
-}
 
 /**
  * A staff account's role, keyed by email and independent of whichever Auth.js adapter/provider

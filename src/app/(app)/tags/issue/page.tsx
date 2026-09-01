@@ -5,7 +5,7 @@ import {Banner} from "@/components/ui/Banner";
 import {auth} from "@/auth";
 import {connectToDatabase} from "@/lib/db";
 import {getClinicSettings} from "@/lib/models/ClinicSettings";
-import {isVetOrOwner} from "@/lib/models/Staff";
+import {isVetOrOwner} from "@/lib/staffRoleTone";
 import {TagIssueWizard} from "@/app/(app)/tags/issue/TagIssueWizard";
 
 /** Same WP4.7 A2 gate as `/tags` - see that page's doc comment. */

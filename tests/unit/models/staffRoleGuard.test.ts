@@ -1,5 +1,6 @@
 import {describe, expect, it} from "vitest";
-import {isVetOrOwner, wouldRemoveActiveOwnerStatus} from "@/lib/models/Staff";
+import {wouldRemoveActiveOwnerStatus} from "@/lib/models/Staff";
+import {isVetOrOwner} from "@/lib/staffRoleTone";
 
 /**
  * WP4.7 A2: the single "may reach the DogTag issuance surfaces" predicate shared by

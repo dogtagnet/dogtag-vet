@@ -5,7 +5,7 @@ import {Button} from "@/components/ui/controls";
 import {auth} from "@/auth";
 import {connectToDatabase} from "@/lib/db";
 import {getBookingSettings} from "@/lib/models/Availability";
-import {isVetOrOwner} from "@/lib/models/Staff";
+import {isVetOrOwner} from "@/lib/staffRoleTone";
 import {TagsTable} from "@/app/(app)/tags/TagsTable";
 
 /** DogTag issuance surface - WP4.7 A2: gated to `vet`/`owner` (the app-side half of D4's gate;

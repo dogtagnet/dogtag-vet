@@ -2,7 +2,8 @@ import "server-only";
 import {NextResponse} from "next/server";
 import {auth} from "@/auth";
 import {connectToDatabase} from "@/lib/db";
-import {isVetOrOwner, Staff, type StaffDoc} from "@/lib/models/Staff";
+import {Staff, type StaffDoc} from "@/lib/models/Staff";
+import {isVetOrOwner} from "@/lib/staffRoleTone";
 
 /** Every staff-facing API route (`/api/clients`, `/api/pets`, ...) starts with this - middleware
  * already gates the page routes, but route handlers get their own defense-in-depth session check

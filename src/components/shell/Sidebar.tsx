@@ -3,7 +3,8 @@
 import Link from "next/link";
 import {usePathname} from "next/navigation";
 import {navGroups} from "@/components/shell/nav";
-import {isVetOrOwner, type StaffRole} from "@/lib/models/Staff";
+import type {StaffRole} from "@/lib/models/Staff";
+import {isVetOrOwner} from "@/lib/staffRoleTone";
 
 /** Nav groups gated to `vet`/`owner` (WP4.7 A2) - the sidebar-level half of the same gate `/tags`
  * and `/tags/issue` enforce server-side (see those pages' doc comments); a plain `staff` session

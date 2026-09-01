@@ -8,7 +8,8 @@ import {
   type AvailabilityExceptionDoc,
   type AvailabilityRuleDoc,
 } from "@/lib/models/Availability";
-import {practitionerDisplayName, Staff, type StaffDoc} from "@/lib/models/Staff";
+import {Staff, type StaffDoc} from "@/lib/models/Staff";
+import {practitionerDisplayName} from "@/lib/staffRoleTone";
 import type {
   AvailabilityExceptionLike,
   AvailabilityRuleLike,
