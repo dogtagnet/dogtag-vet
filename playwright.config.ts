@@ -63,7 +63,10 @@ export default defineConfig({
       // A well-known test-only address (Hardhat/Anvil's default account #0), never a real wallet -
       // nothing in this suite ever needs its private key, only the address itself, since the mock
       // connector answers `eth_accounts`/`eth_requestAccounts` with whatever address it is given.
-      NEXT_PUBLIC_E2E_MOCK_WALLET_ADDRESS: "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+      // Reads from process.env first (defaulting to that address) rather than a bare literal, so a
+      // diagnostic run can pass NEXT_PUBLIC_E2E_MOCK_WALLET_ADDRESS="" to turn the gate off entirely
+      // without editing this file.
+      NEXT_PUBLIC_E2E_MOCK_WALLET_ADDRESS: process.env.NEXT_PUBLIC_E2E_MOCK_WALLET_ADDRESS ?? "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
     },
   },
 });

@@ -1,11 +1,20 @@
 "use client";
 
 import {useEffect, useRef, useState, type ReactNode} from "react";
+import {usePathname} from "next/navigation";
 import {QueryClient, QueryClientProvider} from "@tanstack/react-query";
 import {WagmiProvider, useAccount, useConnect} from "wagmi";
 import {wagmiConfig} from "@/lib/wagmi";
 import {publicEnv} from "@/lib/env.public";
 import {SnackbarProvider} from "@/components/ui/Snackbar";
+
+/** The only routes anything reads `useAccount()`/`useConnect()` at all
+ * (`TagIssueWizard`/`TagsTable` under `/tags`, `VerifySessionPanel` under `/verify`,
+ * `SetupWizard` under `/setup`) - see `E2EMockWalletAutoConnect`'s own doc comment on why the
+ * auto-connect effect is scoped to exactly these instead of running on every page. */
+function isWalletGatedPath(pathname: string): boolean {
+  return pathname === "/setup" || pathname === "/verify" || pathname.startsWith("/tags");
+}
 
 /**
  * DEV/TEST ONLY - see `wagmi.ts`'s own doc comment on the same `NEXT_PUBLIC_E2E_MOCK_WALLET_ADDRESS`
@@ -18,22 +27,31 @@ import {SnackbarProvider} from "@/components/ui/Snackbar";
  * connector in: `TagIssueWizard`/`TagsTable`/`VerifySessionPanel`/`SetupWizard` all render nothing
  * past a "connect your wallet" gate until `useAccount().isConnected`.
  *
+ * Scoped to `isWalletGatedPath` rather than firing on every page: the connector list itself must
+ * stay global (wagmi has no per-route config), but the CONNECT ATTEMPT - a real browser-side
+ * `eth_requestAccounts`/`eth_chainId` round trip to the RPC stub - has no reason to run on, say,
+ * `/calendar` or `/clients`, which never read wagmi state at all. Diagnosed empirically while
+ * validating this track: running the whole gate unconditionally measurably destabilized an
+ * unrelated spec's timing (extra async work on every navigation, suite-wide) with no behavioral
+ * upside on pages that never look at `isConnected`.
+ *
  * `attempted` (not just the `isConnected`/`status` checks alone) makes this a ONE-SHOT attempt per
  * mount: `status` flipping to `"error"` while `isConnected` stays false would otherwise re-run the
  * effect (its own dependencies changed) and retry forever.
  */
 function E2EMockWalletAutoConnect() {
+  const pathname = usePathname();
   const {isConnected} = useAccount();
   const {connect, connectors, status} = useConnect();
   const attempted = useRef(false);
 
   useEffect(() => {
-    if (isConnected || attempted.current || status === "pending") return;
+    if (!isWalletGatedPath(pathname) || isConnected || attempted.current || status === "pending") return;
     const mockConnector = connectors.find((c) => c.id === "mock");
     if (!mockConnector) return;
     attempted.current = true;
     connect({connector: mockConnector});
-  }, [isConnected, status, connect, connectors]);
+  }, [pathname, isConnected, status, connect, connectors]);
 
   return null;
 }
