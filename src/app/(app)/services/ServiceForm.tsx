@@ -155,27 +155,27 @@ export function ServiceForm({service}: {service?: ServiceDoc}) {
           error={fieldErrors.price}
           helperText="Amount first (e.g. 45.00), currency code second. Leave the amount blank for no listed price."
         >
-          {/* Widths live on wrappers: Input's base class is w-full, which fights flex-1/w-20
-              overrides inside a flex row (the amount box once collapsed to a sliver while the
-              currency box grew - the two were easy to mix up, and a save failed over it). */}
+          {/* WP4.7 A7 - used to need width on WRAPPER divs (Input's base class is w-full, which
+              plain string concatenation could never actually override - the amount box once
+              collapsed to a sliver while the currency box grew, and a save failed over it).
+              controls.tsx now merges className via tailwind-merge (cn()), so a plain className
+              override on the Input itself correctly wins outright - no wrapper needed. */}
           <div className="flex gap-2">
-            <div className="flex-1">
-              <Input
-                id="service-price"
-                inputMode="decimal"
-                value={values.priceAmount}
-                onChange={(e) => set("priceAmount", e.target.value)}
-                placeholder="45.00"
-              />
-            </div>
-            <div className="w-24 shrink-0">
-              <Input
-                value={values.priceCurrency}
-                onChange={(e) => set("priceCurrency", e.target.value.toUpperCase())}
-                maxLength={3}
-                aria-label="Currency"
-              />
-            </div>
+            <Input
+              id="service-price"
+              inputMode="decimal"
+              value={values.priceAmount}
+              onChange={(e) => set("priceAmount", e.target.value)}
+              placeholder="45.00"
+              className="min-w-0 flex-1"
+            />
+            <Input
+              value={values.priceCurrency}
+              onChange={(e) => set("priceCurrency", e.target.value.toUpperCase())}
+              maxLength={3}
+              aria-label="Currency"
+              className="w-24 shrink-0"
+            />
           </div>
         </FormField>
         <FormField label="Active" htmlFor="service-active">

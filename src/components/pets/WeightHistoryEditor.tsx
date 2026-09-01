@@ -27,36 +27,36 @@ export function WeightHistoryEditor({value, onChange}: WeightHistoryEditorProps)
   return (
     <div className="space-y-2">
       {value.map((row, index) => (
+        // WP4.7 A7 - was three wrapper divs (Input/Select's base class is w-full, which plain
+        // string concatenation could never override); controls.tsx now merges className via
+        // tailwind-merge (cn()), so a plain override on the control itself wins outright.
         <div key={index} className="flex items-end gap-2">
-          <div className="w-28">
-            <Input
-              type="number"
-              step="0.01"
-              min="0"
-              value={row.value}
-              onChange={(e) => updateRow(index, {value: e.target.value})}
-              placeholder="Weight"
-              aria-label="Weight value"
-            />
-          </div>
-          <div className="w-24">
-            <Select
-              value={row.unit}
-              onChange={(e) => updateRow(index, {unit: e.target.value as WeightEntry["unit"]})}
-              aria-label="Weight unit"
-            >
-              <option value="kg">kg</option>
-              <option value="lb">lb</option>
-            </Select>
-          </div>
-          <div className="flex-1">
-            <Input
-              type="date"
-              value={row.measuredOn}
-              onChange={(e) => updateRow(index, {measuredOn: e.target.value})}
-              aria-label="Measured on"
-            />
-          </div>
+          <Input
+            type="number"
+            step="0.01"
+            min="0"
+            value={row.value}
+            onChange={(e) => updateRow(index, {value: e.target.value})}
+            placeholder="Weight"
+            aria-label="Weight value"
+            className="w-28"
+          />
+          <Select
+            value={row.unit}
+            onChange={(e) => updateRow(index, {unit: e.target.value as WeightEntry["unit"]})}
+            aria-label="Weight unit"
+            className="w-24"
+          >
+            <option value="kg">kg</option>
+            <option value="lb">lb</option>
+          </Select>
+          <Input
+            type="date"
+            value={row.measuredOn}
+            onChange={(e) => updateRow(index, {measuredOn: e.target.value})}
+            aria-label="Measured on"
+            className="min-w-0 flex-1"
+          />
           <Button variant="ghost" onClick={() => removeRow(index)} aria-label="Remove weight entry">
             Remove
           </Button>

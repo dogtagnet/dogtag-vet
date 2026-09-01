@@ -22,10 +22,15 @@ export function AppointmentFilters() {
   return (
     <div className="mb-4 flex flex-wrap items-center gap-3">
       <SearchBox placeholder="Search by client or pet name" />
+      {/* WP4.7 A7 - was `!w-auto`: controls.tsx concatenated className with a plain template
+          string, so a bare `w-auto` override lost the stylesheet-order fight against the base
+          `w-full` and needed `!important` to force a win. controls.tsx now merges className via
+          tailwind-merge (cn()), which drops the conflicting `w-full` outright - a plain override
+          wins on its own, no `!` needed anywhere in this file any more. */}
       <Select
         value={searchParams.get("status") ?? ""}
         onChange={(e) => setParam("status", e.target.value)}
-        className="!w-auto"
+        className="w-auto"
         aria-label="Filter by status"
       >
         <option value="">All statuses</option>
@@ -38,7 +43,7 @@ export function AppointmentFilters() {
       <Select
         value={searchParams.get("source") ?? ""}
         onChange={(e) => setParam("source", e.target.value)}
-        className="!w-auto"
+        className="w-auto"
         aria-label="Filter by source"
       >
         <option value="">All sources</option>
@@ -52,14 +57,14 @@ export function AppointmentFilters() {
         type="date"
         value={searchParams.get("fromDate") ?? ""}
         onChange={(e) => setParam("fromDate", e.target.value)}
-        className="!w-auto"
+        className="w-auto"
         aria-label="From date"
       />
       <Input
         type="date"
         value={searchParams.get("toDate") ?? ""}
         onChange={(e) => setParam("toDate", e.target.value)}
-        className="!w-auto"
+        className="w-auto"
         aria-label="To date"
       />
     </div>

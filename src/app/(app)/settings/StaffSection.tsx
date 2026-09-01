@@ -170,22 +170,21 @@ export function StaffSection({initial, isOwner, currentStaffId}: {initial: Staff
                         <span className="text-caption text-ink-faint">This is you</span>
                       ) : (
                         <div className="flex items-center gap-2">
-                          {/* Same wrapper-width rule as the invite row below - w-auto on the control
-                              itself loses to the base w-full. */}
-                          <div className="w-28 shrink-0">
-                            <Select
-                              value={s.role}
-                              disabled={busy}
-                              onChange={(e) => update(s.staffId, {role: e.target.value as StaffRole})}
-                              aria-label={`Role for ${s.email}`}
-                            >
-                              {staffRoleOptions.map((option) => (
-                                <option key={option} value={option}>
-                                  {staffRoleLabel[option]}
-                                </option>
-                              ))}
-                            </Select>
-                          </div>
+                          {/* WP4.7 A7 - plain className override (controls.tsx merges via cn()
+                              now); no wrapper div needed. */}
+                          <Select
+                            value={s.role}
+                            disabled={busy}
+                            onChange={(e) => update(s.staffId, {role: e.target.value as StaffRole})}
+                            aria-label={`Role for ${s.email}`}
+                            className="w-28 shrink-0"
+                          >
+                            {staffRoleOptions.map((option) => (
+                              <option key={option} value={option}>
+                                {staffRoleLabel[option]}
+                              </option>
+                            ))}
+                          </Select>
                           {s.disabled ? (
                             <Button variant="secondary" disabled={busy} onClick={() => update(s.staffId, {disabled: false})}>
                               Restore
@@ -207,24 +206,23 @@ export function StaffSection({initial, isOwner, currentStaffId}: {initial: Staff
         />
 
         {isOwner && (
-          /* Widths live on wrappers, never as className on Input/Select: the controls' base class is
-             w-full, and a bare `w-auto` override loses the stylesheet-order fight - the Select grew to
-             full width and squeezed the flex-1 email field to a sliver (Kenneth's 2026-09-01 report). */
+          // WP4.7 A7 - was two wrapper divs (Input/Select's base class is w-full, which plain
+          // string concatenation could never override - the Select once grew to full width and
+          // squeezed the email field to a sliver, Kenneth's 2026-09-01 report). controls.tsx now
+          // merges className via tailwind-merge (cn()), and FormField now takes its own className
+          // (for the SAME reason - sizing FormField's outer box within this row, not fighting an
+          // Input's w-full), so neither wrapper is needed any more.
           <div className="mt-4 flex items-end gap-2">
-            <div className="min-w-0 flex-1">
-              <FormField label="Invite by email" htmlFor="invite-email">
-                <Input id="invite-email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="colleague@clinic.example" />
-              </FormField>
-            </div>
-            <div className="w-32 shrink-0">
-              <Select value={role} onChange={(e) => setRole(e.target.value as StaffRole)} aria-label="Role to invite as">
-                {staffRoleOptions.map((option) => (
-                  <option key={option} value={option}>
-                    {staffRoleLabel[option]}
-                  </option>
-                ))}
-              </Select>
-            </div>
+            <FormField label="Invite by email" htmlFor="invite-email" className="min-w-0 flex-1">
+              <Input id="invite-email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="colleague@clinic.example" />
+            </FormField>
+            <Select value={role} onChange={(e) => setRole(e.target.value as StaffRole)} aria-label="Role to invite as" className="w-32 shrink-0">
+              {staffRoleOptions.map((option) => (
+                <option key={option} value={option}>
+                  {staffRoleLabel[option]}
+                </option>
+              ))}
+            </Select>
             <Button className="shrink-0" onClick={invite} disabled={busy}>
               Invite
             </Button>

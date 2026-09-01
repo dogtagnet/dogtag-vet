@@ -26,13 +26,19 @@ export interface FormFieldProps {
   error?: string;
   helperText?: string;
   children: ReactNode;
+  /** WP4.7 A7 - sizes/positions the field's own OUTER box within a flex row (e.g. `min-w-0
+   * flex-1` next to a fixed-width sibling) - the bare `<div>` below has no class of its own, so
+   * this is a plain assignment, not a merge (`cn()` is not needed here the way it is on Input/
+   * Select/Button, which DO have a base class to conflict with). Added specifically so a flex-row
+   * layout around a FormField never needs an extra wrapper div just to size it. */
+  className?: string;
 }
 
 /** One labeled control with inline validation, per design-system.md ("validation inline under
  * fields"). */
-export function FormField({label, htmlFor, error, helperText, children}: FormFieldProps) {
+export function FormField({label, htmlFor, error, helperText, children, className}: FormFieldProps) {
   return (
-    <div>
+    <div className={className}>
       <label htmlFor={htmlFor} className="mb-1.5 block text-body font-medium text-ink">
         {label}
       </label>
