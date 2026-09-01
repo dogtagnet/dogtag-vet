@@ -5,9 +5,10 @@
  *
  * 1. Boot recovery (once, at startup): a `MintSession` left `issuing` when a previous process died
  *    mid-flight (the tx was sent but this process never got to read back the confirmation) is
- *    reconciled to `bound` if its tag actually anchored on chain, or otherwise - once genuinely
- *    stale, never a seconds-old in-flight issuance - marked `interrupted` so it shows up as
- *    retryable rather than silently stuck forever (`recoverInterruptedSessions`, below).
+ *    reconciled to `bound` if its tag actually anchored on chain, back to `ready` if its tx
+ *    confirmed REVERTED (WP4.5 track 3), or otherwise - once genuinely stale, never a seconds-old
+ *    in-flight issuance - marked `interrupted` so it shows up as retryable rather than silently
+ *    stuck forever (`recoverInterruptedSessions`, `src/lib/mint/bootRecovery.ts`).
  * 2. The chain-activity follower for `/activity` (`runActivityFollowerLoop`): chunked `getLogs`
  *    over this clinic's clone (`TagIssued`/`TagRevoked`/`TagReactivated`/`RecordIssued`/
  *    `RecordRevoked`/`RecordReactivated`/`FundsReceived`/`RefundSkipped`), plus `StatusChanged` on
@@ -20,85 +21,15 @@
  *    emails, and sweeps past-due payments to `expired`.
  */
 import {connectToDatabase} from "@/lib/db";
-import {getServerEnv, requireEnv} from "@/lib/env";
+import {getServerEnv} from "@/lib/env";
 import {getClinicSettings, updateClinicSettings} from "@/lib/models/ClinicSettings";
-import {MintSession, type MintSessionDoc} from "@/lib/models/MintSession";
 import {Pet, type PetDoc} from "@/lib/models/Pet";
 import {ChainActivity} from "@/lib/models/ChainActivity";
 import {roaxPublicClient} from "@/lib/chainRead";
 import {vetIssuerAbi, dogTagSBTConsentAbi, verificationRegistryConsentAbi} from "@/lib/abi";
-import {isMintSessionStale, mongoReconcileDeps, reconcileAnchoredSession} from "@/lib/mint/reconcile";
+import {recoverInterruptedSessions} from "@/lib/mint/bootRecovery";
 import {runPaymentWatcherOnce} from "@/lib/payments/watcher";
 import type {Log} from "viem";
-
-/**
- * Boot recovery for `MintSession`s a previous process left `issuing` when it died mid-flight.
- *
- * Two bugs this replaces (round-6 grader finding): (1) it flipped EVERY `issuing` session
- * unconditionally, with no age guard, so a session whose `issueTag` transaction was sent mere
- * seconds ago by a process that is still very much alive got marked `error`/`interrupted` on
- * every worker restart; (2) it never checked whether the transaction had actually landed before
- * giving up on it - a session whose tx DID succeed got permanently stranded, because the retry
- * flow `$unset`s `root` and re-arms a fresh token, but the id's root is anchored on chain forever
- * once `issueTag` lands, so that fresh token's eventual bind attempt can never seal
- * (`seal_conflict`, forever).
- *
- * Fix: only consider sessions stale by `isMintSessionStale` (wp4-vet.md's own word for this,
- * `MINT_SESSION_STALE_MS`, default 5 minutes, measured from `issuingAt` not `createdAt` - see that
- * field's doc comment), and for each one, read the chain FIRST via the shared
- * `reconcileAnchoredSession` (the same check the confirm route and the retry route use) - a
- * session whose tag actually anchored is reconciled straight to `bound` and linked onto its Pet
- * record instead of being marked `error`; only a session that is both stale AND genuinely not
- * anchored is flipped to `interrupted`.
- */
-async function recoverInterruptedSessions(): Promise<void> {
-  const env = getServerEnv();
-  const now = Date.now();
-  const issuingSessions = await MintSession.find({status: "issuing"}).lean<MintSessionDoc[]>();
-  const staleSessions = issuingSessions.filter((s) => isMintSessionStale(s, now, env.MINT_SESSION_STALE_MS));
-  if (staleSessions.length === 0) return;
-
-  const settings = await getClinicSettings();
-  let sbtAddress: `0x${string}` | undefined;
-  try {
-    sbtAddress = requireEnv("DOGTAG_SBT_ADDRESS") as `0x${string}`;
-  } catch {
-    sbtAddress = undefined;
-  }
-  const cloneAddress = settings.cloneAddress as `0x${string}` | undefined;
-
-  let reconciledCount = 0;
-  let interruptedCount = 0;
-  for (const session of staleSessions) {
-    let reconciled = false;
-    if (sbtAddress && cloneAddress) {
-      try {
-        const outcome = await reconcileAnchoredSession(session, cloneAddress, mongoReconcileDeps(sbtAddress, cloneAddress));
-        reconciled = outcome.reconciled;
-      } catch (err) {
-        console.error(`[worker] reconcile check failed for stale session ${session.sessionId}`, err);
-      }
-    }
-    if (reconciled) {
-      reconciledCount++;
-    } else {
-      // Re-check `status: "issuing"` at write time (not just at the read above) - defensive
-      // against this same session being reconciled or confirmed by a concurrent request between
-      // this loop's read and this write.
-      await MintSession.updateOne(
-        {sessionId: session.sessionId, status: "issuing"},
-        {$set: {status: "error", errorStage: "interrupted"}},
-      );
-      interruptedCount++;
-    }
-  }
-  if (reconciledCount > 0) {
-    console.log(`[worker] reconciled ${reconciledCount} stale issuing session(s) that had actually anchored on chain`);
-  }
-  if (interruptedCount > 0) {
-    console.log(`[worker] marked ${interruptedCount} stale issuing session(s) interrupted`);
-  }
-}
 
 interface DecodedEventLog extends Log {
   eventName?: string;

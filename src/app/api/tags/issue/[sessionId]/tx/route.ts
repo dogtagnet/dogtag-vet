@@ -23,7 +23,13 @@ export async function POST(request: Request, {params}: {params: Promise<{session
   if (session.status !== "ready") return badRequest("Only a session that is ready can be issued.");
 
   // `issuingAt` (not `createdAt`) is what the worker's boot-recovery staleness check measures
-  // from - see `MintSession.ts`'s doc comment on that field.
-  await MintSession.updateOne({sessionId}, {$set: {status: "issuing", txHash, issuingAt: new Date()}});
+  // from - see `MintSession.ts`'s doc comment on that field. `lastIssueError` is cleared here
+  // (never left over from a PRIOR reverted attempt): this route only ever fires from `ready`,
+  // which is exactly the status a reverted receipt flips a session back to, so a fresh attempt
+  // starting now must not keep showing the previous attempt's error once this one is in flight.
+  await MintSession.updateOne(
+    {sessionId},
+    {$set: {status: "issuing", txHash, issuingAt: new Date()}, $unset: {lastIssueError: ""}},
+  );
   return NextResponse.json({sessionId, status: "issuing", txHash});
 }

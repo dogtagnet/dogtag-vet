@@ -1,7 +1,11 @@
 import "server-only";
 import {MintSession} from "@/lib/models/MintSession";
 import {Pet} from "@/lib/models/Pet";
-import {readIsValidRoot, readProfileRoot} from "@/lib/chainRead";
+import {readIsValidRoot, readProfileRoot, readTxReceiptStatus} from "@/lib/chainRead";
+
+/** Surfaced verbatim in the wizard's "ready" banner and persisted as the session's own
+ * `lastIssueError` - see `MintSessionDoc.lastIssueError`'s doc comment. */
+export const ISSUE_TX_REVERTED_MESSAGE = "Transaction reverted on chain - you can issue again.";
 
 /**
  * The fields `reconcileAnchoredSession` needs from a `MintSessionDoc` - deliberately a narrow
@@ -35,6 +39,11 @@ export interface ReconcileDeps {
   readProfileRoot(dogTagIdFieldDec: string): Promise<string>;
   /** `VetIssuer.isValid(root)` on the clinic's clone. */
   readIsValidRoot(root: string): Promise<boolean>;
+  /** The `issueTag` transaction's own receipt status, read directly rather than inferred from
+   * `readProfileRoot`/`readIsValidRoot` disagreeing - see `reconcileAnchoredSession`'s doc comment
+   * on why a confirmed revert gets its own signal instead of falling through to `not-anchored`.
+   * `"pending"` covers both "not yet mined" and "no receipt to check" (no txHash on the session). */
+  readTxReceiptStatus(txHash: string): Promise<"success" | "reverted" | "pending">;
   /** Marks the session `bound`. Idempotent - only ever called after a fresh chain read confirms
    * the anchor, so calling it again for an already-`bound` session is harmless. */
   markSessionBound(sessionId: string): Promise<void>;
@@ -42,11 +51,18 @@ export interface ReconcileDeps {
    * normal (non-recovery) success: links the tag onto the Pet record. No-ops when the session has
    * no `petId`. */
   linkPetDogTag(petId: string, tag: LinkedDogTag): Promise<void>;
+  /** The `issueTag` tx confirmed-reverted recovery write (WP4.5 track 3 - the proven forensic
+   * case): flips the session back to `ready` (never `error` - the device already bound the
+   * profile tree and the root was never anchored, so the SAME session can retry `issueTag`
+   * immediately with no new token/QR round trip), records `lastIssueError`, and keeps the failed
+   * tx in the session's audit history rather than dropping it. */
+  markSessionRevertedReady(sessionId: string, txHash: string): Promise<void>;
 }
 
 export type ReconcileOutcome =
   | {reconciled: true; dogTagIdDec: string; root: string}
-  | {reconciled: false; reason: "no-root" | "chain-read-failed" | "not-anchored"};
+  | {reconciled: false; reason: "no-root" | "chain-read-failed" | "not-anchored"}
+  | {reconciled: false; reason: "reverted"; txHash: string};
 
 /**
  * Was this session's tag actually anchored on chain, even though the LOCAL record does not (yet,
@@ -58,6 +74,18 @@ export type ReconcileOutcome =
  * route, the retry route, and the worker's boot recovery) share this one implementation so a
  * session whose transaction actually succeeded always has exactly one path back to `bound` -
  * see each call site's own doc comment for why it needed this.
+ *
+ * A session with a recorded `txHash` gets ONE MORE check before any of that: the receipt's own
+ * status, read directly. Proven forensic case (wp4.5-track3-mint-plan.md): `issueTag`'s ENTIRE
+ * body can succeed on chain (the SBT mint, the `TagIssued` event) and the transaction can still
+ * revert afterward (an OutOfGas in the refund tail) - a full revert undoes every state change, so
+ * `readProfileRoot` reads back unset and this would otherwise fall into the generic `not-anchored`
+ * branch below. That branch answers to sessions still awaiting confirmation just as much as
+ * sessions that are provably dead, so it cannot tell a live wallet flip a `not-anchored` verdict
+ * apart from a confirmed-dead transaction - and a live wallet flip is exactly the profileRoot read
+ * a `pending`/not-yet-mined tx also produces. A CONFIRMED revert is different: there is nothing
+ * left to wait for, so it gets its own signal and its own recovery (`markSessionRevertedReady`)
+ * instead of the `error`/`errorStage: "verify"` a caller might otherwise apply to `not-anchored`.
  */
 export async function reconcileAnchoredSession(
   session: ReconcileSessionInput,
@@ -65,6 +93,19 @@ export async function reconcileAnchoredSession(
   deps: ReconcileDeps,
 ): Promise<ReconcileOutcome> {
   if (!session.root) return {reconciled: false, reason: "no-root"};
+
+  if (session.txHash) {
+    let receiptStatus: "success" | "reverted" | "pending";
+    try {
+      receiptStatus = await deps.readTxReceiptStatus(session.txHash);
+    } catch {
+      return {reconciled: false, reason: "chain-read-failed"};
+    }
+    if (receiptStatus === "reverted") {
+      await deps.markSessionRevertedReady(session.sessionId, session.txHash);
+      return {reconciled: false, reason: "reverted", txHash: session.txHash};
+    }
+  }
 
   let onChainRoot: string;
   let valid: boolean;
@@ -127,6 +168,7 @@ export function mongoReconcileDeps(sbtAddress: `0x${string}`, cloneAddress: `0x$
   return {
     readProfileRoot: (dogTagIdFieldDec) => readProfileRoot(sbtAddress, dogTagIdFieldDec),
     readIsValidRoot: (root) => readIsValidRoot(cloneAddress, root as `0x${string}`),
+    readTxReceiptStatus: (txHash) => readTxReceiptStatus(txHash as `0x${string}`),
     async markSessionBound(sessionId) {
       await MintSession.updateOne(
         {sessionId},
@@ -134,6 +176,21 @@ export function mongoReconcileDeps(sbtAddress: `0x${string}`, cloneAddress: `0x$
       );
     },
     linkPetDogTag,
+    async markSessionRevertedReady(sessionId, txHash) {
+      // `$unset` the now-dead txHash/issuingAt (never displayed as if it were the session's live
+      // tx - the failed attempt lives on in `failedIssueTxHashes` for the audit trail instead) and
+      // clear any stale errorStage/errorReason from a PRIOR round, mirroring markSessionBound's own
+      // cleanup - a session bouncing error -> ready -> issuing -> reverted -> ready must not still
+      // be carrying an errorStage from two attempts ago.
+      await MintSession.updateOne(
+        {sessionId},
+        {
+          $set: {status: "ready", lastIssueError: ISSUE_TX_REVERTED_MESSAGE},
+          $unset: {txHash: "", issuingAt: "", errorStage: "", errorReason: ""},
+          $push: {failedIssueTxHashes: txHash},
+        },
+      );
+    },
   };
 }
 

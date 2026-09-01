@@ -1,5 +1,5 @@
 import "server-only";
-import {createPublicClient, http, keccak256, toBytes, type Address} from "viem";
+import {createPublicClient, http, keccak256, toBytes, TransactionReceiptNotFoundError, type Address, type Hex} from "viem";
 import {roax} from "@/lib/chains";
 import {getServerEnv} from "@/lib/env";
 import {vetIssuerAbi, vetIssuerFactoryAbi, entityRegistryAbi, dogTagSBTConsentAbi, verificationRegistryConsentAbi} from "@/lib/abi";
@@ -144,6 +144,25 @@ export async function readRecordTypeProfile(cloneAddress: Address): Promise<stri
  * the route's `chain_unreachable` result. */
 export async function readRoaxBlockNumber(): Promise<bigint> {
   return roaxPublicClient().getBlockNumber();
+}
+
+/**
+ * The `issueTag`/`revokeTag`/... transaction's own mined receipt status. `"pending"` covers ONLY
+ * "not mined yet" (`getTransactionReceipt` throwing `TransactionReceiptNotFoundError` - the normal
+ * shape of "still in flight"), never a genuine RPC/network failure, which propagates as a thrown
+ * error like every other read in this file (this function's own doc comment above, "fail-closed by
+ * construction") - WP4.5 track 3's reverted-tx detection (`reconcileAnchoredSession`) is the one
+ * caller today, and it treats `"pending"` as "not conclusive, fall through to the ordinary
+ * anchored check" while an unreadable chain still fails the whole reconcile closed.
+ */
+export async function readTxReceiptStatus(txHash: Hex): Promise<"success" | "reverted" | "pending"> {
+  try {
+    const receipt = await roaxPublicClient().getTransactionReceipt({hash: txHash});
+    return receipt.status === "reverted" ? "reverted" : "success";
+  } catch (err) {
+    if (err instanceof TransactionReceiptNotFoundError) return "pending";
+    throw err;
+  }
 }
 
 /** `VetIssuer.issuedBy(root)` - the operator wallet that actually anchored `root` on this clone,

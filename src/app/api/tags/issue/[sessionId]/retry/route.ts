@@ -5,7 +5,7 @@ import {BindToken, generateHexToken} from "@/lib/models/BindToken";
 import {getClinicSettings} from "@/lib/models/ClinicSettings";
 import {badRequest, notFound, requireStaffSession} from "@/lib/staffApi";
 import {preflightIssuance} from "@/lib/mint/preflight";
-import {mongoReconcileDeps, reconcileAnchoredSession} from "@/lib/mint/reconcile";
+import {ISSUE_TX_REVERTED_MESSAGE, mongoReconcileDeps, reconcileAnchoredSession} from "@/lib/mint/reconcile";
 import {getServerEnv, requireEnv} from "@/lib/env";
 import {hexAddress} from "@/lib/schemas/common";
 
@@ -59,6 +59,20 @@ export async function POST(request: Request, {params}: {params: Promise<{session
       const outcome = await reconcileAnchoredSession(session, cloneAddress, mongoReconcileDeps(sbtAddress, cloneAddress));
       if (outcome.reconciled) {
         return NextResponse.json({sessionId, status: "bound", dogTagId: outcome.dogTagIdDec, root: outcome.root});
+      }
+      if (!outcome.reconciled && outcome.reason === "reverted") {
+        // Same reasoning as the confirm route: a confirmed revert means the root was never
+        // anchored, so this session can go straight back to `ready` (retry `issueTag` with the
+        // SAME token-free session) instead of this route's own "arm a fresh bind token" path below
+        // - which would needlessly discard an already-bound profile tree and make the owner redo
+        // the QR ceremony for no reason.
+        return NextResponse.json({
+          sessionId,
+          status: "ready",
+          dogTagId: session.dogTagIdDec,
+          root: session.root,
+          lastIssueError: ISSUE_TX_REVERTED_MESSAGE,
+        });
       }
     }
   }

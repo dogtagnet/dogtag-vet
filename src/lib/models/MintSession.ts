@@ -47,6 +47,16 @@ export interface MintSessionDoc {
   boundLeaves?: unknown;
   reservedLeafHashes?: string[];
   txHash?: string;
+  /** WP4.5 track 3: set when `issueTag`'s transaction is confirmed REVERTED on chain (the proven
+   * gas-refund-tail forensic case) - surfaced in the wizard next to the re-enabled Issue button.
+   * Cleared on the next successful issue/reconcile (`markSessionBound`) or the next reverted
+   * attempt overwrites it with the same message; never accumulates. */
+  lastIssueError?: string;
+  /** Every `issueTag` tx hash that was submitted for this session and later confirmed reverted -
+   * the audit trail `wp4.5-track3-mint-plan.md` calls for ("keep the failed tx hash in a history
+   * field ... rather than dropping it silently"), distinct from `txHash` (the CURRENT, live
+   * attempt only). */
+  failedIssueTxHashes?: string[];
   protocolVersion: string;
   errorStage?: MintErrorStage;
   errorReason?: string;
@@ -119,6 +129,8 @@ const mintSessionSchema = new Schema<MintSessionDoc>(
     boundLeaves: Schema.Types.Mixed,
     reservedLeafHashes: {type: [String], default: undefined},
     txHash: String,
+    lastIssueError: String,
+    failedIssueTxHashes: {type: [String], default: undefined},
     protocolVersion: {type: String, required: true, default: "dogtag-v2/1"},
     errorStage: {type: String, enum: ["attestation", "seal", "issue", "verify", "interrupted"]},
     errorReason: String,

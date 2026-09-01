@@ -3,7 +3,7 @@ import {connectToDatabase} from "@/lib/db";
 import {MintSession, type MintSessionDoc} from "@/lib/models/MintSession";
 import {getClinicSettings} from "@/lib/models/ClinicSettings";
 import {requireEnv} from "@/lib/env";
-import {mongoReconcileDeps, reconcileAnchoredSession} from "@/lib/mint/reconcile";
+import {ISSUE_TX_REVERTED_MESSAGE, mongoReconcileDeps, reconcileAnchoredSession} from "@/lib/mint/reconcile";
 import {badRequest, notFound, requireStaffSession} from "@/lib/staffApi";
 
 /**
@@ -32,7 +32,7 @@ export async function POST(request: Request, {params}: {params: Promise<{session
   if (session.status === "bound") {
     // Idempotent: a repeat confirm call (a double click, a retried request after a dropped
     // response) on an already-bound session simply reports what is already true.
-    return NextResponse.json({sessionId, status: "bound", dogTagId: session.dogTagIdDec, root: session.root});
+    return NextResponse.json({sessionId, status: "bound", dogTagId: session.dogTagIdDec, root: session.root, txHash: session.txHash});
   }
   if (!session.root || (session.status !== "issuing" && session.status !== "error")) {
     return badRequest("Only an issuing session with a sealed root can be confirmed.");
@@ -52,7 +52,23 @@ export async function POST(request: Request, {params}: {params: Promise<{session
   const outcome = await reconcileAnchoredSession(session, cloneAddress, mongoReconcileDeps(sbtAddress, cloneAddress));
 
   if (outcome.reconciled) {
-    return NextResponse.json({sessionId, status: "bound", dogTagId: outcome.dogTagIdDec, root: outcome.root});
+    return NextResponse.json({sessionId, status: "bound", dogTagId: outcome.dogTagIdDec, root: outcome.root, txHash: session.txHash});
+  }
+
+  if (outcome.reason === "reverted") {
+    // The receipt itself is conclusive (WP4.5 track 3's proven forensic case) - back to `ready`,
+    // never `error`: the device's profile tree is still bound and the id's root was never
+    // anchored, so the SAME session can retry `issueTag` immediately with no new token/QR round
+    // trip. `markSessionRevertedReady` (inside reconcileAnchoredSession) already persisted this;
+    // this response just reflects it back without waiting for the wizard's next poll tick.
+    return NextResponse.json({
+      sessionId,
+      status: "ready",
+      dogTagId: session.dogTagIdDec,
+      root: session.root,
+      txHash: undefined,
+      lastIssueError: ISSUE_TX_REVERTED_MESSAGE,
+    });
   }
 
   if (outcome.reason === "chain-read-failed") {

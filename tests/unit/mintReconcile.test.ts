@@ -7,17 +7,31 @@ const CLONE_ADDRESS = "0x1111111111111111111111111111111111111111";
 
 /** In-memory `ReconcileDeps` fake, matching `tests/unit/book.concurrency.test.ts` and
  * `tests/unit/mintFlow.integration.test.ts`'s convention of exercising the pure logic against a
- * hand-rolled store rather than a real database or RPC. */
-function fakeDeps(overrides: Partial<ReconcileDeps> & {onChainRoot?: string; valid?: boolean} = {}) {
+ * hand-rolled store rather than a real database or RPC. `readTxReceiptStatus` defaults to
+ * "pending" (never scripted a specific vector) - not "success" - so a test that forgets to set it
+ * cannot accidentally look like it exercised the reverted-receipt short-circuit. */
+function fakeDeps(
+  overrides: Partial<ReconcileDeps> & {onChainRoot?: string; valid?: boolean} = {},
+) {
   const boundSessionIds: string[] = [];
   const linkedPets: {petId: string; tag: unknown}[] = [];
+  const revertedReady: {sessionId: string; txHash: string}[] = [];
+  const readProfileRootCalls: string[] = [];
   const deps: ReconcileDeps = {
-    readProfileRoot: overrides.readProfileRoot ?? (async () => overrides.onChainRoot ?? ROOT),
+    readProfileRoot:
+      overrides.readProfileRoot ??
+      (async (dogTagIdFieldDec) => {
+        readProfileRootCalls.push(dogTagIdFieldDec);
+        return overrides.onChainRoot ?? ROOT;
+      }),
     readIsValidRoot: overrides.readIsValidRoot ?? (async () => overrides.valid ?? true),
+    readTxReceiptStatus: overrides.readTxReceiptStatus ?? (async () => "pending"),
     markSessionBound: overrides.markSessionBound ?? (async (sessionId) => void boundSessionIds.push(sessionId)),
     linkPetDogTag: overrides.linkPetDogTag ?? (async (petId, tag) => void linkedPets.push({petId, tag})),
+    markSessionRevertedReady:
+      overrides.markSessionRevertedReady ?? (async (sessionId, txHash) => void revertedReady.push({sessionId, txHash})),
   };
-  return {deps, boundSessionIds, linkedPets};
+  return {deps, boundSessionIds, linkedPets, revertedReady, readProfileRootCalls};
 }
 
 describe("isMintSessionStale (the worker boot-recovery age guard)", () => {
@@ -127,5 +141,71 @@ describe("reconcileAnchoredSession (the anchored-reconcile path)", () => {
     expect(outcome.reconciled).toBe(true);
     expect(boundSessionIds).toEqual(["session-1"]);
     expect(linkedPets).toEqual([]);
+  });
+});
+
+describe("reconcileAnchoredSession (reverted-receipt detection, WP4.5 track 3)", () => {
+  const session = {
+    sessionId: "session-1",
+    dogTagIdDec: "42",
+    dogTagIdField: "1234",
+    root: ROOT,
+    petId: "pet-1",
+    txHash: "0xdeadbeef",
+  };
+
+  it("flips to ready via markSessionRevertedReady when the tx receipt is reverted, without ever reading profileRoot/isValid", async () => {
+    const {deps, boundSessionIds, revertedReady, readProfileRootCalls} = fakeDeps({
+      readTxReceiptStatus: async () => "reverted",
+    });
+    const outcome = await reconcileAnchoredSession(session, CLONE_ADDRESS, deps);
+    expect(outcome).toEqual({reconciled: false, reason: "reverted", txHash: "0xdeadbeef"});
+    expect(revertedReady).toEqual([{sessionId: "session-1", txHash: "0xdeadbeef"}]);
+    // The revert is already conclusive - no need to also ask what the chain's own state is, and
+    // no risk of the not-anchored branch below stepping on this session afterward.
+    expect(readProfileRootCalls).toEqual([]);
+    expect(boundSessionIds).toEqual([]);
+  });
+
+  it("does not touch a session with no txHash yet - falls through to the ordinary not-anchored path", async () => {
+    const {deps, revertedReady} = fakeDeps({onChainRoot: `0x${"0".repeat(64)}`, valid: false});
+    const outcome = await reconcileAnchoredSession({...session, txHash: undefined}, CLONE_ADDRESS, deps);
+    expect(outcome).toEqual({reconciled: false, reason: "not-anchored"});
+    expect(revertedReady).toEqual([]);
+  });
+
+  it("leaves a session whose receipt is still pending (not yet mined) to fall through to not-anchored, never guessing reverted", async () => {
+    const {deps, revertedReady} = fakeDeps({
+      readTxReceiptStatus: async () => "pending",
+      onChainRoot: `0x${"0".repeat(64)}`,
+      valid: false,
+    });
+    const outcome = await reconcileAnchoredSession(session, CLONE_ADDRESS, deps);
+    expect(outcome).toEqual({reconciled: false, reason: "not-anchored"});
+    expect(revertedReady).toEqual([]);
+  });
+
+  it("a receipt that reads back success is not treated as reverted - the ordinary anchored-reconcile path still runs and still succeeds", async () => {
+    const {deps, boundSessionIds, revertedReady} = fakeDeps({
+      readTxReceiptStatus: async () => "success",
+      onChainRoot: ROOT,
+      valid: true,
+    });
+    const outcome = await reconcileAnchoredSession(session, CLONE_ADDRESS, deps);
+    expect(outcome).toEqual({reconciled: true, dogTagIdDec: "42", root: ROOT});
+    expect(boundSessionIds).toEqual(["session-1"]);
+    expect(revertedReady).toEqual([]);
+  });
+
+  it("fails closed (chain-read-failed) when the receipt read itself throws, touching neither bound nor reverted-ready state", async () => {
+    const {deps, boundSessionIds, revertedReady} = fakeDeps({
+      readTxReceiptStatus: async () => {
+        throw new Error("RPC timeout");
+      },
+    });
+    const outcome = await reconcileAnchoredSession(session, CLONE_ADDRESS, deps);
+    expect(outcome).toEqual({reconciled: false, reason: "chain-read-failed"});
+    expect(boundSessionIds).toEqual([]);
+    expect(revertedReady).toEqual([]);
   });
 });
