@@ -6,7 +6,7 @@ import {MintSession} from "@/lib/models/MintSession";
 import {BindToken, generateHexToken} from "@/lib/models/BindToken";
 import {nextSequence} from "@/lib/models/Counter";
 import {startMintSessionSchema} from "@/lib/schemas/mintSession";
-import {badRequest, requireStaffSession} from "@/lib/staffApi";
+import {badRequest, requireVetSession} from "@/lib/staffApi";
 import {preflightIssuance} from "@/lib/mint/preflight";
 import {allocateDogTagId} from "@/lib/mint/allocate";
 import {isDogTagIdUnset} from "@/lib/mint/chainChecks";
@@ -16,14 +16,20 @@ import {getServerEnv} from "@/lib/env";
 const TOKEN_TTL_SECS = 600; // wp4-vet.md issuance step 4: `ttlSecs: 600`
 
 /**
- * `POST /api/tags/issue/start` - wp4-vet.md's `/tags/issue` wizard, step 1->4. Staff-only (not
- * part of `vet-public-api.yaml` - that spec only covers the mobile/relayer-facing surface).
+ * `POST /api/tags/issue/start` - wp4-vet.md's `/tags/issue` wizard, step 1->4. Not part of
+ * `vet-public-api.yaml` (that spec only covers the mobile/relayer-facing surface).
  * Preflight-then-allocate ordering is load-bearing: `preflightIssuance` runs and can fail BEFORE
  * `allocateDogTagId` ever touches the counter, so a misconfigured clinic never burns a dogTagId
  * for a request that was always going to be rejected.
+ *
+ * WP4.7A orchestrator ruling R1 (FIX ROUND 1): vet-gated (`requireVetSession`), not merely
+ * staff-gated - this is the first step of the SAME issuance wizard `confirm`/`tx`/`retry` already
+ * gate, and its own call site (`TagIssueWizard.tsx`, under `/tags/issue`) is already redirect-gated
+ * for a plain staff member by the page itself; this closes the matching API-level gap so the guard
+ * cannot silently drift from the page in a future refactor.
  */
 export async function POST(request: Request) {
-  const {response} = await requireStaffSession();
+  const {response} = await requireVetSession();
   if (response) return response;
 
   const body = await request.json().catch(() => null);

@@ -7,7 +7,7 @@ import {getClinicSettings} from "@/lib/models/ClinicSettings";
 import {readIssuedBy, readRecordTypeProfile} from "@/lib/chainRead";
 import {roax} from "@/lib/chains";
 import {readJsonBody} from "@/lib/bodyLimit";
-import {badRequest, notFound, requireStaffSession} from "@/lib/staffApi";
+import {badRequest, notFound, requireVetSession} from "@/lib/staffApi";
 
 const ATTESTATION_TYPES = {
   IssuerAttestation: [
@@ -58,9 +58,13 @@ async function buildAttestationPayload(
  * wallet must sign right after `issueTag` confirms (`protocol/specs/issuer-attestation.md`). The
  * client passes this straight into wagmi's `useSignTypedData`; nothing here signs anything -
  * there is no server-held private key in this repo.
+ *
+ * WP4.7A orchestrator ruling R1 (FIX ROUND 1): vet-gated (`requireVetSession`), matching `confirm`/
+ * `tx`/`retry` - both handlers below are part of the same issuance flow those three routes already
+ * gate, called only from `TagIssueWizard.tsx` under the already page-gated `/tags/issue`.
  */
 export async function GET(_request: Request, {params}: {params: Promise<{sessionId: string}>}) {
-  const {response} = await requireStaffSession();
+  const {response} = await requireVetSession();
   if (response) return response;
 
   const {sessionId} = await params;
@@ -92,7 +96,7 @@ export async function GET(_request: Request, {params}: {params: Promise<{session
  * signature does not recover to the anchoring operator is rejected outright rather than persisted.
  */
 export async function POST(request: Request, {params}: {params: Promise<{sessionId: string}>}) {
-  const {response} = await requireStaffSession();
+  const {response} = await requireVetSession();
   if (response) return response;
 
   const {sessionId} = await params;
