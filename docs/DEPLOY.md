@@ -59,6 +59,38 @@ The wallet you connect during setup submits every on-chain write this app makes 
 Gas is fronted by that operator wallet and refunded by the clinic's clone on success.
 A failed attempt is not refunded - keep the wallet topped up rather than relying on refunds to cover the next attempt.
 
+### Vet role, issuance operators, and per-practitioner scheduling
+
+This section covers two related, Settings-page-only features - neither needs an environment variable or a redeploy.
+Note the naming collision with "Operator wallet gas" just above: that section is about the ONE relayer wallet you connected during setup, which fronts gas for every on-chain write this app makes.
+This section is about a DIFFERENT, per-vet concept the app calls an "issuance operator" - a wallet the contract's `VetIssuer` clone whitelists to issue tags and records at all.
+The two are unrelated; a staff member's wallet being an issuance operator does not give it any gas-fronting role, and the relayer wallet from setup does not need to also be an issuance operator.
+
+**Granting a vet the ability to issue tags (real chain, not the e2e stub):**
+
+1. Invite the staff member from Settings ("Invite by email"), choosing role Vet (or Owner, which already carries this ability).
+   A plain Staff role can never issue tags or records, on any chain - `/tags` and `/tags/issue` redirect them, and the three issuance API routes reject them with a 403, regardless of any on-chain whitelist state.
+2. Record that staff member's own wallet address on their row in the staff roster (the "Wallet address" field) - this is the address that will actually submit their `issueTag`/`issueRecord` transactions from their own browser session once whitelisted, not the relayer wallet from setup.
+3. In the new "Issuance operators" panel further down the Settings page, find that staff member's row and click "Add operator".
+   This submits a real `addOperator(address)` transaction against this clinic's `VetIssuer` clone, signed by YOUR connected wallet (the owner's), not theirs - granting an operator does not require the vet to be present or to sign anything themselves.
+4. Wait for the transaction to confirm; the row's status flips from Inactive to Active once the panel's `operators(address)` read reflects it.
+   Until that on-chain grant lands, the vet's issuance UI still redirects them (or their transactions would simply revert) even if their app-side role is already Vet - the contract, not this app, is the final authority on who can actually issue.
+5. "Remove operator" on the same row submits `removeOperator(address)` the same way and revokes the on-chain grant immediately - do this whenever a vet leaves or should no longer issue, not just when demoting their app-side role, since the app-side role change alone does not touch the chain.
+
+Both buttons use the exact same signed-write path (`legacyTxWithGas`, your connected wallet) as issuing a tag, so the same "Operator wallet gas" note above applies to whatever wallet you have connected while granting or revoking - it needs a small native PLASMA balance to pay gas for that one transaction.
+
+**Switching scheduling mode from Whole clinic to Per practitioner on a live deployment:**
+
+This mode switch is safe to flip on a running clinic with existing data - it changes how NEW availability is computed and how the calendar displays appointments, and it does not rewrite, delete, or reinterpret anything already in the database.
+Before switching, confirm at least one Staff row has role Vet or Owner, is marked "Bookable", and has at least one weekly-hours rule of their own set in the "Weekly hours" picker (select that practitioner from the picker above it first) - the Settings page refuses the switch with an explicit message until this is true, so there is no way to flip it into a broken state through the UI.
+Any appointment that already exists with no practitioner assigned becomes "Unassigned" the moment the mode switches, and per D3's design it blocks that same time slot for every practitioner (never a silent double-book) until staff open it and assign one - expect a "Unassigned appointments need a practitioner" banner on the calendar immediately after switching if any such appointments fall in the visible date range, and treat clearing that banner (assigning a real practitioner to each) as the last step of the migration, not an optional cleanup.
+Switching back to Whole clinic at any time is equally safe and immediate - it simply stops consulting per-practitioner rules/exceptions and per-practitioner appointment assignment, reverting to the exact clinic-wide computation this app used before this feature existed; no data is lost either direction, so the switch can be rehearsed on a live deployment during a quiet period before committing to it.
+
+**One-time database migration required before the first per-practitioner date exception on an existing deployment:** a database created before this feature shipped still carries an old unique index that allows only one date exception per calendar date, clinic-wide.
+Giving two different practitioners their own exception on the same date (routine once practitioners have independent schedules - two vets taking different days off that happen to coincide) fails with a database error until you run this once, against that deployment's own database: `db.availabilityexceptions.dropIndex("date_1")`.
+A brand-new deployment (a fresh Docker Compose install, a fresh Helm install, a fresh managed-Mongo database) never had the old index and needs no action - running the command there returns an "index not found with name [date_1]" error rather than silently doing nothing, and that specific error is the expected, harmless signal that this step was already unnecessary, not a sign anything is broken.
+Running the drop a second time against a database it already succeeded on returns the same "index not found" error for the same reason (the index is already gone) and is equally safe to ignore.
+
 ## Kubernetes (Helm)
 
 `helm/dogtag-vet/` deploys the web app and the worker as two Deployments; it does not manage MongoDB - see "Managed Mongo" below.
