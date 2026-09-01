@@ -1,5 +1,28 @@
 import {describe, expect, it} from "vitest";
-import {wouldRemoveActiveOwnerStatus} from "@/lib/models/Staff";
+import {isVetOrOwner, wouldRemoveActiveOwnerStatus} from "@/lib/models/Staff";
+
+/**
+ * WP4.7 A2: the single "may reach the DogTag issuance surfaces" predicate shared by
+ * `requireVetSession` (staffApi.ts, the API 403 surface), `/tags` + `/tags/issue`'s page-level
+ * redirect, and the sidebar's nav-group visibility (`Sidebar.tsx`'s `visibleGroups`, tested
+ * separately in `tests/unit/sidebarNav.test.ts`). One role x surface matrix here stands in for
+ * all three surfaces because all three call this exact function - see each call site's own doc
+ * comment for why re-deriving the check per surface was deliberately avoided.
+ */
+describe("isVetOrOwner", () => {
+  it.each(["vet", "owner"] as const)("allows role %s", (role) => {
+    expect(isVetOrOwner(role)).toBe(true);
+  });
+
+  it("refuses plain staff", () => {
+    expect(isVetOrOwner("staff")).toBe(false);
+  });
+
+  it("refuses an absent role (unauthenticated or no session.user.role yet)", () => {
+    expect(isVetOrOwner(undefined)).toBe(false);
+    expect(isVetOrOwner(null)).toBe(false);
+  });
+});
 
 /**
  * The last-owner guard `PATCH /api/settings/staff/:staffId` enforces (combined with a fresh

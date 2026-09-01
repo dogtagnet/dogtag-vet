@@ -1,13 +1,13 @@
 import {NextResponse} from "next/server";
 import {connectToDatabase} from "@/lib/db";
 import {MintSession, type MintSessionDoc} from "@/lib/models/MintSession";
-import {badRequest, notFound, requireStaffSession} from "@/lib/staffApi";
+import {badRequest, notFound, requireVetSession} from "@/lib/staffApi";
 
 /** `POST /api/tags/issue/:sessionId/tx` - records the `issueTag` transaction hash the staff
  * wallet just submitted (wagmi, browser-side) and moves the session to `issuing`. wp4-vet.md
  * issuance step 5: "session `issuing` with txHash". */
 export async function POST(request: Request, {params}: {params: Promise<{sessionId: string}>}) {
-  const {response} = await requireStaffSession();
+  const {response} = await requireVetSession();
   if (response) return response;
 
   const {sessionId} = await params;

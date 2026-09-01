@@ -4,7 +4,7 @@ import {MintSession, type MintSessionDoc} from "@/lib/models/MintSession";
 import {getClinicSettings} from "@/lib/models/ClinicSettings";
 import {requireEnv} from "@/lib/env";
 import {ISSUE_TX_REVERTED_MESSAGE, mongoReconcileDeps, reconcileAnchoredSession} from "@/lib/mint/reconcile";
-import {badRequest, notFound, requireStaffSession} from "@/lib/staffApi";
+import {badRequest, notFound, requireVetSession} from "@/lib/staffApi";
 
 /**
  * `POST /api/tags/issue/:sessionId/confirm` - wp4-vet.md issuance step 5: "the worker (or a
@@ -21,7 +21,7 @@ import {badRequest, notFound, requireStaffSession} from "@/lib/staffApi";
  * to the same outcome, not a second implementation of it.
  */
 export async function POST(request: Request, {params}: {params: Promise<{sessionId: string}>}) {
-  const {response} = await requireStaffSession();
+  const {response} = await requireVetSession();
   if (response) return response;
 
   const {sessionId} = await params;

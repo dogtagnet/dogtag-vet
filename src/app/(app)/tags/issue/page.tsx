@@ -1,11 +1,20 @@
 import Link from "next/link";
+import {redirect} from "next/navigation";
 import {PageHeader} from "@/components/shell/PageHeader";
 import {Banner} from "@/components/ui/Banner";
+import {auth} from "@/auth";
 import {connectToDatabase} from "@/lib/db";
 import {getClinicSettings} from "@/lib/models/ClinicSettings";
+import {isVetOrOwner} from "@/lib/models/Staff";
 import {TagIssueWizard} from "@/app/(app)/tags/issue/TagIssueWizard";
 
+/** Same WP4.7 A2 gate as `/tags` - see that page's doc comment. */
 export default async function Page() {
+  const session = await auth();
+  if (!isVetOrOwner(session?.user?.role)) {
+    redirect("/dashboard?notice=vet-required");
+  }
+
   await connectToDatabase();
   const settings = await getClinicSettings();
 

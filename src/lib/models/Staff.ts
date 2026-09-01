@@ -5,6 +5,19 @@ import {randomUUID} from "node:crypto";
 export type StaffRole = "owner" | "staff" | "vet";
 
 /**
+ * Whether `role` may reach the DogTag issuance surfaces (WP4.7 A2) - `vet` and `owner` both
+ * qualify, `staff` and an absent/unauthenticated role do not. The single predicate every gated
+ * surface shares - `requireVetSession` below, `/tags` + `/tags/issue`'s page-level redirect, and
+ * the sidebar's nav-group visibility (`Sidebar.tsx`) - rather than each re-deriving its own and
+ * risking drift (e.g. one of them regressing to a hardcoded `=== "vet"` that forgets `owner`). See
+ * `tests/unit/models/staffRoleGuard.test.ts` for the role x surface matrix this makes trivial to
+ * state once.
+ */
+export function isVetOrOwner(role: StaffRole | undefined | null): boolean {
+  return role === "vet" || role === "owner";
+}
+
+/**
  * A staff account's role, keyed by email and independent of whichever Auth.js adapter/provider
  * authenticated the sign-in (Google, email magic link, or the dev-only credentials provider) -
  * the `jwt` callback in src/lib/auth.ts looks this up by email and stamps `role` onto the token.

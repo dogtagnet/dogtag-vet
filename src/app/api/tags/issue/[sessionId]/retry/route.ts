@@ -3,7 +3,7 @@ import {connectToDatabase} from "@/lib/db";
 import {MintSession, type MintSessionDoc} from "@/lib/models/MintSession";
 import {BindToken, generateHexToken} from "@/lib/models/BindToken";
 import {getClinicSettings} from "@/lib/models/ClinicSettings";
-import {badRequest, notFound, requireStaffSession} from "@/lib/staffApi";
+import {badRequest, notFound, requireVetSession} from "@/lib/staffApi";
 import {preflightIssuance} from "@/lib/mint/preflight";
 import {ISSUE_TX_REVERTED_MESSAGE, mongoReconcileDeps, reconcileAnchoredSession} from "@/lib/mint/reconcile";
 import {getServerEnv, requireEnv} from "@/lib/env";
@@ -31,7 +31,7 @@ const TOKEN_TTL_SECS = 600;
  * never succeed.
  */
 export async function POST(request: Request, {params}: {params: Promise<{sessionId: string}>}) {
-  const {response} = await requireStaffSession();
+  const {response} = await requireVetSession();
   if (response) return response;
 
   const {sessionId} = await params;

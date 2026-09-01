@@ -39,7 +39,8 @@ function StatTile({label, value, hint, href}: {label: string; value: string; hin
  * activity - the same primitives every other page in this app already uses (`DataTable`,
  * `Timeline`), not a bespoke widget set.
  */
-export default async function DashboardPage() {
+export default async function DashboardPage({searchParams}: {searchParams: Promise<{notice?: string}>}) {
+  const {notice} = await searchParams;
   let cloneConfigured = false;
   let content: ReactNode = null;
 
@@ -136,6 +137,15 @@ export default async function DashboardPage() {
   return (
     <>
       <PageHeader title="Dashboard" description="Your clinic's DogTag deployment at a glance." />
+      {notice === "vet-required" && (
+        // WP4.7 A2: `/tags` and `/tags/issue` redirect here rather than a bare 403 - see those
+        // pages' own doc comments. No `dismissKey` - this is a one-time redirect notice, not a
+        // standing condition to remember dismissing.
+        <Banner tone="warn" title="Vet or owner access required">
+          DogTag issuance (Tags, Issue tag) is only visible to staff with the Vet or Owner role.
+          Ask an owner to change your role in Settings if you need access.
+        </Banner>
+      )}
       {!cloneConfigured && (
         <Banner
           tone="warn"

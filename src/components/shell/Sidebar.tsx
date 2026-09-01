@@ -3,6 +3,19 @@
 import Link from "next/link";
 import {usePathname} from "next/navigation";
 import {navGroups} from "@/components/shell/nav";
+import {isVetOrOwner, type StaffRole} from "@/lib/models/Staff";
+
+/** Nav groups gated to `vet`/`owner` (WP4.7 A2) - the sidebar-level half of the same gate `/tags`
+ * and `/tags/issue` enforce server-side (see those pages' doc comments); a plain `staff` session
+ * never even sees the group exists. Named by `NavGroup.label` rather than duplicating the item
+ * list here, so adding a new item to an already-gated group in `nav.ts` never needs a second edit
+ * here to stay gated. */
+const VET_ONLY_GROUPS = new Set(["DogTag"]);
+
+export function visibleGroups(role: StaffRole | undefined) {
+  if (isVetOrOwner(role)) return navGroups;
+  return navGroups.filter((group) => !VET_ONLY_GROUPS.has(group.label));
+}
 
 /** The single nav item that should render active for `pathname`, or `undefined` off-nav (e.g. a
  * sign-in page). A path can match more than one item's prefix - `/tags/issue` starts with both
@@ -26,16 +39,17 @@ function findActiveHref(pathname: string | null): string | undefined {
   return best;
 }
 
-export function Sidebar() {
+export function Sidebar({role}: {role?: StaffRole}) {
   const pathname = usePathname();
   const activeHref = findActiveHref(pathname);
+  const groups = visibleGroups(role);
 
   return (
     <nav className="flex h-full w-60 shrink-0 flex-col gap-6 overflow-y-auto border-r border-border bg-surface px-3 py-5">
       <Link href="/dashboard" className="px-2 text-emphasized font-semibold text-ink">
         dogtag<span className="text-brand">-vet</span>
       </Link>
-      {navGroups.map((group) => (
+      {groups.map((group) => (
         <div key={group.label}>
           <p className="px-2 pb-1.5 text-caption font-medium uppercase tracking-wide text-ink-faint">
             {group.label}
