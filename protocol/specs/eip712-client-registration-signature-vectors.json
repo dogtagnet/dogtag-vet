@@ -1,0 +1,140 @@
+[
+  {
+    "name": "v27-baseline",
+    "description": "A realistic wallet-registration challenge whose signature recovers v=27 (0x1b).",
+    "privateKey": "0x1c85e0b4c31ceaadd3775410f04ec9105dc105ec8108a36375b2ce2a83bb39b3",
+    "challenge": {
+      "clinicName": "Example Vet Clinic",
+      "clone": "0x86d9ac6c094783e6a27d3bdbb6ef868060256c75",
+      "chainId": 135,
+      "maskedClientName": "J***** A******",
+      "clientHash": "0xee7d3e3476b7102baa29fef1d25ba282a61e2e47913380000000000000000000",
+      "registrationId": "8fd81415-a95c-9b04-c6f9-08ec7d0bcf3a",
+      "issuedAt": "1788229335",
+      "blockNumber": "540094",
+      "deadline": "1788229935",
+      "ttlSecs": 600
+    },
+    "wallet": "0xd314db2fd6d593ca1fdd4181e521efc2bc0b221b",
+    "expected": {
+      "digest": "0x3295449133a1cbd84ca5224ee3d1c6b15458bf2fc6b60de5f99269a86223bcaf",
+      "signature": "0x72301247d72d8fb5a7955de09ee6ab87998dc6265939ded982d1b0543457d0a540be3de1acfb49fc93842e674f62f6336b478424cd0c7de9277b6c26eefc6ba21b",
+      "v": 27
+    }
+  },
+  {
+    "name": "v28-baseline",
+    "description": "The SAME baseline challenge fields as v27-baseline, with a key whose signature instead recovers v=28 (0x1c).",
+    "privateKey": "0x0a9d01a8f203c0dd5ca4ddbe16484f7554dd2fd86f645cef6a3f3e10c3aa0522",
+    "challenge": {
+      "clinicName": "Example Vet Clinic",
+      "clone": "0x86d9ac6c094783e6a27d3bdbb6ef868060256c75",
+      "chainId": 135,
+      "maskedClientName": "J***** A******",
+      "clientHash": "0xee7d3e3476b7102baa29fef1d25ba282a61e2e47913380000000000000000000",
+      "registrationId": "8fd81415-a95c-9b04-c6f9-08ec7d0bcf3a",
+      "issuedAt": "1788229335",
+      "blockNumber": "540094",
+      "deadline": "1788229935",
+      "ttlSecs": 600
+    },
+    "wallet": "0x24d2d1b2ab269d5a7358be880caf68b6d82e345f",
+    "expected": {
+      "digest": "0x50389c8d1d1953708c16959d86da305f95e829827d77fb704c9ea57a4c365cfd",
+      "signature": "0xf0e439d2f7aca74c9f7eed8d918a085f8dc0e36c885bc1e27235c55bc744f733760d8a56c4abcf39835c174a06f2d5d025e70d7a797e05164b985536628b4d161c",
+      "v": 28
+    }
+  },
+  {
+    "name": "v27-uint64-max-fields",
+    "description": "v=27 with issuedAt/blockNumber/deadline all at 2^64-1, past Number.MAX_SAFE_INTEGER.",
+    "privateKey": "0x830a795f3d5e65d313bb2c7e80fa7cc989301ea50cae128a623ed38b8f73d7ea",
+    "challenge": {
+      "clinicName": "Example Vet Clinic",
+      "clone": "0x1111111111111111111111111111111111111a11",
+      "chainId": 135,
+      "maskedClientName": "J***** A******",
+      "clientHash": "0xabababababababababababababababababababababababababababababababab",
+      "registrationId": "ffffffff-ffff-4fff-8fff-ffffffffffff",
+      "issuedAt": "18446744073709551615",
+      "blockNumber": "18446744073709551615",
+      "deadline": "18446744073709551615",
+      "ttlSecs": 600
+    },
+    "wallet": "0xb75156ebea1425c1fe297d0f7c3a42924d3bc7fc",
+    "expected": {
+      "digest": "0x68d4b64a81f0dbd3f9119414e137b7373af138febecf3aad7fbbfd5fd7598a8d",
+      "signature": "0x4d1343c27fbd9fbb4f4beeb700a965c3cc4da0111a7f12eb4129baa9644dcfe4349061ba457446e1d8c55520ff9800f05291d46cb30c9ecd4823503e61803fe41b",
+      "v": 27
+    }
+  },
+  {
+    "name": "v28-uint64-max-fields",
+    "description": "v=28 with issuedAt/blockNumber/deadline all at 2^64-1, past Number.MAX_SAFE_INTEGER.",
+    "privateKey": "0x6e549609a70871f57a1500b595ec8093fe801552a5695c43d631fde121dfc2c3",
+    "challenge": {
+      "clinicName": "Example Vet Clinic",
+      "clone": "0x1111111111111111111111111111111111111a11",
+      "chainId": 135,
+      "maskedClientName": "J***** A******",
+      "clientHash": "0xabababababababababababababababababababababababababababababababab",
+      "registrationId": "ffffffff-ffff-4fff-8fff-ffffffffffff",
+      "issuedAt": "18446744073709551615",
+      "blockNumber": "18446744073709551615",
+      "deadline": "18446744073709551615",
+      "ttlSecs": 600
+    },
+    "wallet": "0xe12fdbcdc983e8973501dfff36a56a904d5ae569",
+    "expected": {
+      "digest": "0xa65473e6ba808e3fc39cd0cdd17764c58c49f2abe715528df85edc1f28cf4e1a",
+      "signature": "0x811a941855ff3d0fc6e09f5764ead0a628872708c074e6217103e5d31275ca52617daa93fed8fcc13871ec4839545997d9304866c961ad53e292cdeb3cd993541c",
+      "v": 28
+    }
+  },
+  {
+    "name": "v27-different-chain-and-registration-id",
+    "description": "v=27 on a different chainId with a distinct registrationId, to vary more than one field at once.",
+    "privateKey": "0x538d8130564feedd301a007a7c8c05fff46399874ec7f1132021c87ccc91cd9b",
+    "challenge": {
+      "clinicName": "Example Vet Clinic",
+      "clone": "0x2222222222222222222222222222222222222b22",
+      "chainId": 84532,
+      "maskedClientName": "J***** A******",
+      "clientHash": "0xcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+      "registrationId": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+      "issuedAt": "1700000000",
+      "blockNumber": "12345",
+      "deadline": "1700003600",
+      "ttlSecs": 600
+    },
+    "wallet": "0x04c4ddf3c28230c9aafb503898d77e1944d32a12",
+    "expected": {
+      "digest": "0x096aa0b5720312a20b7813fe7ca8415af61b33fa4063ec09b9f850c18d809587",
+      "signature": "0xba1c49e720fe6c2b2100a8237df352cc616fdd5f64d78a05619560ac5fdcceee6f7873d342ae7d3322b463c6488b4afed3a728174b036ad2ceda7951a4abd9b41b",
+      "v": 27
+    }
+  },
+  {
+    "name": "v28-different-chain-and-registration-id",
+    "description": "v=28 on a different chainId with a distinct registrationId, to vary more than one field at once.",
+    "privateKey": "0x48d270f63c5ad1c7e8f0ab9659f7c60be2e2b992a6ef410e64e77663fa367207",
+    "challenge": {
+      "clinicName": "Example Vet Clinic",
+      "clone": "0x2222222222222222222222222222222222222b22",
+      "chainId": 84532,
+      "maskedClientName": "J***** A******",
+      "clientHash": "0xcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+      "registrationId": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+      "issuedAt": "1700000000",
+      "blockNumber": "12345",
+      "deadline": "1700003600",
+      "ttlSecs": 600
+    },
+    "wallet": "0xa4a1b2358f1474b5b41f41b963e619ff272bae6c",
+    "expected": {
+      "digest": "0x08beb101c96f9320b26d1eb683dadb9e9f32b5f22126b8a34e8c88c84f67f0b1",
+      "signature": "0xf6a54f83440a99de2f9f54f972da0d282713adceba1fccbcdd6127cd2dfecb6c34229730313679bc976de1a1f99b273a38d7e8c7ac33ca83c50c20cbd8492d8e1c",
+      "v": 28
+    }
+  }
+]
