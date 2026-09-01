@@ -684,11 +684,43 @@ describe("D3 across a mode switch / roster change", () => {
     const assignB = await reassignPractitioner(apptB.appointment.appointmentId, vetA.staffId);
     expect(assignB).toEqual({ok: false, reason: "slot_conflict"});
 
-    // The operator resolves the genuine conflict a human must decide (cancel/reschedule one) -
-    // once B is no longer live, A can be assigned normally.
+    // The operator resolves the genuine conflict a human must decide (cancelling one - an
+    // appointment's time cannot be edited after creation) - once B is no longer live, A can be
+    // assigned normally.
     await setAppointmentTerminalStatus(apptB.appointment.appointmentId, "cancelled");
     const assignAAfter = await reassignPractitioner(apptA.appointment.appointmentId, vetA.staffId);
     expect(assignAAfter.ok).toBe(true);
     if (assignAAfter.ok) expect(assignAAfter.appointment.practitionerStaffId).toBe(vetA.staffId);
+  });
+
+  /**
+   * Grade round 2, N1's pinning assertion: DEPLOY.md's same-instant paragraph must never again
+   * suggest "add a second bookable practitioner" as a remedy - it does not work BY CONSTRUCTION
+   * (each unassigned appointment folds into EVERY practitioner's occupancy, a newly added one
+   * included), and this test is what makes the corrected sentence load-bearing rather than prose.
+   */
+  it("two unassigned appointments at the identical instant: adding a SECOND bookable practitioner does not clear the deadlock - both assignments still refuse", async () => {
+    await setPractitionerMode();
+    const vetA = await Staff.create({email: "overlap2-a@example.com", role: "vet", bookable: true});
+    const vetB = await Staff.create({email: "overlap2-b@example.com", role: "vet", bookable: true});
+    await AvailabilityRule.create({dayOfWeek: THURSDAY, startMinute: 9 * 60, endMinute: 17 * 60, staffId: vetA.staffId});
+    await AvailabilityRule.create({dayOfWeek: THURSDAY, startMinute: 9 * 60, endMinute: 17 * 60, staffId: vetB.staffId});
+
+    const apptA = await createAppointment(draftAt({startAt: thu9am, endAt: thu9am + 1800, source: "staff"}), {
+      enforceCapacity: false,
+    });
+    const apptB = await createAppointment(draftAt({startAt: thu9am, endAt: thu9am + 1800, source: "staff"}), {
+      enforceCapacity: false,
+    });
+    expect(apptA.ok).toBe(true);
+    expect(apptB.ok).toBe(true);
+    if (!apptA.ok || !apptB.ok) return;
+
+    // One practitioner EACH would resolve a "real" double-booking - and is exactly what D3
+    // refuses while both appointments are unassigned: each blocks every practitioner.
+    const assignAtoA = await reassignPractitioner(apptA.appointment.appointmentId, vetA.staffId);
+    expect(assignAtoA).toEqual({ok: false, reason: "slot_conflict"});
+    const assignBtoB = await reassignPractitioner(apptB.appointment.appointmentId, vetB.staffId);
+    expect(assignBtoB).toEqual({ok: false, reason: "slot_conflict"});
   });
 });
