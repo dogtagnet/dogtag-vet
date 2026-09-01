@@ -41,6 +41,22 @@ const scenarios = new Map<string, ScenarioResult>();
 let forceCallFailure = false;
 let blockNumber = 1_000n;
 
+/** WP4.5 track 3 - `txHash` (lowercase) -> mined receipt status, scripted per test via
+ * `setRpcReceipt`/`/__control/receipt`. Absent means "not yet mined": `eth_getTransactionReceipt`
+ * answers `result: null`, matching a real node's response for a transaction it has not indexed yet
+ * (viem's `getTransactionReceipt` action itself turns that `null` into
+ * `TransactionReceiptNotFoundError` client-side - see `src/lib/chainRead.ts`'s
+ * `readTxReceiptStatus`). Never auto-populated by `eth_sendRawTransaction`/anything else - this
+ * stub never actually mines a transaction, only ever answers whatever a test explicitly scripted. */
+const receipts = new Map<string, "success" | "reverted">();
+
+/** WP4.5 track 3 - the next `eth_estimateGas` response (a plain gas quantity, not scoped per
+ * function/address - one scriptable value is enough for what this stub is used for: proving
+ * `legacyTxWithGas` carries HEADROOM over whatever the stub says the bare estimate is). Defaults to
+ * a plausible mid-size estimate so a test that never bothers scripting one still gets a sane value
+ * rather than the ABI-default `0n`. */
+let gasEstimate = 200_000n;
+
 function canonicalArgKey(args: readonly unknown[]): string {
   return JSON.stringify(args.map((a) => (typeof a === "bigint" ? a.toString() : String(a).toLowerCase())));
 }
@@ -105,6 +121,20 @@ export function startRpcStub(): Server {
     if (req.method === "POST" && req.url === "/__control/reset") {
       scenarios.clear();
       forceCallFailure = false;
+      receipts.clear();
+      gasEstimate = 200_000n;
+      sendJson(res, 200, {ok: true});
+      return;
+    }
+    if (req.method === "POST" && req.url === "/__control/receipt") {
+      const body = JSON.parse(bodyText) as {txHash: string; status: "success" | "reverted"};
+      receipts.set(body.txHash.toLowerCase(), body.status);
+      sendJson(res, 200, {ok: true});
+      return;
+    }
+    if (req.method === "POST" && req.url === "/__control/gas-estimate") {
+      const body = JSON.parse(bodyText) as {gas: string};
+      gasEstimate = BigInt(body.gas);
       sendJson(res, 200, {ok: true});
       return;
     }
@@ -138,6 +168,40 @@ export function startRpcStub(): Server {
     }
     if (rpcRequest.method === "eth_chainId") {
       reply("0x87"); // 135, this repo's ROAX chain id
+      return;
+    }
+    if (rpcRequest.method === "eth_getTransactionReceipt") {
+      const txHash = (rpcRequest.params?.[0] as string | undefined)?.toLowerCase();
+      const status = txHash ? receipts.get(txHash) : undefined;
+      if (!status) {
+        reply(null); // "not yet mined" - viem's own client turns this into TransactionReceiptNotFoundError
+        return;
+      }
+      // Minimal but well-formed receipt - every field viem's receipt formatter reads.
+      reply({
+        transactionHash: txHash,
+        transactionIndex: "0x0",
+        blockHash: `0x${"cc".repeat(32)}`,
+        blockNumber: `0x${blockNumber.toString(16)}`,
+        from: "0x0000000000000000000000000000000000000001",
+        to: "0x0000000000000000000000000000000000000002",
+        cumulativeGasUsed: "0x1",
+        gasUsed: "0x1",
+        contractAddress: null,
+        logs: [],
+        logsBloom: `0x${"0".repeat(512)}`,
+        status: status === "success" ? "0x1" : "0x0",
+        type: "0x0",
+        effectiveGasPrice: "0x1",
+      });
+      return;
+    }
+    if (rpcRequest.method === "eth_estimateGas") {
+      reply(`0x${gasEstimate.toString(16)}`);
+      return;
+    }
+    if (rpcRequest.method === "eth_gasPrice") {
+      reply("0x1");
       return;
     }
     if (rpcRequest.method === "eth_call") {
@@ -197,5 +261,26 @@ export async function setRpcScenario(functionName: string, address: string, args
     method: "POST",
     headers: {"content-type": "application/json"},
     body: JSON.stringify({functionName, address, args, result}),
+  });
+}
+
+/** Scripts `eth_getTransactionReceipt(txHash)` to answer as mined with the given status - WP4.5
+ * track 3's reverted-`issueTag` scenarios. An unscripted txHash answers `null` ("not yet mined"). */
+export async function setRpcReceipt(txHash: string, status: "success" | "reverted"): Promise<void> {
+  await fetch(`${RPC_STUB_URL}/__control/receipt`, {
+    method: "POST",
+    headers: {"content-type": "application/json"},
+    body: JSON.stringify({txHash, status}),
+  });
+}
+
+/** Scripts the next `eth_estimateGas` response - WP4.5 track 3's gas-headroom assertion scripts a
+ * known "bare estimate" here and checks the wallet's actual `writeContract` call carries HEADROOM
+ * over it (`legacyTxWithGas`'s `+20% + 30_000`). */
+export async function setRpcGasEstimate(gas: bigint): Promise<void> {
+  await fetch(`${RPC_STUB_URL}/__control/gas-estimate`, {
+    method: "POST",
+    headers: {"content-type": "application/json"},
+    body: JSON.stringify({gas: gas.toString()}),
   });
 }
