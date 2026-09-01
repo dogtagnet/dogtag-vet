@@ -147,7 +147,11 @@ export function ServiceForm({service}: {service?: ServiceDoc}) {
             Shown in the clinic&apos;s own scheduling
           </label>
         </FormField>
-        <FormField label="Bookable online" htmlFor="service-bookable">
+        <FormField
+          label="Bookable online"
+          htmlFor="service-bookable"
+          helperText="Off by default - staff scheduling only."
+        >
           <label className="flex items-center gap-2 text-body text-ink">
             <input
               id="service-bookable"

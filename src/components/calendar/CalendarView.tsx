@@ -1,6 +1,7 @@
 "use client";
 
 import {Fragment, useMemo, useState} from "react";
+import Link from "next/link";
 import {useRouter} from "next/navigation";
 import {Banner} from "@/components/ui/Banner";
 import {Button, Input, Select, Textarea} from "@/components/ui/controls";
@@ -386,7 +387,7 @@ function CreateAppointmentPanel({
               <PetMultiPicker clientId={selectedClient?.clientId} value={selectedPets} onChange={setSelectedPets} />
             </>
           )}
-          <Select value={serviceId} onChange={(e) => setServiceId(e.target.value)}>
+          <Select aria-label="Service" value={serviceId} onChange={(e) => setServiceId(e.target.value)}>
             <option value="">No specific service</option>
             {services.map((s) => (
               <option key={s.serviceId} value={s.serviceId}>
@@ -394,6 +395,19 @@ function CreateAppointmentPanel({
               </option>
             ))}
           </Select>
+          {services.length === 0 && (
+            // Root cause of the "dropdown looks broken" report: zero services in the DB leaves
+            // only the "No specific service" option, with no affordance telling staff where
+            // services come from. Serviceless appointments stay legitimate (from-local-time's
+            // serviceId is optional) - this is purely a discoverability hint, never a requirement.
+            <p className="text-caption text-ink-faint">
+              No active services yet.{" "}
+              <Link href="/services/new" className="text-link hover:underline">
+                Create one under Services
+              </Link>{" "}
+              to pick it here.
+            </p>
+          )}
           <Textarea placeholder="Notes" rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} />
         </div>
         <div className="mt-5 flex justify-end gap-2">
