@@ -139,6 +139,20 @@ export async function createAppointment(
       const resolved = resolveClinicWindow(draft, bufferBeforeMin, bufferAfterMin, config.settings, own.rules, own.exceptions);
       if (!resolved.ok) return {ok: false, reason: "outside_hours"};
       capacity = 1; // D2: a practitioner's capacity is intrinsically 1, regardless of the stored window's own capacity value.
+
+      // WP4.7A FIX ROUND 1 (MAJOR-1): the bucket claim below is the atomic final word, but it is
+      // NOT authoritative across a mode switch or a roster change - a clinic-mode (or pre-roster-
+      // growth) appointment can occupy this exact instant while holding no `p:<staffId>:` claim at
+      // all (see `AppointmentDoc.bucketScope`'s own doc comment: "a snapshot of staffIds, not a
+      // live query"). This is the SAME occupancy read `autoAssignAndCreate` already runs below -
+      // a one-practitioner copy of it - closing the ledger-staleness hole D3 requires ("unassigned
+      // blocks ALL practitioners", including one who only just became bookable, or one whose
+      // blocking appointment predates practitioner mode entirely) without weakening the bucket
+      // claim itself.
+      const occupiedMap = await loadPractitionerOccupiedIntervals(occupied.start, occupied.end, [staffId]);
+      if (countOverlapping(occupied, occupiedMap.get(staffId) ?? []) >= 1) {
+        return {ok: false, reason: "slot_conflict"}; // D2: capacity 1
+      }
     }
     return claimAppointment(draft, occupied, capacity, [staffId]);
   }
@@ -317,6 +331,20 @@ export async function reassignPractitioner(
     if (!resolved.ok) return {ok: false, reason: "outside_hours"};
     newScope = [newPractitionerStaffId]; // D2: a practitioner's capacity is intrinsically 1.
     capacity = 1;
+
+    // WP4.7A FIX ROUND 1 (MAJOR-1): same ledger-staleness closure as `createAppointment`'s named
+    // branch above, but this one MUST exclude the appointment's own row (`appointmentId` below) -
+    // when the appointment being moved is currently UNASSIGNED, it is itself part of the "every
+    // unassigned appointment" set D3 folds into every staffId's occupancy (see
+    // `loadPractitionerOccupiedIntervals`'s own doc comment), so an unguarded read would see this
+    // move as blocked by ITSELF. An appointment moving off a DIFFERENT named practitioner never hits
+    // this (it lives in that practitioner's own partition, never the unassigned one), and a
+    // no-op move already returned early above - so the exclusion only ever matters for the
+    // unassigned -> named case, which is exactly the one this WP's own tests exercise.
+    const occupiedMap = await loadPractitionerOccupiedIntervals(occupied.start, occupied.end, [newPractitionerStaffId], appointmentId);
+    if (countOverlapping(occupied, occupiedMap.get(newPractitionerStaffId) ?? []) >= 1) {
+      return {ok: false, reason: "slot_conflict"};
+    }
   }
 
   // The old and new scopes can share staffIds (most concretely: unassigned -> a named practitioner

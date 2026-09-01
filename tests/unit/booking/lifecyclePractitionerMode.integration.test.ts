@@ -15,8 +15,10 @@ import {startEphemeralMongod, stopEphemeralMongod, type EphemeralMongod} from ".
  */
 import {connectToDatabase} from "@/lib/db";
 import {createAppointment, reassignPractitioner, setAppointmentTerminalStatus} from "@/lib/booking/lifecycle";
+import {loadPractitionerOccupiedIntervals} from "@/lib/booking/queries";
 import {Appointment} from "@/lib/models/Appointment";
 import {AvailabilityException, AvailabilityRule, BookingSettings} from "@/lib/models/Availability";
+import {CapacityBucket} from "@/lib/models/CapacityBucket";
 import {Staff} from "@/lib/models/Staff";
 import type {AppointmentDraft} from "@/lib/booking/mongoStore";
 
@@ -44,6 +46,15 @@ afterEach(async () => {
     AvailabilityException.deleteMany({}),
     BookingSettings.deleteMany({}),
     Staff.deleteMany({}),
+    // WP4.7A FIX ROUND 1: pre-existing test-isolation gap, found while adding the D3 mode-switch
+    // regression test below. Every OTHER test in this file claims practitioner-scoped `p:<staffId>:`
+    // bucket keys with a fresh randomUUID() staffId each time (Staff.create()), so residual
+    // CapacityBucket counts never collided across tests by accident - but a PLAIN clinic-mode key
+    // (no staffId prefix) is the SAME literal key every time thu9am/thu10am is reused, and this
+    // file never released what "clinic mode is unaffected" (the very first test below) claims.
+    // Cleaning the ledger here, like every other collection, is what test isolation actually
+    // requires - nothing in this file relies on bucket state surviving across a test boundary.
+    CapacityBucket.deleteMany({}),
   ]);
 });
 
@@ -511,5 +522,128 @@ describe("reassignPractitioner - WP4.7 A6, claim-new-before-release-old", () => 
       enforceCapacity: true,
     });
     expect(bFree.ok).toBe(true);
+  });
+});
+
+/**
+ * WP4.7A FIX ROUND 1 (MAJOR-1, grade round 1) - grade.md's own reproductions, pinned permanently.
+ * The bucket ledger is authoritative only WITHIN the roster/mode it was claimed under; it is not a
+ * live query, so an appointment lacking a matching `p:<staffId>:` claim was previously invisible to
+ * the NAMED write path (`createAppointment`'s named branch, `reassignPractitioner`) while remaining
+ * correctly blocking on every READ path (`loadPractitionerOccupiedIntervals`, used by availability
+ * computation and by `autoAssignAndCreate`). Each case below pairs the breach assertion with a
+ * control that was ALREADY correct before this fix, isolating the defect to exactly the branch the
+ * grade file named.
+ */
+describe("D3 across a mode switch / roster change", () => {
+  it("clinic -> practitioner mode switch: a pre-switch clinic booking blocks a same-slot NAMED practitioner booking (auto-assign control stays correct throughout)", async () => {
+    // An ORDINARY public/clinic booking, not a seeded row - clinic mode never sets
+    // practitionerStaffId, so this appointment carries plain (non-practitioner-scoped) bucket keys.
+    await AvailabilityRule.create({dayOfWeek: THURSDAY, startMinute: 9 * 60, endMinute: 17 * 60});
+    const legacy = await createAppointment(draftAt({startAt: thu9am, endAt: thu9am + 1800}), {enforceCapacity: true});
+    expect(legacy.ok).toBe(true);
+    if (!legacy.ok) return;
+    expect(legacy.appointment.practitionerStaffId).toBeUndefined();
+    expect(legacy.appointment.bucketScope).toBeUndefined();
+
+    // The operator follows DEPLOY.md: a practitioner is made bookable with their own hours, then
+    // the clinic switches modes. The legacy appointment above is now "Unassigned" and, per D3,
+    // must block every currently bookable practitioner at its exact instant.
+    const vetA = await Staff.create({email: "modeswitch-a@example.com", role: "vet", bookable: true});
+    await AvailabilityRule.create({dayOfWeek: THURSDAY, startMinute: 9 * 60, endMinute: 17 * 60, staffId: vetA.staffId});
+    await setPractitionerMode();
+
+    // CONTROL (already correct pre-fix): the read path's own auto-assign, with no requested
+    // practitioner, correctly refuses - proving the occupancy READ was never the problem.
+    const autoAssignControl = await createAppointment(draftAt({startAt: thu9am, endAt: thu9am + 1800}), {enforceCapacity: true});
+    expect(autoAssignControl).toEqual({ok: false, reason: "slot_conflict"});
+
+    // BREACH (grade round 1): the SAME instant, naming vetA explicitly, must ALSO refuse - this is
+    // the wire field WP4.7 added (`practitionerId`), and it must fail closed exactly like the
+    // control above.
+    const namedBreach = await createAppointment(
+      draftAt({startAt: thu9am, endAt: thu9am + 1800, practitionerStaffId: vetA.staffId}),
+      {enforceCapacity: true},
+    );
+    expect(namedBreach).toEqual({ok: false, reason: "slot_conflict"});
+  });
+
+  it("roster growth: a practitioner added AFTER an unassigned appointment already exists is still blocked by it for a NAMED booking (bucket-mechanism control stays correct for the ORIGINAL roster member)", async () => {
+    await setPractitionerMode();
+    const vetA = await Staff.create({email: "roster-a@example.com", role: "vet", bookable: true});
+    await AvailabilityRule.create({dayOfWeek: THURSDAY, startMinute: 9 * 60, endMinute: 17 * 60, staffId: vetA.staffId});
+
+    // Staff-created, deliberately unassigned - bucketScope snapshots ONLY who was bookable right
+    // now (vetA alone), per AppointmentDoc.bucketScope's own doc comment.
+    const blocker = await createAppointment(draftAt({startAt: thu9am, endAt: thu9am + 1800, source: "staff"}), {
+      enforceCapacity: false,
+    });
+    expect(blocker.ok).toBe(true);
+    if (blocker.ok) expect(blocker.appointment.bucketScope).toEqual([vetA.staffId]);
+
+    // Roster growth AFTER the blocker was created - vetC's own `p:vetC:` bucket space was never
+    // touched by it.
+    const vetC = await Staff.create({email: "roster-c@example.com", role: "vet", bookable: true});
+    await AvailabilityRule.create({dayOfWeek: THURSDAY, startMinute: 9 * 60, endMinute: 17 * 60, staffId: vetC.staffId});
+
+    // CONTROL (already correct pre-fix, via the pre-existing bucket claim - not the new occupancy
+    // read): vetA, who WAS in the blocker's snapshot, is still correctly refused.
+    const originalMemberControl = await createAppointment(
+      draftAt({startAt: thu9am, endAt: thu9am + 1800, practitionerStaffId: vetA.staffId}),
+      {enforceCapacity: true},
+    );
+    expect(originalMemberControl).toEqual({ok: false, reason: "slot_conflict"});
+
+    // BREACH (grade round 1): vetC, added after the blocker existed, must ALSO be refused - D3
+    // blocks every CURRENTLY bookable practitioner, not only whoever was bookable at creation time.
+    const rosterGrowthBreach = await createAppointment(
+      draftAt({startAt: thu9am, endAt: thu9am + 1800, practitionerStaffId: vetC.staffId}),
+      {enforceCapacity: true},
+    );
+    expect(rosterGrowthBreach).toEqual({ok: false, reason: "slot_conflict"});
+  });
+
+  it("reassignment onto a practitioner added AFTER an unassigned appointment is refused (read-path control proves the occupancy READ was already correct - only the WRITE path needed the fix)", async () => {
+    await setPractitionerMode();
+    const vetA = await Staff.create({email: "reassign-a@example.com", role: "vet", bookable: true});
+    await AvailabilityRule.create({dayOfWeek: THURSDAY, startMinute: 9 * 60, endMinute: 17 * 60, staffId: vetA.staffId});
+
+    // An appointment that will later be reassigned - currently on vetA, at the slot the blocker
+    // (below) will also occupy. Staff can deliberately double-book (enforceCapacity: false), so
+    // creating the unassigned blocker on top of this does not fail.
+    const toMove = await createAppointment(draftAt({startAt: thu9am, endAt: thu9am + 1800, practitionerStaffId: vetA.staffId}), {
+      enforceCapacity: true,
+    });
+    expect(toMove.ok).toBe(true);
+    if (!toMove.ok) return;
+
+    const blocker = await createAppointment(draftAt({startAt: thu9am, endAt: thu9am + 1800, source: "staff"}), {
+      enforceCapacity: false,
+    });
+    expect(blocker.ok).toBe(true);
+    if (blocker.ok) expect(blocker.appointment.bucketScope).toEqual([vetA.staffId]); // only vetA bookable so far
+
+    // Roster growth AFTER the blocker was created.
+    const vetB = await Staff.create({email: "reassign-b@example.com", role: "vet", bookable: true});
+    await AvailabilityRule.create({dayOfWeek: THURSDAY, startMinute: 9 * 60, endMinute: 17 * 60, staffId: vetB.staffId});
+
+    // CONTROL (already correct pre-fix and unaffected by this fix): the occupancy READ used by
+    // availability computation already reports vetB as occupied at this instant because of the
+    // unassigned blocker - "D3 is enforced on the read path only" is precisely this fact.
+    const readPathControl = await loadPractitionerOccupiedIntervals(toMove.appointment.startAt, toMove.appointment.endAt, [
+      vetB.staffId,
+    ]);
+    expect(readPathControl.get(vetB.staffId)?.length).toBeGreaterThan(0);
+
+    // BREACH (grade round 1): reassigning `toMove` (currently on vetA, nothing to do with the
+    // blocker) onto vetB must be refused - vetB is blocked by the unassigned blocker exactly like
+    // the control above already knew, but only the WRITE path failed to consult it.
+    const reassignBreach = await reassignPractitioner(toMove.appointment.appointmentId, vetB.staffId);
+    expect(reassignBreach).toEqual({ok: false, reason: "slot_conflict"});
+
+    // toMove must be COMPLETELY unchanged by the refused reassignment.
+    const stillOnA = await Appointment.findOne({appointmentId: toMove.appointment.appointmentId}).lean();
+    expect(stillOnA?.practitionerStaffId).toBe(vetA.staffId);
+    expect(stillOnA?.bucketScope).toEqual([vetA.staffId]);
   });
 });

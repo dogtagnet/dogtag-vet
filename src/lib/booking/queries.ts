@@ -147,11 +147,19 @@ export async function loadPractitionerRulesAndExceptions(
  * already buffered exactly like `loadExistingOccupiedIntervals`. One query for the whole range,
  * partitioned in JS by `practitionerStaffId` rather than N queries per practitioner - the same
  * "small enough to fetch once" reasoning `loadExistingOccupiedIntervals` already relies on.
+ *
+ * WP4.7A FIX ROUND 1 (MAJOR-1): `excludeAppointmentId`, when given, drops that one appointment from
+ * the query - `reassignPractitioner` (lifecycle.ts) needs this so an UNASSIGNED appointment being
+ * moved onto a named practitioner never sees ITSELF as the thing blocking the move (an unassigned
+ * appointment is folded into every staffId's own occupancy list below, including the very
+ * practitioner it is about to become). `createAppointment`'s own occupancy check never passes this
+ * (a brand-new appointment has no id yet to exclude) - see this function's callers.
  */
 export async function loadPractitionerOccupiedIntervals(
   fromUtc: number,
   toUtc: number,
   staffIds: string[],
+  excludeAppointmentId?: string,
 ): Promise<Map<string, OccupiedInterval[]>> {
   const {bufferByServiceId, padSeconds} = await loadServiceBufferLookup();
 
@@ -159,6 +167,7 @@ export async function loadPractitionerOccupiedIntervals(
     status: {$nin: ["cancelled", "no_show"]},
     startAt: {$lt: toUtc + padSeconds},
     endAt: {$gt: fromUtc - padSeconds},
+    ...(excludeAppointmentId ? {appointmentId: {$ne: excludeAppointmentId}} : {}),
   })
     .select("startAt endAt serviceId practitionerStaffId")
     .lean<Array<{startAt: number; endAt: number; serviceId?: string; practitionerStaffId?: string}>>();
