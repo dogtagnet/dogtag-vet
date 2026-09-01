@@ -244,8 +244,13 @@ test.describe.serial("booking configuration timezone picker (WP4.5 issue 2)", ()
       await setTheme(page, theme);
 
       // Resting chip first - the two-line (zone + secondary offset) layout is this component's
-      // own invention (ClientPicker's chip is single-line), never otherwise screenshotted.
-      await expect(page.getByText("America/New_York", {exact: true})).toBeVisible();
+      // own invention (ClientPicker's chip is single-line), never otherwise screenshotted. The
+      // Booking configuration section sits below the fold on a fresh load - `toBeVisible()` alone
+      // doesn't scroll it into the viewport (only an action like `.click()` does), so this scrolls
+      // explicitly rather than screenshotting whatever the page happened to load scrolled to.
+      const chip = page.getByText("America/New_York", {exact: true});
+      await expect(chip).toBeVisible();
+      await chip.scrollIntoViewIfNeeded();
       await page.screenshot({path: `${SHOTS_DIR}/timezone-chip-resting-${theme.toLowerCase()}.png`});
 
       await page.getByRole("button", {name: /^Remove /}).click();
