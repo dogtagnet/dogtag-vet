@@ -37,8 +37,15 @@ interface SessionPoll {
   status: "pending" | "ready" | "issuing" | "bound" | "error";
   root?: string;
   txHash?: string;
+  /** Set when a previous `issueTag` attempt confirmed REVERTED on chain (WP4.5 track 3) - shown
+   * next to the re-enabled Issue button on a `ready` session. */
+  lastIssueError?: string;
   errorStage?: string;
   errorReason?: string;
+  /** Whether the C3 issuer attestation is already stored for this session's tag - read from the
+   * linked Pet's own record (`GET .../route.ts`'s doc comment), never a client-local flag, so this
+   * survives a reload instead of re-offering a signature that was already given and stored. */
+  attestationSigned?: boolean;
   token?: string;
   qr?: string;
   ttlSecs?: number;
@@ -82,9 +89,6 @@ export function TagIssueWizard() {
   const [session, setSession] = useState<SessionPoll | null>(null);
   const [issuing, setIssuing] = useState(false);
   const [pendingTxHash, setPendingTxHash] = useState<`0x${string}` | undefined>(undefined);
-  // Flips the bound-state "Sign issuer attestation" button to a done badge once the signed
-  // attestation is stored (live incident: the button silently kept offering itself after success).
-  const [attestationSigned, setAttestationSigned] = useState(false);
 
   // The replace wizard (wp4-vet.md: "replace ... start new mint session for the same pet, and
   // after the new tag binds, prompt revoke of the old tag with REASON_REPLACED"). `replacingPet`
@@ -303,7 +307,20 @@ export function TagIssueWizard() {
         .then((r) => r.json())
         .then((body) => {
           if (body.status === "bound") snackbar.show("Tag bound on chain", "ok");
-          setSession((prev) => (prev ? {...prev, status: body.status ?? prev.status} : prev));
+          // WP4.5 track 3: a reverted `issueTag` lands back on `ready` (not `error`) with
+          // `lastIssueError` set - shown immediately here (not left to wait for the next 2s poll
+          // tick) and the now-dead `txHash` cleared, matching what the next GET poll will confirm.
+          // A bare `body.status ?? prev.status` (every other outcome) deliberately leaves
+          // `txHash`/`lastIssueError` untouched - `JSON.stringify` drops an explicit `undefined`
+          // key entirely, so those OTHER response shapes (202 chain-read-failed passthrough, the
+          // plain `{error}` badRequest body) never actually carry these fields to distinguish
+          // "clear it" from "this response just doesn't mention it".
+          if (body.status === "ready") {
+            if (body.lastIssueError) snackbar.show(body.lastIssueError, "danger");
+            setSession((prev) => (prev ? {...prev, status: "ready", txHash: undefined, lastIssueError: body.lastIssueError} : prev));
+          } else {
+            setSession((prev) => (prev ? {...prev, status: body.status ?? prev.status} : prev));
+          }
         });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -335,7 +352,12 @@ export function TagIssueWizard() {
         return;
       }
       snackbar.show("Issuer attestation signed and stored", "ok");
-      setAttestationSigned(true);
+      // Reload-survival (WP4.5 track 3): the done-badge state is derived from the poll payload's
+      // `attestationSigned` (itself read off the linked Pet's `dogTag.attestation`, the same field
+      // this POST just wrote), never a client-local flag - so a reload keeps showing the badge
+      // instead of re-offering a signature that was already given and stored. Setting it directly
+      // here too just avoids waiting for the next 2s poll tick for the SAME tab's own UI to update.
+      setSession((prev) => (prev ? {...prev, attestationSigned: true} : prev));
     } catch (err) {
       snackbar.show(err instanceof Error ? err.message : "Signature was rejected", "danger");
     }
@@ -363,6 +385,21 @@ export function TagIssueWizard() {
         prev ? {...prev, status: "bound", dogTagId: body.dogTagId ?? prev.dogTagId, root: body.root ?? prev.root} : prev,
       );
       snackbar.show("This tag was already issued on chain - marked bound.", "ok");
+      return;
+    }
+    if (body.status === "ready") {
+      // The session's error was actually a confirmed-REVERTED `issueTag` (WP4.5 track 3) - the
+      // retry route reconciled it straight back to `ready` on the SAME session/root, exactly like
+      // the confirm route's own reverted branch, rather than arming a brand new bind token (which
+      // would needlessly discard an already-bound profile tree and send the owner through the QR
+      // ceremony again for no reason).
+      stopPolling();
+      setSession((prev) =>
+        prev
+          ? {...prev, status: "ready", dogTagId: body.dogTagId ?? prev.dogTagId, root: body.root ?? prev.root, txHash: undefined, lastIssueError: body.lastIssueError}
+          : prev,
+      );
+      if (body.lastIssueError) snackbar.show(body.lastIssueError, "danger");
       return;
     }
     setSession({
@@ -402,9 +439,18 @@ export function TagIssueWizard() {
           )}
 
           {session.status === "ready" && (
-            <div className="mt-4">
-              <p className="mb-3 text-body text-ink-muted">
+            <div className="mt-4 space-y-3">
+              {session.lastIssueError && (
+                <Banner tone="danger" title="Previous attempt did not confirm">
+                  {session.lastIssueError}
+                </Banner>
+              )}
+              <p className="text-body text-ink-muted">
                 The device built and bound its profile tree. Issue this tag on chain from your operator wallet.
+              </p>
+              <p className="text-caption text-ink-faint">
+                Gas is fronted by your wallet and refunded by the clinic&apos;s clone on success (failed attempts are
+                not refunded).
               </p>
               <Button onClick={handleIssue} disabled={issuing}>
                 {issuing ? "Issuing..." : "Issue on chain"}
@@ -419,7 +465,7 @@ export function TagIssueWizard() {
           {session.status === "bound" && (
             <div className="mt-4 space-y-4">
               <p className="text-body text-ok">Tag bound successfully.</p>
-              {attestationSigned ? (
+              {session.attestationSigned ? (
                 <StatusBadge label="Issuer attestation signed" tone="ok" />
               ) : (
                 <Button onClick={handleSignAttestation}>Sign issuer attestation</Button>
