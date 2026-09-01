@@ -252,6 +252,29 @@ export function CalendarView(props: CalendarViewProps) {
     return cols;
   }, [showPractitionerColumns, dates, anchorDate, appointmentsByDate, practitionerFilter, practitioners]);
 
+  // WP4.7 D3 - "a calendar banner prompting staff to assign a practitioner to legacy/unassigned
+  // appointments", missed in A6's own commit (only the Unassigned COLUMN/filter option landed) and
+  // added here while building A9's e2e coverage against section 6's own flow list. Counted from the
+  // raw `appointments` prop, not `appointmentsByDate` - that map is already narrowed by
+  // statusFilter/practitionerFilter, so filtering to one practitioner would make every OTHER
+  // practitioner's unassigned appointments (the exact ones this banner exists to surface) silently
+  // disappear from the count. Scoped to the visible `dates` range (both week and day view, not
+  // just day-view-with-columns) and excludes cancelled/no_show - a terminal appointment already
+  // released its capacity claim (lifecycle.ts's CAPACITY_RELEASING_STATUSES) and holds no
+  // double-booking risk, so prompting staff to assign one would be actionable noise.
+  const unassignedCount = useMemo(() => {
+    if (schedulingMode !== "practitioner") return 0;
+    const visibleDates = new Set(dates);
+    let count = 0;
+    for (const apt of appointments) {
+      if (apt.practitionerStaffId) continue;
+      if (apt.status === "cancelled" || apt.status === "no_show") continue;
+      if (!visibleDates.has(localParts(apt.startAt, timezone).date)) continue;
+      count += 1;
+    }
+    return count;
+  }, [schedulingMode, dates, appointments, timezone]);
+
   function navigate(nextDate: string, nextView: "week" | "day" = view) {
     router.push(`/calendar?date=${nextDate}&view=${nextView}`);
   }
@@ -275,6 +298,15 @@ export function CalendarView(props: CalendarViewProps) {
         <div className="mb-4">
           <Banner tone="warn" title="No bookable practitioners">
             Mark at least one vet or owner bookable under Settings to see per-practitioner columns here.
+          </Banner>
+        </div>
+      )}
+      {unassignedCount > 0 && (
+        <div className="mb-4">
+          <Banner tone="warn" title="Unassigned appointments need a practitioner">
+            {unassignedCount} appointment{unassignedCount === 1 ? "" : "s"} in this view {unassignedCount === 1 ? "has" : "have"} no
+            practitioner assigned and currently block every practitioner&apos;s availability. Open each one and assign a practitioner
+            below to free up the rest of the schedule.
           </Banner>
         </div>
       )}
