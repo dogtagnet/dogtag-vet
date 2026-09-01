@@ -129,6 +129,40 @@ clientSchema.index({searchKey: "text"});
 
 export const Client = getOrCreateModel<ClientDoc>("Client", clientSchema);
 
+/**
+ * The write-verification tripwire for EVERY wallet-append call site (WP4.5 track3-sig fix 2 -
+ * `lib/registration/mongoStore.ts`'s `appendWalletToClient` AND `lib/booking/clientMatch.ts`'s
+ * `appendBookingWalletToClient`, the only two places that ever `$push` onto `wallets[]`).
+ *
+ * Forensic incident this exists for: a `findOneAndUpdate({..., "wallets.address": {$ne: address}},
+ * {$push: {wallets: entry}}, {new: true})` call MATCHING and returning a document is not proof the
+ * push actually happened - a long-lived process serving a `Client` model registered before
+ * `wallets[]` existed silently strips the `$push` under mongoose's default strict mode (the path
+ * casting has no idea what `wallets` is), while the query still matches and returns the document
+ * completely unchanged. The caller's `findOneAndUpdate` call sees a truthy result either way, so
+ * without this check it reports success - a false "ok" the client believed it had earned
+ * (`tests/unit/registration/staleModelRepro.integration.test.ts` reproduces the exact mechanism
+ * against a real mongod). `src/lib/models/registerModel.ts`'s schema-fingerprint fix closes off the
+ * ROOT CAUSE of a stale model surviving at all; this is the independent, defense-in-depth backstop
+ * for the one write that root cause could otherwise corrupt silently - callers must never persist a
+ * "the wallet is attached" outcome without this check passing first.
+ */
+export function assertWalletActuallyPushed(
+  updated: {wallets?: Pick<ClientWallet, "address">[]} | null,
+  clientId: string,
+  address: string,
+): void {
+  const lowerAddress = address.toLowerCase();
+  const pushed = (updated?.wallets ?? []).some((w) => w.address.toLowerCase() === lowerAddress);
+  if (!pushed) {
+    throw new Error(
+      `appendWalletToClient: findOneAndUpdate matched client ${clientId} but the returned document does not ` +
+        `contain wallet ${address} in wallets[] - likely a stale cached Mongoose Client model missing the ` +
+        `wallets path (restart the server process). Refusing to report this wallet as attached.`,
+    );
+  }
+}
+
 /** Lowercased, whitespace-collapsed name+email+phone blob used for the search box - kept
  * denormalized on the document so listing/search queries never need a runtime join or regex
  * across multiple fields.

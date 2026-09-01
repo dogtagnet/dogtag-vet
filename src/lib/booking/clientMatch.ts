@@ -1,5 +1,5 @@
 import "server-only";
-import {Client, buildClientSearchKey, type ClientDoc, type ClientWallet} from "@/lib/models/Client";
+import {assertWalletActuallyPushed, Client, buildClientSearchKey, type ClientDoc, type ClientWallet} from "@/lib/models/Client";
 
 /**
  * Client match-or-create for public booking, per wp4-vet.md: match an existing client by email or
@@ -125,5 +125,8 @@ export async function appendBookingWalletToClient(clientId: string, entry: Clien
     {$push: {wallets: entry}},
     {new: true, runValidators: true},
   ).lean<ClientDoc>();
-  return Boolean(updated);
+  if (!updated) return false;
+  // WP4.5 track3-sig fix 2 - see Client.ts's doc comment on this function.
+  assertWalletActuallyPushed(updated, clientId, entry.address);
+  return true;
 }

@@ -1,6 +1,6 @@
 import "server-only";
 import {WalletRegistrationSession, type WalletRegistrationSessionDoc} from "@/lib/models/WalletRegistrationSession";
-import {Client, type ClientDoc, type ClientWallet} from "@/lib/models/Client";
+import {assertWalletActuallyPushed, Client, type ClientDoc, type ClientWallet} from "@/lib/models/Client";
 import type {
   AppendWalletInput,
   AppendWalletResult,
@@ -60,7 +60,11 @@ export const mongoRegistrationStore: RegistrationFlowStore = {
       {$push: {wallets: entry satisfies ClientWallet}},
       {new: true, runValidators: true},
     ).lean<ClientDoc>();
-    if (updated) return "ok";
+    if (updated) {
+      // WP4.5 track3-sig fix 2 - see Client.ts's doc comment on this function.
+      assertWalletActuallyPushed(updated, clientId, entry.address);
+      return "ok";
+    }
 
     const stillExists = await Client.exists({clientId});
     return stillExists ? "already_registered" : "not_found";
