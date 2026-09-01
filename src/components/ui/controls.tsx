@@ -4,23 +4,24 @@ import type {
   SelectHTMLAttributes,
   TextareaHTMLAttributes,
 } from "react";
+import {cn} from "@/lib/cn";
 
 const baseControlClasses =
   "w-full rounded-control border border-border bg-surface px-3 py-2 text-body text-ink placeholder:text-ink-faint focus-visible:outline focus-visible:outline-2 focus-visible:outline-focus disabled:opacity-50";
 
 export function Input(props: InputHTMLAttributes<HTMLInputElement>) {
   const {className, ...rest} = props;
-  return <input className={`${baseControlClasses} ${className ?? ""}`} {...rest} />;
+  return <input className={cn(baseControlClasses, className)} {...rest} />;
 }
 
 export function Select(props: SelectHTMLAttributes<HTMLSelectElement>) {
   const {className, ...rest} = props;
-  return <select className={`${baseControlClasses} ${className ?? ""}`} {...rest} />;
+  return <select className={cn(baseControlClasses, className)} {...rest} />;
 }
 
 export function Textarea(props: TextareaHTMLAttributes<HTMLTextAreaElement>) {
   const {className, ...rest} = props;
-  return <textarea className={`${baseControlClasses} ${className ?? ""}`} {...rest} />;
+  return <textarea className={cn(baseControlClasses, className)} {...rest} />;
 }
 
 type ButtonVariant = "primary" | "secondary" | "danger" | "ghost";
@@ -54,7 +55,12 @@ export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
 export function Button({variant = "primary", size = "md", className, ...rest}: ButtonProps) {
   return (
     <button
-      className={`inline-flex items-center justify-center gap-2 rounded-control font-medium transition-opacity focus-visible:outline focus-visible:outline-2 focus-visible:outline-focus disabled:cursor-not-allowed disabled:opacity-50 ${sizeClasses[size]} ${variantClasses[variant]} ${className ?? ""}`}
+      className={cn(
+        "inline-flex items-center justify-center gap-2 rounded-control font-medium transition-opacity focus-visible:outline focus-visible:outline-2 focus-visible:outline-focus disabled:cursor-not-allowed disabled:opacity-50",
+        sizeClasses[size],
+        variantClasses[variant],
+        className,
+      )}
       {...rest}
     />
   );
