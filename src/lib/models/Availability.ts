@@ -8,9 +8,8 @@ import {getOrCreateModel} from "@/lib/models/registerModel";
  * weekly hours - a rule with no `staffId` remains part of the clinic-wide set Whole-clinic mode
  * (and every rule created before this WP) uses exclusively. Per-practitioner mode's engine
  * (A4) reads a practitioner's rules by matching `staffId`; the clinic-wide read path
- * (`loadAvailabilityConfig`, unchanged) keeps loading every rule regardless of `staffId` and it is
- * up to A4's practitioner-mode pass to filter - so this field's mere existence changes nothing
- * about Whole-clinic mode's behavior. */
+ * (`loadAvailabilityConfig`) loads only `staffId`-ABSENT rules - see its own doc comment (queries.ts)
+ * on why filtering there, not in the caller, is what preserves Whole-clinic byte-parity. */
 export interface AvailabilityRuleDoc {
   ruleId: string;
   dayOfWeek: number;
