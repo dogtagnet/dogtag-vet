@@ -20,4 +20,12 @@ export const publicEnv = {
   entityRegistryAddress: process.env.NEXT_PUBLIC_ENTITY_REGISTRY_ADDRESS ?? "",
   dogTagSbtAddress: process.env.NEXT_PUBLIC_DOGTAG_SBT_ADDRESS ?? "",
   verificationRegistryAddress: process.env.NEXT_PUBLIC_VERIFICATION_REGISTRY_ADDRESS ?? "",
+
+  // DEV/TEST ONLY (mirrors .env.example's DEV_LOGIN convention) - a wallet address here gates an
+  // extra `mock` wagmi connector (src/lib/wagmi.ts) plus its matching auto-connect effect
+  // (src/components/Providers.tsx), letting Playwright drive every wallet-gated surface
+  // (TagIssueWizard, TagsTable, VerifySessionPanel, SetupWizard) with no browser extension. Blank
+  // by default and NEVER set in a real deployment - unset, wagmiConfig's connector list and
+  // Providers' render tree are byte-for-byte what they were before this gate existed.
+  e2eMockWalletAddress: process.env.NEXT_PUBLIC_E2E_MOCK_WALLET_ADDRESS ?? "",
 };

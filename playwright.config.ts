@@ -59,6 +59,11 @@ export default defineConfig({
       NEXT_PUBLIC_ENTITY_REGISTRY_ADDRESS: "0x9b15a2df4e38547cbbbd635a4cd4531355bb4247",
       NEXT_PUBLIC_DOGTAG_SBT_ADDRESS: "0x276101555b2cd92be0fb85ff908e02281d6a3cf9",
       NEXT_PUBLIC_VERIFICATION_REGISTRY_ADDRESS: "0x41e96ad9e93ecb722e69aec6c0d4b4f15040ddd0",
+      // WP4.5 grade-fix MAJOR 1 - DEV/TEST ONLY (src/lib/wagmi.ts's own doc comment on the gate).
+      // A well-known test-only address (Hardhat/Anvil's default account #0), never a real wallet -
+      // nothing in this suite ever needs its private key, only the address itself, since the mock
+      // connector answers `eth_accounts`/`eth_requestAccounts` with whatever address it is given.
+      NEXT_PUBLIC_E2E_MOCK_WALLET_ADDRESS: "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
     },
   },
 });
