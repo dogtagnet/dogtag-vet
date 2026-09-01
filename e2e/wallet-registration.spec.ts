@@ -383,3 +383,93 @@ test("actions column: Receipt and Revoke stay on one line, and the revoke-confir
   expect(confirmBox!.height).toBeLessThan(48);
   await expectNoHorizontalOverflow(wrapper);
 });
+
+/**
+ * WP4.5 grade-fix MINOR C - the truthful-status DOM proof (registrationStatusTone.ts's
+ * `registrationFailedLabel`/`registrationFailedMessage`) had only ever been exercised at the pure-
+ * function level (tests/unit); the wallet-registration forensic incident this track fixed was
+ * specifically about what the PANEL renders. Both branches below drive a `failed` session through
+ * the REAL API (never a direct Mongo seed of `outcome`), through the panel's own live "Register
+ * wallet" -> QR -> poll flow, and assert the actual on-screen copy - including that the confirmed-
+ * bad-signature accusation never leaks into the OTHER failure's copy.
+ *
+ * Fresh `cf-connecting-ip` addresses (10.3.0.x) not reused by any test above - a shared rate-limit
+ * bucket across unrelated tests is its own flake source, per `wallet-registration-complete`'s
+ * 10-per-60s limit (`w/[token]/complete/route.ts`).
+ */
+test("truthful failed status: a wrong-signer completion shows the confirmed bad-signature copy", async ({page}) => {
+  const clientId = await createClient(page, "Wrong Signer UI Case");
+  await page.goto(`/clients/${clientId}`);
+
+  await page.getByRole("button", {name: "Register wallet"}).click();
+  const link = page.getByTestId("wallet-registration-link");
+  await expect(link).toBeVisible({timeout: 15_000});
+  const href = await link.getAttribute("href");
+  const token = href!.match(/\/w\/([0-9a-f]{32})$/)![1]!;
+
+  const challenge = await fetchChallenge(page, token, "10.3.0.1");
+  const signer = privateKeyToAccount(generatePrivateKey());
+  const claimedWallet = privateKeyToAccount(generatePrivateKey()).address; // NOT the signer
+  const {wallet, signature} = await signChallenge(challenge, signer, claimedWallet);
+  const completeRes = await page.request.post(`/w/${token}/complete`, {
+    data: {wallet, signature},
+    headers: {"cf-connecting-ip": "10.3.0.1"},
+  });
+  expect(completeRes.status()).toBe(400);
+  expect((await completeRes.json()).error.code).toBe("signature_invalid");
+
+  // The panel's own 2s poll picks this up - no reload needed, matching how a staff member watching
+  // the panel live would actually see it.
+  await expect(page.getByText("Signature didn't match", {exact: true})).toBeVisible({timeout: 15_000});
+  await expect(
+    page.getByText("The signature did not match this wallet. This code cannot be reused - generate a new one."),
+  ).toBeVisible();
+});
+
+test("truthful failed status: a consumed session with no confirmed outcome shows the non-accusatory copy, never the bad-signature one", async ({page}) => {
+  const clientId = await createClient(page, "Already Registered UI Case");
+
+  // A genuine, successful registration first - kept as a real account (not the `registerWallet`
+  // helper, which only ever returns the address) so its SAME signing key can complete a SECOND
+  // session below with an address `appendWalletToClient` already has on file for this client.
+  const {token: firstToken} = await startRegistrationSession(page, clientId);
+  const firstChallenge = await fetchChallenge(page, firstToken, "10.3.0.2");
+  const account = privateKeyToAccount(generatePrivateKey());
+  const firstSig = await signChallenge(firstChallenge, account);
+  const firstComplete = await page.request.post(`/w/${firstToken}/complete`, {
+    data: firstSig,
+    headers: {"cf-connecting-ip": "10.3.0.2"},
+  });
+  expect(firstComplete.ok()).toBe(true);
+
+  // A second session for the SAME client, driven through the panel this time, completed with the
+  // SAME already-registered wallet - a genuinely VALID signature (recovers correctly to the
+  // claimed address), but the duplicate guard in appendWalletToClient rejects it as
+  // "already_registered". completeRegistration deliberately leaves `outcome` unset for this case
+  // (flow.ts's own doc comment on `outcome`) - the forensic incident this track fixed was exactly a
+  // `failed` session with no confirmed cause defaulting to the wrong (accusatory) copy.
+  await page.goto(`/clients/${clientId}`);
+  await page.getByRole("button", {name: "Register wallet"}).click();
+  const link = page.getByTestId("wallet-registration-link");
+  await expect(link).toBeVisible({timeout: 15_000});
+  const href = await link.getAttribute("href");
+  const secondToken = href!.match(/\/w\/([0-9a-f]{32})$/)![1]!;
+
+  const secondChallenge = await fetchChallenge(page, secondToken, "10.3.0.3");
+  const secondSig = await signChallenge(secondChallenge, account); // SAME account -> SAME address
+  const secondComplete = await page.request.post(`/w/${secondToken}/complete`, {
+    data: secondSig,
+    headers: {"cf-connecting-ip": "10.3.0.3"},
+  });
+  expect(secondComplete.status()).toBe(409);
+  expect((await secondComplete.json()).error.code).toBe("already_registered");
+
+  await expect(page.getByText("Registration could not be completed", {exact: true})).toBeVisible({timeout: 15_000});
+  await expect(
+    page.getByText(
+      "This registration did not complete due to a server-side issue, not a bad signature. This code cannot be reused - generate a new one.",
+    ),
+  ).toBeVisible();
+  // The whole point: the confirmed-bad-signature accusation must not appear anywhere on this page.
+  await expect(page.getByText("Signature didn't match", {exact: true})).toHaveCount(0);
+});
