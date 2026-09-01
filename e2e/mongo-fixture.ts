@@ -8,10 +8,16 @@ import {MongoClient} from "mongodb";
 
 const execFileAsync = promisify(execFile);
 
-export const E2E_MONGO_PORT = 27217;
+// Overridable so a copy of this checkout synced elsewhere (to run its own disposable Mongo
+// without colliding with one already bound to the default port - this checkout's own live run, or
+// another synced copy's) can use a different one - same rationale/precedent as
+// playwright.config.ts's own E2E_WEB_PORT override. Defaults unchanged for every normal
+// `pnpm test`/`pnpm test:e2e` run. The container name is derived from the port so two concurrent
+// runs on different ports can never `docker rm -f` each other's container.
+export const E2E_MONGO_PORT = Number(process.env.E2E_MONGO_PORT ?? 27217);
 export const E2E_MONGO_URI = `mongodb://127.0.0.1:${E2E_MONGO_PORT}/dogtag-vet-e2e`;
 
-const CONTAINER_NAME = "dogtag-vet-e2e-mongo";
+const CONTAINER_NAME = `dogtag-vet-e2e-mongo-${E2E_MONGO_PORT}`;
 const REPO_ROOT = fileURLToPath(new URL("..", import.meta.url));
 
 let localMongod: ChildProcess | null = null;
