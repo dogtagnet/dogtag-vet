@@ -401,3 +401,24 @@ test.describe.serial("flow 4: staff calendar - week filter, day columns, unassig
     }
   });
 });
+
+test.describe.serial("R2: scheduling mode toggle is owner-only", () => {
+  test("a plain staff sees the toggle disabled with an owner-only caption; an owner sees it enabled", async ({page}) => {
+    // Bootstrap owner@example.com FIRST (same rule every other flow in this file follows) so the
+    // fresh random email below provisions as plain "staff", not as this deployment's first-ever
+    // (and therefore owner) row.
+    await devLogin(page, "owner@example.com");
+    await page.context().clearCookies();
+
+    await devLogin(page, `staff-wp47-r2-${randomUUID().slice(0, 8)}@example.com`);
+    await page.goto("/settings");
+    const modeSelect = page.getByLabel("Scheduling mode");
+    await expect(modeSelect).toBeDisabled();
+    await expect(page.getByText("Only an owner can change the scheduling mode")).toBeVisible();
+
+    await page.context().clearCookies();
+    await devLogin(page, "owner@example.com");
+    await page.goto("/settings");
+    await expect(page.getByLabel("Scheduling mode")).toBeEnabled();
+  });
+});

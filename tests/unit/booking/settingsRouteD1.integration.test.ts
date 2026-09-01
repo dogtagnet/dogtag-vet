@@ -62,7 +62,12 @@ afterEach(async () => {
 });
 
 describe("PATCH /api/availability/settings - WP4.7 D1 precondition", () => {
-  beforeEach(() => {
+  beforeEach(async () => {
+    // WP4.7A ruling R2 (FIX ROUND 1): the route now requires an owner session whenever the patch
+    // carries schedulingMode, which every test below does - seed "staff-1" (the mocked session's
+    // staffId) as a real owner Staff row so these D1-precondition tests keep exercising D1 alone,
+    // unaffected by the separate ownership gate (covered on its own further down this file).
+    await Staff.create({staffId: "staff-1", email: "owner@example.com", role: "owner"});
     vi.mocked(auth).mockResolvedValue({user: {staffId: "staff-1", email: "owner@example.com"}} as never);
   });
 
@@ -117,5 +122,43 @@ describe("PATCH /api/availability/settings - WP4.7 D1 precondition", () => {
 
     const second = await PATCH(patchRequest({...FULL_SETTINGS_FIELDS, schedulingMode: "practitioner"}));
     expect(second.status).toBe(400);
+  });
+});
+
+describe("PATCH /api/availability/settings - WP4.7A orchestrator ruling R2 (schedulingMode is owner-only)", () => {
+  async function withStaffSession(role: "staff" | "vet" | "owner"): Promise<void> {
+    const staff = await Staff.create({email: `r2-${role}@example.com`, role});
+    vi.mocked(auth).mockResolvedValue({user: {staffId: staff.staffId, email: staff.email}} as never);
+  }
+
+  it("a non-owner staff session gets 403 when the patch carries schedulingMode, even resending it unchanged (clinic -> clinic)", async () => {
+    await withStaffSession("staff");
+    const res = await PATCH(patchRequest({...FULL_SETTINGS_FIELDS, schedulingMode: "clinic"}));
+    expect(res.status).toBe(403);
+  });
+
+  it("a non-owner staff session can still save every OTHER booking-config field when the patch omits schedulingMode entirely", async () => {
+    await withStaffSession("staff");
+    const res = await PATCH(patchRequest({...FULL_SETTINGS_FIELDS, timezone: "America/Los_Angeles"}));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.timezone).toBe("America/Los_Angeles");
+  });
+
+  it("a vet session (not owner) also gets 403 for a schedulingMode-carrying patch - this is an owner-only gate, not merely a non-staff-role gate", async () => {
+    await withStaffSession("vet");
+    const res = await PATCH(patchRequest({...FULL_SETTINGS_FIELDS, schedulingMode: "practitioner"}));
+    expect(res.status).toBe(403);
+  });
+
+  it("still works for an owner session once the D1 precondition is satisfied", async () => {
+    await withStaffSession("owner");
+    const vet = await Staff.create({email: "r2-practitioner@example.com", role: "vet", bookable: true});
+    await AvailabilityRule.create({dayOfWeek: 1, startMinute: 540, endMinute: 1020, staffId: vet.staffId});
+
+    const res = await PATCH(patchRequest({...FULL_SETTINGS_FIELDS, schedulingMode: "practitioner"}));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.schedulingMode).toBe("practitioner");
   });
 });

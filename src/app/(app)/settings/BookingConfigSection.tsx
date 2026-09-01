@@ -71,11 +71,19 @@ export function BookingConfigSection({
   rules,
   exceptions,
   practitioners,
+  isOwner,
 }: {
   settings: BookingSettingsDoc;
   rules: AvailabilityRuleDoc[];
   exceptions: AvailabilityExceptionDoc[];
   practitioners: PractitionerSummary[];
+  /** WP4.7A orchestrator ruling R2 (FIX ROUND 1): only an owner may change `schedulingMode` -
+   * the mode Select below is disabled (with an explanatory caption) for anyone else, and
+   * `saveSettings` omits the field entirely from a non-owner's PATCH so every OTHER field here
+   * stays saveable exactly as before. The PATCH route enforces this independently - this prop
+   * only controls the UI's own presentation, matching this codebase's general defense-in-depth
+   * pattern (see `hasPractitionerReadyForSchedulingMode`'s own doc comment). */
+  isOwner: boolean;
 }) {
   const snackbar = useSnackbar();
   const [timezone, setTimezone] = useState(settings.timezone);
@@ -126,7 +134,10 @@ export function BookingConfigSection({
           minNoticeMinutes: Number(minNoticeMinutes),
           maxAdvanceDays: Number(maxAdvanceDays),
           slotGranularityMinutes: Number(slotGranularityMinutes),
-          schedulingMode,
+          // WP4.7A ruling R2 - omitted entirely for a non-owner, not merely left at its current
+          // value: the route rejects the field's mere PRESENCE from anyone but an owner, so
+          // sending it unchanged would still 403 and block this save of every other field too.
+          ...(isOwner ? {schedulingMode} : {}),
         }),
       });
       const body = await res.json().catch(() => null);
@@ -207,9 +218,18 @@ export function BookingConfigSection({
         <FormField
           label="Scheduling mode"
           htmlFor="scheduling-mode"
-          helperText='"Per practitioner" needs at least one vet or owner marked bookable below, with their own weekly hours set in the picker underneath "Weekly hours".'
+          helperText={
+            isOwner
+              ? '"Per practitioner" needs at least one vet or owner marked bookable below, with their own weekly hours set in the picker underneath "Weekly hours".'
+              : "Only an owner can change the scheduling mode - ask an owner to switch this setting."
+          }
         >
-          <Select id="scheduling-mode" value={schedulingMode} onChange={(e) => setSchedulingMode(e.target.value as SchedulingMode)}>
+          <Select
+            id="scheduling-mode"
+            value={schedulingMode}
+            onChange={(e) => setSchedulingMode(e.target.value as SchedulingMode)}
+            disabled={!isOwner}
+          >
             <option value="clinic">Whole clinic</option>
             <option value="practitioner">Per practitioner</option>
           </Select>
