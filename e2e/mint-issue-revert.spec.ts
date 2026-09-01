@@ -1,4 +1,4 @@
-import {expect, test} from "@playwright/test";
+import {expect, test, type Page} from "@playwright/test";
 import {execFile} from "node:child_process";
 import {promisify} from "node:util";
 import {fileURLToPath} from "node:url";
@@ -6,6 +6,18 @@ import {randomUUID} from "node:crypto";
 import {MongoClient} from "mongodb";
 import {E2E_MONGO_URI} from "./mongo-fixture";
 import {RPC_STUB_URL, resetRpcStub, setRpcReceipt, setRpcScenario} from "./rpcStub";
+
+// Same scratchpad directory calendar-services.spec.ts/booking-config-timezone.spec.ts/others
+// already write their own both-theme screenshots into - one shared, obviously-scratch location
+// rather than each spec inventing its own.
+const SHOTS_DIR = "/private/tmp/claude-501/-Users-zhenhaowu-code-dogtag/85e989bd-eec1-4250-ab09-83fb3244d856/scratchpad/wp45-shots";
+
+/** The exact revert message `markSessionRevertedReady` (src/lib/mint/reconcile.ts) persists as
+ * `lastIssueError` - reconcile.ts is `import "server-only"`, so it cannot be imported from a spec
+ * file Playwright itself loads (no `react-server` condition here, unlike this file's own
+ * `runBootRecovery` subprocess below); duplicated as a literal instead, matching this file's own
+ * `toMatch(/reverted/i)` assertions against the SAME text elsewhere. */
+const ISSUE_TX_REVERTED_MESSAGE = "Transaction reverted on chain - you can issue again.";
 
 const execFileAsync = promisify(execFile);
 const REPO_ROOT = fileURLToPath(new URL("..", import.meta.url));
@@ -29,25 +41,28 @@ const REPO_ROOT = fileURLToPath(new URL("..", import.meta.url));
  * wagmi write would - the same API-level-trigger convention `wallet-registration.spec.ts` already
  * uses for its own `/complete` calls.
  *
- * DEVIATION (recorded per this track's own instructions): the mint plan's Tests section also asks
- * for "the wizard shows the revert message + re-enabled Issue" and "both-theme screenshots of the
- * revert state" - i.e. driving `TagIssueWizard` itself, not just the API underneath it. That
- * turned out to be UNREACHABLE in this harness: `TagIssueWizard` (like `TagsTable`/
- * `VerifySessionPanel`) renders nothing but a "Connect your operator wallet" banner whenever
- * `useAccount().isConnected` is false (confirmed live via Playwright's own error-context DOM
- * snapshot), and `wagmiConfig` (`src/lib/wagmi.ts`) configures exactly one connector - wagmi's
- * `metaMask()`, backed by the real `@metamask/sdk` (deep-links/QR-pairing/extension-detection, not
- * a thin `window.ethereum` shim a test could satisfy) - with the app's only "Connect" button living
- * in `SetupWizard` and calling `connectors[0]` directly, so there is no simpler connector to reach
- * from a headless browser either. Building a genuine mock wallet connector into production wagmi
- * config to unblock this was evaluated and deliberately deferred (see this track's own advisor
- * consultation): it is production-config risk for a testing-only need, orthogonal to the actual
- * fix under test here, and every test below already proves the fix's real logic (the server-side
- * reconciliation) directly and more precisely than a DOM assertion could. The wizard's own
- * rendering of `lastIssueError`/`attestationSigned` was verified by direct code review instead
- * (`src/app/(app)/tags/issue/TagIssueWizard.tsx`'s `session.lastIssueError`/`session.status ===
- * "ready"` branch), which is the same confidence level `RegistrationFlowEngineTests`-style
- * pure-logic tests give the equivalent iOS UI layer.
+ * UI COVERAGE (the earlier "unreachable UI" deviation recorded here was DISPROVED): the mint
+ * plan's Tests section also asks for "the wizard shows the revert message + re-enabled Issue" and
+ * "both-theme screenshots of the revert state" - i.e. driving `TagIssueWizard` itself, not just the
+ * API underneath it. `TagIssueWizard` (like `TagsTable`/`VerifySessionPanel`/`SetupWizard`) does
+ * render nothing but a "Connect your operator wallet" banner while `useAccount().isConnected` is
+ * false, but `wagmi/connectors` - this app's own already-installed dependency, one import away -
+ * exports `mock`, a real test connector maintained by wagmi itself (not a hand-rolled
+ * `window.ethereum` shim). `src/lib/wagmi.ts` now registers it alongside the real `metaMask()`
+ * connector, gated behind `NEXT_PUBLIC_E2E_MOCK_WALLET_ADDRESS` (unset in any real deployment, so
+ * production's connector list is unchanged), and `src/components/Providers.tsx` auto-connects it
+ * on mount under the SAME gate (the mock connector's own `isAuthorized` has no genuine prior
+ * connection to restore on a fresh mount, so it does not auto-fire on its own). The tests below
+ * that render `TagIssueWizard` for real (search "UI:" below) rely on that gate - `playwright.config
+ * .ts`'s `webServer.env` turns it on for this whole suite, harmlessly, since no OTHER spec ever
+ * navigates to a wallet-gated page (`/tags`, `/tags/issue`, `/verify`, `/setup`) today.
+ *
+ * The API-level tests below this comment (seeding a `MintSession` directly and driving it through
+ * `confirm`/`retry`/the worker's boot recovery) are UNCHANGED in approach: the thing they test - the
+ * server-side reconciliation `reconcileAnchoredSession` performs - runs identically no matter what
+ * triggers it, and stays the more precise way to prove that logic. The UI tests below them are
+ * additive: proof that the wizard actually renders what that server-side state means, in a real
+ * browser, surviving a real `page.reload()`, in both themes.
  */
 
 const CLONE_ADDRESS = "0x7b9bf16f0e39AdF8c38d8491F4C7E9C17E85D703";
@@ -69,6 +84,19 @@ async function configureClinic(page: import("@playwright/test").Page) {
 
 function randomHex(bytes: number): string {
   return "0x" + Array.from({length: bytes * 2}, () => Math.floor(Math.random() * 16).toString(16)).join("");
+}
+
+/** Same idiom as calendar-services.spec.ts/booking-config-timezone.spec.ts/appointment-tagging
+ * .spec.ts/mobile-booking.spec.ts's own `setTheme` - the app-wide theme radio group (Topbar), not
+ * anything specific to this page. */
+async function setTheme(page: Page, theme: "Light" | "Dark") {
+  await page.getByRole("radio", {name: theme}).click();
+  await expect(page.getByRole("radio", {name: theme})).toHaveAttribute("aria-checked", "true");
+  if (theme === "Dark") await expect(page.locator("html")).toHaveClass(/dark/);
+  else await expect(page.locator("html")).not.toHaveClass(/dark/);
+  await page.evaluate(
+    () => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))),
+  );
 }
 
 let mongoClient: MongoClient;
@@ -115,6 +143,36 @@ async function seedIssuingSession(opts: {issuingAt?: Date} = {}): Promise<{sessi
     createdAt: new Date(),
   });
   return {sessionId, root, txHash, dogTagIdField};
+}
+
+/** Seeds a `MintSession` directly in the exact shape `markSessionRevertedReady` leaves one in - a
+ * `ready` session with `lastIssueError` set and the dead tx moved into `failedIssueTxHashes` - the
+ * state the UI tests below need to render, without re-driving the issuing->confirm->revert
+ * transition itself (already covered by the API-level test above this one). */
+async function seedReadySessionWithRevert(): Promise<{sessionId: string; root: string; dogTagIdField: string}> {
+  const sessionId = randomUUID();
+  const root = randomHex(32);
+  const dogTagIdField = String(Math.floor(Math.random() * 1_000_000) + 1);
+  const oldTxHash = randomHex(32);
+  const now = Math.floor(Date.now() / 1000);
+  await mongoClient.db().collection("mintsessions").insertOne({
+    sessionId,
+    dogTagIdDec: dogTagIdField,
+    dogTagIdField,
+    ownerIdentity: {},
+    identityLeaves: [],
+    petName: "Blaze",
+    microchip: {},
+    profile: {weightHistory: []},
+    status: "ready",
+    root,
+    lastIssueError: ISSUE_TX_REVERTED_MESSAGE,
+    failedIssueTxHashes: [oldTxHash],
+    protocolVersion: "dogtag-v2/1",
+    tokenExp: now + 600,
+    createdAt: new Date(),
+  });
+  return {sessionId, root, dogTagIdField};
 }
 
 test("reverted issueTag receipt: confirm flips the session back to ready with a visible lastIssueError, clears the dead tx, and keeps the audit trail", async ({page}) => {
@@ -336,4 +394,120 @@ test("attestation-signed state survives a reload: the poll reports attestationSi
   const after = await page.request.get(`/api/tags/issue/${sessionId}`);
   expect(after.ok()).toBe(true);
   expect((await after.json()).attestationSigned).toBe(true);
+});
+
+/**
+ * WP4.5 grade-fix MAJOR 1 - the revert-state UI, driven for real through the env-gated mock wallet
+ * connector (this file's own top-of-file doc comment). `seedReadySessionWithRevert` puts a session
+ * in exactly the state `markSessionRevertedReady` leaves one in; loading the wizard against that
+ * session id (the SAME `?session=` resume mechanism `/tags`'s "in progress" list already uses)
+ * proves the wizard's `session.lastIssueError`/`session.status === "ready"` branch actually renders
+ * it - the DOM assertion the mint plan's own Tests section asked for.
+ */
+test("UI: a ready session with a recorded revert shows the banner, the sponsorship sentence, and a re-enabled Issue button", async ({page}) => {
+  const {sessionId} = await seedReadySessionWithRevert();
+
+  await page.goto(`/tags/issue?session=${sessionId}`);
+
+  // Generous timeout: this is the FIRST navigation to a wallet-gated page in the whole suite, so it
+  // pays the mock connector's own connect round trip on top of the cold-`next dev`-compile budget
+  // every other spec's first navigation already carries (see signInAsStaff's own comments elsewhere
+  // in this suite for that class of flake).
+  await expect(page.getByText("Previous attempt did not confirm")).toBeVisible({timeout: 15_000});
+  await expect(page.getByText(ISSUE_TX_REVERTED_MESSAGE)).toBeVisible();
+
+  const issueButton = page.getByRole("button", {name: "Issue on chain"});
+  await expect(issueButton).toBeVisible();
+  await expect(issueButton).toBeEnabled();
+
+  await expect(
+    page.getByText("Gas is fronted by your wallet and refunded by the clinic's clone on success (failed attempts are not refunded)."),
+  ).toBeVisible();
+});
+
+/**
+ * WP4.5 grade-fix MAJOR 1 - the OTHER half of the reload-survival proof this track's hot-fix
+ * (commit 2eb9e51) needed but this suite could previously only prove at the poll-payload level
+ * (the "attestation-signed state survives a reload" test above): a real `page.reload()`, on a real
+ * `TagIssueWizard`, through the mock wallet connector. `dogTag.attestation` is written directly at
+ * seed time (the same field `POST .../attestation` writes - unchanged by this track), so this test
+ * exercises only the NEW poll-derivation the mint plan's fix is actually about, not the
+ * pre-existing signature-storage write path.
+ */
+test("UI: the attestation done-badge survives a real page reload, derived from the linked Pet's own record rather than client-local state", async ({page}) => {
+  const petId = randomUUID();
+  await mongoClient.db().collection("pets").insertOne({
+    petId,
+    name: "Blaze",
+    microchip: {},
+    weightHistory: [],
+    ownerClientIds: [],
+    dogTag: {
+      attestation: {
+        domain: {name: "DogTagIssuerAttestation", version: "1", chainId: 135, verifyingContract: CLONE_ADDRESS},
+        message: {
+          merkleRoot: randomHex(32),
+          recordType: `0x${"11".repeat(32)}`,
+          issuerContract: CLONE_ADDRESS,
+          issuerName: "Example Vet Clinic",
+          issuerDomain: "example-vet.test",
+        },
+        signature: `0x${"22".repeat(65)}`,
+        issuerSigner: "0x1111111111111111111111111111111111111111",
+      },
+    },
+    searchKey: "blaze",
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  });
+
+  const sessionId = randomUUID();
+  const root = randomHex(32);
+  const dogTagIdField = String(Math.floor(Math.random() * 1_000_000) + 1);
+  await mongoClient.db().collection("mintsessions").insertOne({
+    sessionId,
+    dogTagIdDec: dogTagIdField,
+    dogTagIdField,
+    ownerIdentity: {},
+    identityLeaves: [],
+    petId,
+    petName: "Blaze",
+    microchip: {},
+    profile: {weightHistory: []},
+    status: "bound",
+    root,
+    protocolVersion: "dogtag-v2/1",
+    tokenExp: Math.floor(Date.now() / 1000) + 600,
+    createdAt: new Date(),
+    resolvedAt: new Date(),
+  });
+
+  await page.goto(`/tags/issue?session=${sessionId}`);
+  await expect(page.getByText("Tag bound successfully.")).toBeVisible({timeout: 15_000});
+  await expect(page.getByText("Issuer attestation signed")).toBeVisible();
+  await expect(page.getByRole("button", {name: "Sign issuer attestation"})).toHaveCount(0);
+
+  await page.reload();
+
+  // The hot-fixed bug this proves the FIX of: a client-local `useState` starting `false` on every
+  // mount would re-offer the button here instead, even though the attestation was never actually
+  // lost - only the tab was.
+  await expect(page.getByText("Issuer attestation signed")).toBeVisible({timeout: 15_000});
+  await expect(page.getByRole("button", {name: "Sign issuer attestation"})).toHaveCount(0);
+});
+
+/**
+ * WP4.5 grade-fix MAJOR 1 - both-theme screenshots of the revert state, the repo's own `setTheme`
+ * idiom (calendar-services.spec.ts/booking-config-timezone.spec.ts/others), saved under the
+ * scratchpad per this track's own instructions.
+ */
+test("UI: both-theme screenshots of the revert state", async ({page}) => {
+  const {sessionId} = await seedReadySessionWithRevert();
+
+  for (const theme of ["Light", "Dark"] as const) {
+    await page.goto(`/tags/issue?session=${sessionId}`);
+    await expect(page.getByText("Previous attempt did not confirm")).toBeVisible({timeout: 15_000});
+    await setTheme(page, theme);
+    await page.screenshot({path: `${SHOTS_DIR}/tag-issue-revert-${theme.toLowerCase()}.png`});
+  }
 });
