@@ -2,7 +2,7 @@
 
 import {useEffect, useRef, useState} from "react";
 import {useSearchParams} from "next/navigation";
-import {useAccount, useSignTypedData, useSwitchChain, useWaitForTransactionReceipt, useWriteContract} from "wagmi";
+import {useAccount, usePublicClient, useSignTypedData, useSwitchChain, useWaitForTransactionReceipt, useWriteContract} from "wagmi";
 import {Banner} from "@/components/ui/Banner";
 import {Button, Input, Select} from "@/components/ui/controls";
 import {FormField, FormSection} from "@/components/ui/FormSection";
@@ -14,7 +14,7 @@ import {WeightHistoryEditor} from "@/components/pets/WeightHistoryEditor";
 import {useSnackbar} from "@/components/ui/Snackbar";
 import {vetIssuerAbi} from "@/lib/abi";
 import {roax} from "@/lib/chains";
-import {legacyTx} from "@/lib/chainWrite";
+import {legacyTxWithGas} from "@/lib/chainWrite";
 import {reasonCodeHash} from "@/lib/reasonCodes";
 import {mintSessionStatusLabel, mintSessionStatusTone} from "@/lib/tagStatusTone";
 import type {ClientDoc} from "@/lib/models/Client";
@@ -66,6 +66,7 @@ export function TagIssueWizard() {
   const {address, isConnected, chainId} = useAccount();
   const {switchChain} = useSwitchChain();
   const {writeContractAsync} = useWriteContract();
+  const publicClient = usePublicClient();
   const {signTypedDataAsync} = useSignTypedData();
   const snackbar = useSnackbar();
 
@@ -192,11 +193,12 @@ export function TagIssueWizard() {
     setRevokingPrevious(true);
     try {
       const hash = await writeContractAsync(
-        legacyTx({
+        await legacyTxWithGas(publicClient, {
           address: replacingPet.dogTag.cloneAddress as `0x${string}`,
           abi: vetIssuerAbi,
           functionName: "revokeTag",
           args: [BigInt(replacingPet.dogTag.dogTagIdField), reasonCodeHash("REASON_REPLACED")],
+          account: address,
         }),
       );
       setRevokePrevTxHash(hash);
@@ -268,11 +270,14 @@ export function TagIssueWizard() {
         return;
       }
       const hash = await writeContractAsync(
-        legacyTx({
+        // Headroom over the bare estimate - the refund tail starved twice at the wallet's own
+        // estimate (see legacyTxWithGas's doc comment for the incident txs).
+        await legacyTxWithGas(publicClient, {
           address: settings.cloneAddress as `0x${string}`,
           abi: vetIssuerAbi,
           functionName: "issueTag",
           args: [BigInt(session.dogTagIdField), session.root as `0x${string}`],
+          account: address,
         }),
       );
       await fetch(`/api/tags/issue/${session.sessionId}/tx`, {
