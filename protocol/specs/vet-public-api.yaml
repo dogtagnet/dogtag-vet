@@ -352,6 +352,123 @@ paths:
         "5XX":
           $ref: '#/components/responses/ServerError'
 
+  /i/{token}:
+    get:
+      operationId: resolveArtifactImport
+      tags: [tag-custody]
+      summary: Resolve an import-ceremony session (non-consuming)
+      description: |-
+        The owner's app scans the vet's import QR (`https://<vet>/i/<32hex>`,
+        plans/wp4.9-tag-data-custody.md section 2.3) and calls this to show a confirmation screen
+        before submitting anything - "send your tag's data to `clinicName`, for `targetPetName`
+        (or a brand-new pet record, when `isNewPet`)". The target (an existing pet, or "create
+        new") was chosen by STAFF at session-creation time, never by this call or the owner's app.
+
+        **Non-consuming**: `POST /i/{token}/complete` is the consuming action, mirroring
+        `GET /w/{token}`'s exact shape (unlike `GET /e/{token}`, which is single-step because the
+        phone only ever reads there).
+      parameters:
+        - $ref: '#/components/parameters/ArtifactImportToken'
+      responses:
+        "200":
+          description: Session resolved.
+          headers: *rateLimitHeaders
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ArtifactImportResolveResponse'
+        "404":
+          description: Token unknown or malformed.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
+        "410":
+          description: Token already consumed or naturally expired.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
+        "429":
+          $ref: '#/components/responses/RateLimited'
+        "5XX":
+          $ref: '#/components/responses/ServerError'
+
+  /i/{token}/complete:
+    post:
+      operationId: postArtifactImportComplete
+      tags: [tag-custody]
+      summary: Submit verified tag data to complete an import (consumes the token)
+      description: |-
+        The owner's app submits its tag's `dogTagIdDec`/`dogTagIdField` plus its FULL opened
+        profile-tree leaves and the 3 reserved owner-control leaf hashes - selective disclosure is
+        out of scope here for the same reason it is for export (a partial leaf set cannot
+        recompute the root). `root` is deliberately NOT part of this request: the server always
+        reads the CURRENT `profileRoot` for the claimed `dogTagIdField` live from chain, never
+        trusts a client-supplied root - this is what makes "a replaced root imports as its current
+        self" and "a tag reinstated after being revoked succeeds on a fresh scan" true for free,
+        with no cache to invalidate and no special-cased retry logic.
+
+        Gate order (plans/wp4.9-tag-data-custody.md section 2.3's shared verifier, item 4): dec/
+        field consistency -> `profileRoot` -> `rootIssuer` -> `isValid` against the ISSUER clone ->
+        `verifyLeafCommitment`. Attaching the tag (`external: true` unless the issuer turns out to
+        be THIS clinic's own clone - the "reclaim" case) only happens once every gate passes, via
+        ONE atomic conditional write that refuses if the target already gained an active tag in the
+        interim (`already_has_active_tag`) - never a check-then-write race. A previously-empty
+        field on the target pet is filled from the verified data; a field that already had a
+        DIFFERENT value is never overwritten (kept exactly as the clinic had it) and is instead
+        reported back for the owner-facing pet-page conflict banner.
+
+        **Consumes the token on EVERY outcome**, success or refusal - there is no retry, mirroring
+        `POST /w/{token}/complete`'s own "a burned token, whether by success or a bad signature, is
+        simply dead" rule. This includes `chain_unreadable`, even though neither the owner nor the
+        tag did anything wrong in that case - the response copy says "generate a new code and try
+        again", never anything implying a verification failure.
+
+        **400 vs 409**: `malformed_claim`/`chain_unreadable`/`root_unset` (400) mean no valid claim
+        could be established at all (a client-side shape problem, an unreadable chain, or a tag
+        that plain does not exist on chain); `revoked`/`verify_failed`/`already_has_active_tag`
+        (409) mean a real claim/target WAS identified, but its current state conflicts with
+        completing this import.
+      parameters:
+        - $ref: '#/components/parameters/ArtifactImportToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ArtifactImportCompleteRequest'
+      responses:
+        "200":
+          description: Import completed; the tag is now attached.
+          headers: *rateLimitHeaders
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ArtifactImportCompleteResponse'
+        "400":
+          description: "`error.code` is one of `malformed_claim`, `chain_unreadable`, or `root_unset` - see this route's own description for the 400-vs-409 rule."
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
+        "404":
+          description: Token unknown or malformed.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
+        "409":
+          description: "`error.code` is one of `revoked`, `verify_failed`, or `already_has_active_tag` - see this route's own description for the 400-vs-409 rule."
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
+        "410":
+          description: "`error.code` is `expired_or_reused`: the token was already consumed (by a prior success OR a prior refusal), or it simply expired."
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
+        "429":
+          $ref: '#/components/responses/RateLimited'
+        "5XX":
+          $ref: '#/components/responses/ServerError'
+
   /x/{token}:
     get:
       operationId: resolveVerifySession
@@ -778,6 +895,12 @@ components:
       required: true
       description: The 32-lowercase-hex tag-data export session token (see `specs/qr-formats.md`).
       schema: {$ref: '#/components/schemas/Hex32Token'}
+    ArtifactImportToken:
+      name: token
+      in: path
+      required: true
+      description: The 32-lowercase-hex tag-data import session token (see `specs/qr-formats.md`).
+      schema: {$ref: '#/components/schemas/Hex32Token'}
     AppointmentToken:
       name: token
       in: query
@@ -1032,6 +1155,74 @@ components:
         clinicName:
           type: string
           description: The exporting clinic's configured display name. Empty string if the clinic has not set one.
+
+    ArtifactImportResolveResponse:
+      type: object
+      required: [clinicName, isNewPet, ttlSecs]
+      properties:
+        clinicName:
+          type: string
+          description: This clinic's configured display name - shown so the owner knows who they are about to send tag data to.
+        isNewPet:
+          type: boolean
+          description: "`true` when staff chose \"create new pet from verified data\" - `targetPetName` is absent in that case (there is nothing to name yet)."
+        targetPetName:
+          type: string
+          description: The existing target pet's CURRENT display name, read live (never snapshotted) - present only when `isNewPet` is `false`.
+        ttlSecs:
+          type: integer
+          minimum: 0
+          description: Seconds remaining before this session expires.
+
+    ArtifactImportCompleteRequest:
+      type: object
+      required: [leaves, reservedLeafHashes]
+      description: At least one of `dogTagIdDec`/`dogTagIdField` is required; if both are present they must agree (`dogTagIdField(dogTagIdDec)`).
+      properties:
+        dogTagIdDec:
+          type: string
+          pattern: "^[0-9]+$"
+        dogTagIdField:
+          type: string
+          pattern: "^[0-9]+$"
+        leaves:
+          type: array
+          maxItems: 61
+          items: {$ref: '#/components/schemas/OpenedLeaf'}
+        reservedLeafHashes:
+          type: array
+          minItems: 3
+          maxItems: 3
+          items: {$ref: '#/components/schemas/Hex32'}
+
+    ArtifactImportCompleteResponse:
+      type: object
+      required: [ok, petId, petName, created, conflicts]
+      properties:
+        ok: {type: boolean}
+        petId: {type: string}
+        petName: {type: string}
+        created:
+          type: boolean
+          description: "`true` when this import created a brand-new pet record; `false` when it attached to the staff-chosen existing target."
+        conflicts:
+          type: array
+          description: |-
+            Fields where the target pet ALREADY had a value that differed from the verified
+            claim - the fill-empty-only merge never overwrote them. Empty when nothing conflicted
+            (including always, when `created` is `true` - a brand-new pet has nothing to conflict
+            with). Persisted on `Pet.dogTag.importConflicts` for the vet's own pet-page banner.
+          items:
+            type: object
+            required: [field, petValue, verifiedValue]
+            properties:
+              field: {type: string, enum: [name, species, breed, sex, dateOfBirth]}
+              petValue:
+                type: string
+                description: The value already on file for this pet (kept, never overwritten).
+              verifiedValue:
+                type: string
+                description: The value this import's verified data claimed (not applied).
 
     MintSessionStatusResponse:
       type: object

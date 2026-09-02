@@ -57,6 +57,22 @@ export interface DogTagInfo {
    * issuing. Absent (never `false`) on every pet this clinic actually issued or has not yet tagged
    * - the field only ever exists to mark the one case it's true for. */
   external?: boolean;
+  /** WP4.9 import ceremony: fields where the target pet ALREADY had a value that differed from
+   * what this tag's verified data claimed - the fill-empty-only merge (section 2.3) never
+   * overwrites staff-entered data, so these are surfaced for staff review rather than applied.
+   * Explicitly point-in-time (`detectedAt`) rather than a live-recomputed fact: if staff later
+   * edit a field to match the verified value, this array is NOT automatically cleared or
+   * recomputed (there is no trigger that would do so), so the pet page must present it as
+   * "at import time", never as a current-state claim - a stale copy of this banner asserted as
+   * present-tense would be exactly the kind of untruthful signal this app's own MAJOR-2 lesson
+   * (docs/DEPLOY.md's backfill runbook doc comment) warns against repeating. Cleared implicitly
+   * only when `dogTag` itself is replaced wholesale (a fresh import or a new issuance overwrites
+   * the entire `dogTag` subdocument, this field included). Absent when the last import had no
+   * conflicts, or when this tag was never imported at all. */
+  importConflicts?: {
+    detectedAt: number; // unix seconds
+    fields: {field: string; petValue: string; verifiedValue: string}[];
+  };
 }
 
 export interface PetDoc {
@@ -117,6 +133,23 @@ const issuerAttestationSchema = new Schema<IssuerAttestation>(
   {_id: false},
 );
 
+const importConflictFieldSchema = new Schema(
+  {
+    field: {type: String, required: true},
+    petValue: {type: String, required: true},
+    verifiedValue: {type: String, required: true},
+  },
+  {_id: false},
+);
+
+const importConflictsSchema = new Schema(
+  {
+    detectedAt: {type: Number, required: true},
+    fields: {type: [importConflictFieldSchema], required: true, default: []},
+  },
+  {_id: false},
+);
+
 const dogTagSchema = new Schema<DogTagInfo>(
   {
     dogTagIdDec: {type: String, index: true},
@@ -128,6 +161,7 @@ const dogTagSchema = new Schema<DogTagInfo>(
     attestation: issuerAttestationSchema,
     issuedAt: Date,
     external: Boolean,
+    importConflicts: importConflictsSchema,
   },
   {_id: false},
 );

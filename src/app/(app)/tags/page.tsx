@@ -7,6 +7,7 @@ import {connectToDatabase} from "@/lib/db";
 import {getBookingSettings} from "@/lib/models/Availability";
 import {isVetOrOwner} from "@/lib/staffRoleTone";
 import {TagsTable} from "@/app/(app)/tags/TagsTable";
+import {ImportTagSection} from "@/app/(app)/tags/ImportTagSection";
 
 /** DogTag issuance surface - WP4.7 A2: gated to `vet`/`owner` (the app-side half of D4's gate;
  * the chain's own operator whitelist is the real authority, see `requireVetSession`'s doc
@@ -33,6 +34,7 @@ export default async function Page() {
           </Link>
         }
       />
+      <ImportTagSection />
       <TagsTable timeZone={timezone} />
     </>
   );
