@@ -50,23 +50,49 @@ async function waitForMongoReady(uri: string, timeoutMs = 30_000): Promise<void>
   throw new Error(`Mongo at ${uri} was not ready in time: ${String(lastError)}`);
 }
 
+function startLocalMongod(): void {
+  const dbPath = mkdtempSync(join(tmpdir(), "dogtag-vet-e2e-mongo-"));
+  localMongod = spawn("mongod", ["--dbpath", dbPath, "--port", String(E2E_MONGO_PORT), "--bind_ip", "127.0.0.1"], {
+    stdio: "ignore",
+  });
+}
+
 /**
  * Starts a disposable Mongo for the e2e run - a docker container if available (this is what the
  * Definition of Done's "Playwright smoke boots against docker mongo" means in practice: the same
  * `mongo:7` image the deploy story uses everywhere else, run disposably here), else a local
  * `mongod` for a machine without Docker.
+ *
+ * WP4.9V finding: `dockerAvailable()` only proves the DAEMON is reachable, not that it can
+ * actually provision a working container - on a long-lived, heavily shared box, Docker Desktop's
+ * own virtual disk (a fixed-size allocation independent of the HOST filesystem) can fill up from
+ * OTHER sessions' accumulated images/volumes/build-cache with the host itself nearly empty
+ * (reproduced live: `docker run mongo:7` exited immediately, "No space left on device" writing
+ * its journal, while `df -h /` showed >450GB free) - `docker info` alone can never catch this.
+ * A short, bounded readiness check on the just-started container (a fraction of
+ * `waitForMongoReady`'s own full budget) now falls back to a bare local `mongod` - which writes to
+ * the HOST filesystem, entirely unaffected by Docker's own internal disk - rather than burning the
+ * full timeout and throwing outright. Zero behavior change for the common case (a healthy docker
+ * daemon with room to spare): the short check passes immediately and the docker container is used
+ * exactly as before.
  */
 export async function startTestMongo(): Promise<void> {
   if (await dockerAvailable()) {
     await execFileAsync("docker", ["rm", "-f", CONTAINER_NAME]).catch(() => {});
     await execFileAsync("docker", ["run", "-d", "--name", CONTAINER_NAME, "-p", `${E2E_MONGO_PORT}:27017`, "mongo:7"]);
-  } else {
-    const dbPath = mkdtempSync(join(tmpdir(), "dogtag-vet-e2e-mongo-"));
-    localMongod = spawn("mongod", ["--dbpath", dbPath, "--port", String(E2E_MONGO_PORT), "--bind_ip", "127.0.0.1"], {
-      stdio: "ignore",
-    });
+    try {
+      await waitForMongoReady(E2E_MONGO_URI, 8_000);
+      return;
+    } catch (dockerError) {
+      console.warn(
+        `[mongo-fixture] docker mongo container did not become ready in time (${String(dockerError)}) - ` +
+          "falling back to a local mongod for this run.",
+      );
+      await execFileAsync("docker", ["rm", "-f", CONTAINER_NAME]).catch(() => {});
+    }
   }
 
+  startLocalMongod();
   await waitForMongoReady(E2E_MONGO_URI);
 }
 
