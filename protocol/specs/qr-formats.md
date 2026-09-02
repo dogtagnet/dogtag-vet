@@ -1,16 +1,17 @@
 # DogTag QR payload formats
 
 This document lists every QR payload in the DogTag ecosystem, its exact grammar, and how a scanner must parse it.
-Every payload is a plain URL or URI a general-purpose camera app already knows how to open, so a device without the DogTag app installed still lands somewhere sensible (an app-install page, or in the payment cases, the user's own wallet app).
+Every payload is a plain URL or URI a general-purpose camera app already knows how to open, so a device without the DogTag app installed still opens something.
+The payment URIs typically hand off to the user's own wallet app (see "Payment QR" below), but every `https://<vet>/...` payload in this document is a bare API route with no HTML page behind it, so a plain browser just sees that route's raw response instead of a designed screen - JSON for every session-token ceremony, the receipt PDF itself for `/r/pay`.
 
 ## The token grammar
 
-This section covers the mint, verify, tag-export, and tag-import session tokens.
+This section covers the mint, verify, wallet-registration, tag-export, and tag-import session tokens.
 The receipt token has its own, deliberately different grammar; see "Receipt URL" below.
 
-Every mint, verify, tag-export, or tag-import session token in this ecosystem is 32 lowercase hexadecimal characters: `^[0-9a-f]{32}$`.
+Every mint, verify, wallet-registration, tag-export, or tag-import session token in this ecosystem is 32 lowercase hexadecimal characters: `^[0-9a-f]{32}$`.
 That is 128 bits of entropy, base16-encoded, always lowercase on the wire.
-A parser MUST reject a mint, verify, tag-export, or tag-import token that is the wrong length, contains uppercase hex digits, or contains any character outside `[0-9a-f]`, rather than attempting to normalize it.
+A parser MUST reject a mint, verify, wallet-registration, tag-export, or tag-import token that is the wrong length, contains uppercase hex digits, or contains any character outside `[0-9a-f]`, rather than attempting to normalize it.
 This grammar is v1-compatible: a v1 QR and a v2 QR use the same token shape, so a mixed fleet of old and new vet deployments during a migration window still produces scannable codes.
 
 ## Mint QR
@@ -29,7 +30,7 @@ https://<vet>/p/<32hex>
 
 1. The scheme MUST be `https`.
 2. The path MUST match `^/p/[0-9a-f]{32}$` exactly, with no trailing slash, query string, or fragment.
-3. A scanner that recognizes the host as a known DogTag deployment (or recognizes the `/p/` shape generically) should open the app directly; otherwise it should fall through to a normal browser open, which the vet platform's own web page for that path handles by prompting an app install.
+3. A scanner that recognizes the host as a known DogTag deployment (or recognizes the `/p/` shape generically) should open the app directly; otherwise it should fall through to a normal browser open - `/p/{token}` is a bare API route (`GET /p/{token}` in `specs/vet-public-api.yaml`) with no HTML page behind it, so a plain browser just sees that route's raw JSON: the resolve body on success, an error body otherwise.
 
 ## Verify QR
 
@@ -48,6 +49,31 @@ https://<vet>/x/<32hex>?a=<relayer>
 1. The scheme MUST be `https`.
 2. The path MUST match `^/x/[0-9a-f]{32}$`.
 3. The query string MUST contain exactly one `a` parameter, matching `^0x[0-9a-fA-F]{40}$`; a scanner that finds additional unknown query parameters ignores them rather than rejecting the code (forward compatibility for a future optional hint), but MUST NOT ignore a missing or malformed `a`.
+
+## Wallet registration QR
+
+```
+https://<vet>/w/<32hex>
+```
+
+- `<vet>` and `<32hex>` as above (same token grammar as mint and verify).
+- Resolves via `GET /w/{token}` in `specs/vet-public-api.yaml`; submitted via `POST /w/{token}/complete`.
+- Printed or displayed by vet staff from a client's detail page ("Register wallet") to bind the owner's wallet address to that client record for bookkeeping; scanned by the owner's mobile app.
+- Non-consuming resolve, consuming complete: `GET /w/{token}` only returns the EIP-712 challenge (clinic name, masked client name, and the struct fields the app will sign) and can be safely retried.
+  `POST /w/{token}/complete` is the action that consumes the token, on every outcome, success or refusal alike - a burned token is simply dead, and there is no retry endpoint for this ceremony.
+- Error states: `GET /w/{token}` refuses with `404` (`not_found`: unknown or malformed) or `410` (`expired_or_reused`: already consumed by a prior success or failure, or naturally expired) before the owner ever sees the consent screen.
+  `POST /w/{token}/complete` additionally refuses with `400` (`signature_invalid`: a malformed request body, or a recovered signer that does not equal the claimed wallet) or `409` (`already_registered`: this wallet is already registered to this client), on top of the same `404`/`410` above.
+  Every `POST` outcome consumes the token, including a failed `signature_invalid` attempt, so a fresh attempt needs a fresh QR from the clinic.
+- Fixed TTL: 600 seconds from creation, not extended by resolving, like the export and import ceremonies below and unlike the mint QR's TTL-extension-on-first-resolve.
+- On a successful scan, the app calls `GET /w/{token}` for the challenge, then shows a consent screen (clinic name, masked client name, and the wallet address about to be registered) before doing anything else.
+  Only after the owner passes a biometric gate does the app build the `ClientRegistration` EIP-712 struct from the challenge's own server-chosen fields plus the wallet being registered, sign it with that wallet's key, and `POST` the wallet address plus signature to `/complete`.
+  The server independently rebuilds the exact same domain and struct from its own server-trusted session state and recovers the signer - the request body's claimed wallet (itself part of the signed struct) is trusted only once that recovered signer is proven to equal it.
+- The app calls both `GET /w/{token}` and `POST /w/{token}/complete` against the exact host parsed from the QR, never a host it already has stored or discovered for a clinic of the same name ("scanned host only" - the same rule every vet-facing ceremony in this catalogue follows).
+
+### Parsing rules
+
+1. The scheme MUST be `https`.
+2. The path MUST match `^/w/[0-9a-f]{32}$` exactly, with no trailing slash, query string, or fragment.
 
 ## Export QR (device recovery)
 
