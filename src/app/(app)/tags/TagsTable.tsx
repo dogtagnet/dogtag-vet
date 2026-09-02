@@ -8,6 +8,7 @@ import {StatusBadge} from "@/components/ui/StatusBadge";
 import {HashCell} from "@/components/ui/HashCell";
 import {Button, Select} from "@/components/ui/controls";
 import {useSnackbar} from "@/components/ui/Snackbar";
+import {ExportQrPanel} from "@/components/tags/ExportQrPanel";
 import {vetIssuerAbi} from "@/lib/abi";
 import {roax} from "@/lib/chains";
 import {legacyTxWithGas} from "@/lib/chainWrite";
@@ -33,6 +34,9 @@ export function TagsTable({timeZone}: {timeZone: string}) {
   const [data, setData] = useState<TagsResponse | null>(null);
   const [busyPetId, setBusyPetId] = useState<string | null>(null);
   const [reasonByPet, setReasonByPet] = useState<Record<string, ReasonCodeName>>({});
+  // At most one row's export QR panel expanded at a time - petId-keyed, same idiom
+  // WalletsPanel.tsx's expandedAddress uses for its own row expansion.
+  const [expandedExportPetId, setExpandedExportPetId] = useState<string | null>(null);
   const [pendingTx, setPendingTx] = useState<{hash: `0x${string}`; petId: string; action: "revoke" | "reactivate"; reasonCode: ReasonCodeName} | null>(null);
 
   const receipt = useWaitForTransactionReceipt({hash: pendingTx?.hash, chainId: roax.id});
@@ -160,6 +164,17 @@ export function TagsTable({timeZone}: {timeZone: string}) {
                 <Link href={`/tags/issue?replace=${p.petId}`} className="text-body text-link hover:underline">
                   Replace
                 </Link>
+                {p.dogTag.status !== "revoked" && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    aria-expanded={expandedExportPetId === p.petId}
+                    aria-controls={`export-panel-${p.petId}`}
+                    onClick={() => setExpandedExportPetId((prev) => (prev === p.petId ? null : p.petId))}
+                  >
+                    {expandedExportPetId === p.petId ? "Hide share code" : "Share tag data"}
+                  </Button>
+                )}
               </div>
             ),
           },
@@ -167,6 +182,13 @@ export function TagsTable({timeZone}: {timeZone: string}) {
         rows={data.issued}
         getRowKey={(p) => p.petId}
         emptyMessage="No tags issued yet."
+        renderExpansion={(p) =>
+          expandedExportPetId === p.petId ? (
+            <div id={`export-panel-${p.petId}`}>
+              <ExportQrPanel petId={p.petId} onClose={() => setExpandedExportPetId(null)} />
+            </div>
+          ) : null
+        }
       />
 
       {data.inProgress.length > 0 && (

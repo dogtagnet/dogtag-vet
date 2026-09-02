@@ -3,15 +3,20 @@ import {AddressChip} from "@/components/ui/AddressChip";
 import {HashCell} from "@/components/ui/HashCell";
 import {MonoValue} from "@/components/ui/MonoValue";
 import {StatusBadge} from "@/components/ui/StatusBadge";
+import {ShareTagDataAction} from "@/components/tags/ShareTagDataAction";
 import {dogTagStatusLabel, dogTagStatusTone} from "@/lib/tagStatusTone";
 import type {DogTagInfo} from "@/lib/models/Pet";
 
 /**
  * Surfaces `Pet.dogTag` on the pet's own record - design-system.md principle 3 ("everything with
- * a lifecycle shows a status badge") and principle 2 ("on-chain facts look on-chain"). Read-only:
- * lifecycle actions (revoke/reactivate/replace) stay on `/tags`, this card only links there.
+ * a lifecycle shows a status badge") and principle 2 ("on-chain facts look on-chain"). Read-only
+ * for LIFECYCLE STATE changes: revoke/reactivate/replace stay on `/tags`, this card only links
+ * there. `ShareTagDataAction` (WP4.9 section 2.2) is deliberately an exception to that rule - it
+ * never changes the tag's own state (no revoke/reactivate/replace-shaped write happens), it only
+ * hands the OWNER a one-time copy of data already on file, so it lives directly on this card rather
+ * than being yet another "go to /tags" link.
  */
-export function PetTagCard({dogTag = {}}: {dogTag?: DogTagInfo}) {
+export function PetTagCard({petId, dogTag = {}}: {petId: string; dogTag?: DogTagInfo}) {
   const hasTag = Boolean(dogTag.dogTagIdDec);
 
   if (!hasTag) {
@@ -88,13 +93,14 @@ export function PetTagCard({dogTag = {}}: {dogTag?: DogTagInfo}) {
           </dd>
         </div>
       </dl>
-      {!dogTag.external && (
-        <div className="mt-4">
+      <div className="mt-4 flex flex-wrap items-center gap-4">
+        {!dogTag.external && (
           <Link href="/tags" className="text-body font-medium text-link hover:underline">
             Manage in Tags
           </Link>
-        </div>
-      )}
+        )}
+        {dogTag.status !== "revoked" && <ShareTagDataAction petId={petId} />}
+      </div>
     </section>
   );
 }

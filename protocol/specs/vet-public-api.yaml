@@ -40,6 +40,12 @@ tags:
     description: Payment status and receipt retrieval for invoices raised by the vet.
   - name: entity
     description: The vet's own public entity card, served for in-app display once discovered via the admin directory.
+  - name: tag-custody
+    description: |-
+      Export/import ceremonies for a pet's custodial TagArtifact (the vet's verify-at-write
+      copy of a pet's opened profile-tree leaves - plans/wp4.9-tag-data-custody.md). The vet
+      starts a session in person; the owner's app scans a QR and resolves it. No on-chain
+      writes happen as part of either ceremony.
 x-common-headers:
   rateLimit: &rateLimitHeaders
     X-RateLimit-Limit: {$ref: '#/components/headers/RateLimitLimit'}
@@ -288,6 +294,56 @@ paths:
               schema: {$ref: '#/components/schemas/Error'}
         "410":
           description: "`error.code` is `expired_or_reused`: the token was already consumed (by a prior success OR a prior failed attempt), or it simply expired."
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
+        "429":
+          $ref: '#/components/responses/RateLimited'
+        "5XX":
+          $ref: '#/components/responses/ServerError'
+
+  /e/{token}:
+    get:
+      operationId: resolveArtifactExport
+      tags: [tag-custody]
+      summary: Fetch a pet's exported tag data (one-time; consumes the token)
+      description: |-
+        The owner's app scans the vet's export QR (`https://<vet>/e/<32hex>`,
+        plans/wp4.9-tag-data-custody.md section 2.2) and calls this to fetch a verbatim copy of
+        the pet's currently-active `TagArtifact`: every opened profile-tree leaf plus the 3
+        reserved owner-control leaf hashes, exactly as vet-attested (or previously imported)
+        for this pet. Selective export is explicitly out of scope - a partial leaf set cannot
+        recompute `root`, so this always discloses the FULL leaf set, including `owner.*`/
+        `owner.identity.*` - the ceremony is deliberately in-person, one-time, and short-lived
+        (600s) rather than filtered.
+
+        **ONE-TIME**: unlike every other resolve route in this spec, THIS single `GET` both
+        resolves AND atomically consumes the token - there is no separate `/complete` step,
+        since the phone only ever reads. A concurrent second call against the same token always
+        loses the race (`410`), never receives a second copy of the payload.
+
+        `root` is fixed at the moment the vet started this session (the pet's active artifact
+        at that instant), not re-read live - if the pet's tag was superseded (a `replace`)
+        between session creation and the scan, this returns `410` with `error.code: superseded`
+        rather than silently substituting different data than what the vet saw on screen when
+        the QR was generated.
+      parameters:
+        - $ref: '#/components/parameters/ArtifactExportToken'
+      responses:
+        "200":
+          description: Tag data resolved; the token is now consumed.
+          headers: *rateLimitHeaders
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ArtifactExportResponse'
+        "404":
+          description: Token unknown or malformed.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
+        "410":
+          description: "`error.code` is one of `expired_or_reused` (already consumed, by this call or a lost race, or naturally expired), `revoked` (the pet's tag has been revoked at this clinic since the session was created), or `superseded` (the tag has since been replaced - ask the clinic for a new code)."
           content:
             application/json:
               schema: {$ref: '#/components/schemas/Error'}
@@ -716,6 +772,12 @@ components:
       required: true
       description: The 32-lowercase-hex wallet-registration session token (see `specs/qr-formats.md`).
       schema: {$ref: '#/components/schemas/Hex32Token'}
+    ArtifactExportToken:
+      name: token
+      in: path
+      required: true
+      description: The 32-lowercase-hex tag-data export session token (see `specs/qr-formats.md`).
+      schema: {$ref: '#/components/schemas/Hex32Token'}
     AppointmentToken:
       name: token
       in: query
@@ -926,6 +988,50 @@ components:
         status:
           type: string
           enum: [pending, ready, issuing, bound, error]
+
+    ArtifactExportResponse:
+      type: object
+      required: [protocolVersion, dogTagIdField, root, leaves, reservedLeafHashes, issuerClone, chainId, petName, clinicName]
+      description: |-
+        A verbatim copy of the pet's currently-active `TagArtifact` (plans/wp4.9-tag-data-custody.md
+        section 2.1) plus display context. `leaves`/`reservedLeafHashes` recompute `root` via the
+        SAME `verifyLeafCommitment` check every write path in this deployment already ran before
+        ever storing them - the owner's app SHOULD independently re-verify this on device rather
+        than trusting the transport, exactly as it would for any other disclosed leaf set.
+      properties:
+        protocolVersion:
+          type: string
+          description: "The leaf-commitment protocol version this artifact was verified under, e.g. `dogtag-v2/1`."
+        schemaId:
+          type: string
+          description: The schema registry `$id` this credential was issued/received against, when known. Absent for some imported artifacts whose sender did not carry one.
+        dogTagIdDec:
+          type: string
+          description: The issuing clinic's own off-chain decimal handle, when known. Absent for many imported artifacts - this label has no meaning outside the clinic that minted it.
+        dogTagIdField:
+          type: string
+          description: The canonical on-chain dogTagId as a decimal uint256 string - `dogTagIdField(dogTagIdDec)` from `packages/dogtag-standard-ts`.
+        root: {$ref: '#/components/schemas/Hex32'}
+        leaves:
+          type: array
+          items: {$ref: '#/components/schemas/OpenedLeaf'}
+        reservedLeafHashes:
+          type: array
+          minItems: 3
+          maxItems: 3
+          items: {$ref: '#/components/schemas/Hex32'}
+        issuerClone:
+          type: string
+          description: The `VetIssuer` clone address that issued this root, as indexed by the factory - never assumed to be the exporting clinic's own clone.
+        chainId:
+          type: integer
+          description: The ROAX chain id, as configured server-side.
+        petName:
+          type: string
+          description: The pet's current display name at the exporting clinic - read live, not snapshotted at session creation.
+        clinicName:
+          type: string
+          description: The exporting clinic's configured display name. Empty string if the clinic has not set one.
 
     MintSessionStatusResponse:
       type: object
