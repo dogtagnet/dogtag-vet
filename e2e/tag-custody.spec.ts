@@ -1,5 +1,16 @@
 import {expect, test, type Page} from "@playwright/test";
-import {buildMerkle, dogTagIdField, hashLeaf, hexToBytes, toHex32, TypeTag, verifyLeafCommitment, type OpenedLeaf, type TypedScalar} from "@dogtag/standard";
+import {
+  buildMerkle,
+  dogTagIdField,
+  hashLeaf,
+  hexToBytes,
+  toHex32,
+  TypeTag,
+  verifyLeafCommitment,
+  verifyRedactedArtifact,
+  type OpenedLeaf,
+  type TypedScalar,
+} from "@dogtag/standard";
 import {setRpcScenario, resetRpcStub} from "./rpcStub";
 
 /**
@@ -180,6 +191,72 @@ test.describe("export ceremony (plan 2.2)", () => {
     const res = await page.request.post(`/api/pets/${petId}/export-tag-data`);
     expect(res.status()).toBe(400);
   });
+
+  test("WP4.10V item 7: staff picks 2 fields on 'Export with masking', and the resulting artifact carries exactly those 2 as obfuscated hashes and verifies", async ({page}) => {
+    const petId = await createPetApi(page, "Shadow");
+    // THREE disclosed leaves (not `buildVerifiableProfile`'s usual two) so masking exactly 2 of
+    // them exercises the MIXED disclosed/obfuscated path through /e/:token - a name stays
+    // disclosed, species+breed are masked. The fully-masked degenerate case (disclosed: []) is
+    // already covered separately by exportFlow.test.ts's own "masking every leaf" unit test.
+    const salt = (n: number) => new Uint8Array(16).fill(n);
+    const saltHexOf = (n: number) => ("0x" + Array.from(salt(n)).map((b) => b.toString(16).padStart(2, "0")).join("")) as `0x${string}`;
+    const nameLeaf: OpenedLeaf = {keyPath: "credentialSubject.name", saltHex: saltHexOf(11), tag: TypeTag.String, value: "Shadow"};
+    const speciesLeaf: OpenedLeaf = {keyPath: "credentialSubject.species", saltHex: saltHexOf(12), tag: TypeTag.String, value: "dog"};
+    const breedLeaf: OpenedLeaf = {keyPath: "credentialSubject.breed", saltHex: saltHexOf(13), tag: TypeTag.String, value: "Whippet"};
+    const leaves = [nameLeaf, speciesLeaf, breedLeaf];
+    const reservedLeafHashes = [
+      toHex32(hashLeaf("owner.address", salt(201), {tag: TypeTag.Bytes, value: new Uint8Array([1])} as TypedScalar)),
+      toHex32(hashLeaf("owner.consentKey", salt(202), {tag: TypeTag.Bytes, value: new Uint8Array([2])} as TypedScalar)),
+      toHex32(hashLeaf("owner.secret", salt(203), {tag: TypeTag.Bytes, value: new Uint8Array([3])} as TypedScalar)),
+    ];
+    const reservedFields = reservedLeafHashes.map((h) => BigInt(h));
+    const leafFields = leaves.map((l) => hashLeaf(l.keyPath, hexToBytes(l.saltHex), {tag: l.tag, value: l.value} as TypedScalar));
+    const root = toHex32(buildMerkle([...reservedFields, ...leafFields]).root);
+    expect(verifyLeafCommitment({root, leaves, reservedLeafHashes, expectedIdentityLeaves: []})).toBe(true);
+    await seedCustodiedPet(page, petId, "70009", {leaves, reservedLeafHashes, root});
+
+    // UI walkthrough - forces the first cold client build of MaskedExportPanel's composition.
+    await page.goto(`/pets/${petId}`);
+    await page.getByRole("button", {name: "Export with masking"}).click();
+    // /export-tag-data/fields fetch + render can outrun the 5s default under load.
+    await expect(page.getByRole("checkbox")).toHaveCount(3, {timeout: 15_000});
+
+    // Mask exactly 2 of the 3 disclosed leaves - name stays disclosed.
+    await page.locator("li", {hasText: "credentialSubject.species"}).getByRole("checkbox").check();
+    await page.locator("li", {hasText: "credentialSubject.breed"}).getByRole("checkbox").check();
+
+    await page.getByRole("button", {name: "Show QR"}).click();
+    await expect(page.getByText("Scan with the owner's DogTag app")).toBeVisible({timeout: 15_000});
+    const link = page.getByTestId("masked-export-link");
+    const qrUrl = await link.textContent();
+    expect(qrUrl).toContain("/e/");
+
+    const res = await page.request.get(qrUrl!);
+    expect(res.status()).toBe(200);
+    const body = await res.json();
+    expect(body.disclosed).toEqual([nameLeaf]);
+    expect(body.leaves).toEqual([nameLeaf]); // the deprecated alias mirrors disclosed exactly
+    const expectedHashes = [speciesLeaf, breedLeaf]
+      .map((l) => toHex32(hashLeaf(l.keyPath, hexToBytes(l.saltHex), {tag: l.tag, value: l.value} as TypedScalar)))
+      .sort();
+    expect(body.obfuscatedLeafHashes).toHaveLength(2);
+    expect([...body.obfuscatedLeafHashes].sort()).toEqual(expectedHashes);
+    expect(body.reservedLeafHashes).toEqual(reservedLeafHashes);
+
+    // The falsifiable "verifies" proof this checklist item asks for - real crypto against the
+    // ACTUAL server response, never a shape assertion standing in for it.
+    expect(
+      verifyRedactedArtifact({
+        protocolVersion: body.protocolVersion,
+        dogTagIdField: body.dogTagIdField,
+        root: body.root,
+        disclosed: body.disclosed,
+        obfuscatedLeafHashes: body.obfuscatedLeafHashes,
+        reservedLeafHashes: body.reservedLeafHashes,
+        issuerClone: body.issuerClone,
+      }),
+    ).toBe(true);
+  });
 });
 
 test.describe("import ceremony (plan 2.3)", () => {
@@ -303,6 +380,41 @@ test.describe("import ceremony (plan 2.3)", () => {
     await expect(page.getByText(/species/)).toBeVisible();
   });
 
+  test("WP4.10V item 7: importing a masked (WP4.10M-shaped) artifact stores honest partial custody, visible as 'masked by the owner' on the pet page", async ({page}) => {
+    const targetPetId = await createPetApi(page, "Pepper");
+    const dogTagIdDec = "70012";
+    const fieldDec = dogTagIdField(dogTagIdDec).toString(10);
+    const fixture = buildVerifiableProfile("Pepper", "dog");
+    const [nameLeaf, speciesLeaf] = fixture.leaves;
+    const maskedHash = toHex32(hashLeaf(speciesLeaf!.keyPath, hexToBytes(speciesLeaf!.saltHex), {tag: speciesLeaf!.tag, value: speciesLeaf!.value} as TypedScalar));
+    await setRpcScenario("profileRoot", SBT_ADDRESS, [fieldDec], fixture.root);
+    await setRpcScenario("rootIssuer", FACTORY_ADDRESS, [fixture.root], FOREIGN_CLONE);
+    await setRpcScenario("isValid", FOREIGN_CLONE, [fixture.root], true);
+
+    const session = await createImportSession(page, targetPetId);
+    const complete = await page.request.post(`/i/${session.token}/complete`, {
+      data: {
+        dogTagIdDec,
+        disclosed: [nameLeaf],
+        obfuscatedLeafHashes: [maskedHash],
+        reservedLeafHashes: fixture.reservedLeafHashes,
+      },
+    });
+    expect(complete.status()).toBe(200);
+    const body = await complete.json();
+    expect(body).toMatchObject({ok: true, petId: targetPetId, petName: "Pepper", created: false});
+
+    // Honest partial custody: species was never disclosed to this clinic, only its hash - the pet
+    // page shows a COUNT banner, never invents the masked value.
+    await page.goto(`/pets/${targetPetId}`);
+    await expect(page.getByText("Some fields are masked by the owner")).toBeVisible();
+    await expect(page.getByText("1 attribute on this tag was masked")).toBeVisible();
+
+    const petRes = await page.request.get(`/api/pets/${targetPetId}`);
+    const pet = await petRes.json();
+    expect(pet.species).toBeUndefined(); // never filled in from a value this clinic does not have
+  });
+
   test("already_has_active_tag: refuses onto a target that already has one, with no change to it", async ({page}) => {
     const targetPetId = await createPetApi(page, "Already Tagged");
     const existing = buildVerifiableProfile("Already Tagged", "dog");
@@ -333,5 +445,71 @@ test.describe("import ceremony (plan 2.3)", () => {
     // scoped to THIS pet's row, since the shared test database may carry other tagged pets by now.
     await row.getByRole("button", {name: "Share tag data"}).click();
     await expect(page.getByText("Scan with the owner's DogTag app")).toBeVisible({timeout: 15_000}); // POST + client QR render can outrun the 5s default under load
+  });
+});
+
+test.describe("verify a redacted artifact page (WP4.10V item 5, item 7 e2e coverage)", () => {
+  test("happy path: a genuine masked artifact pastes as Verified, chain-anchored, its masked field distinct from its disclosed one", async ({page}) => {
+    const dogTagIdDec = "70010";
+    const fieldDec = dogTagIdField(dogTagIdDec).toString(10);
+    const fixture = buildVerifiableProfile("Nova", "dog");
+    const [nameLeaf, speciesLeaf] = fixture.leaves;
+    const maskedHash = toHex32(hashLeaf(speciesLeaf!.keyPath, hexToBytes(speciesLeaf!.saltHex), {tag: speciesLeaf!.tag, value: speciesLeaf!.value} as TypedScalar));
+    const artifact = {
+      protocolVersion: "dogtag-v2/1",
+      dogTagIdDec,
+      dogTagIdField: fieldDec,
+      root: fixture.root,
+      disclosed: [nameLeaf!],
+      obfuscatedLeafHashes: [maskedHash],
+      reservedLeafHashes: fixture.reservedLeafHashes,
+      issuerClone: FOREIGN_CLONE,
+    };
+    // Sanity: the fixture itself is genuine before it ever reaches the page - a failure here would
+    // mean the TEST is broken, not the feature under test.
+    expect(verifyRedactedArtifact(artifact)).toBe(true);
+
+    await setRpcScenario("profileRoot", SBT_ADDRESS, [fieldDec], fixture.root);
+    await setRpcScenario("rootIssuer", FACTORY_ADDRESS, [fixture.root], FOREIGN_CLONE);
+    await setRpcScenario("isValid", FOREIGN_CLONE, [fixture.root], true);
+
+    await page.goto("/verify/redacted");
+    await page.getByPlaceholder("Paste a RedactedTagArtifact JSON document here...").fill(JSON.stringify(artifact));
+    await page.getByRole("button", {name: "Verify"}).click();
+    // POST + chain reads can outrun the 5s default under load.
+    await expect(page.getByText("Verified", {exact: true})).toBeVisible({timeout: 15_000});
+    // `exact: true` matters: the pasted JSON still sitting in the textarea above also contains the
+    // literal substring "credentialSubject.name" (inside a much longer blob), but the textarea's
+    // FULL normalized text is never exactly "credentialSubject.name" - only the rendered <li> in
+    // the result panel is, so this excludes the textarea without a strict-mode violation.
+    await expect(page.getByText("credentialSubject.name", {exact: true})).toBeVisible();
+    await expect(page.getByText("credentialSubject.species")).not.toBeVisible(); // masked, never disclosed - absent even from the textarea's own JSON
+    await expect(page.getByText("1 field masked")).toBeVisible();
+  });
+
+  test("negative: a tampered artifact (a disclosed value edited after the root was computed) fails cryptographic verification, never silently accepted", async ({page}) => {
+    const dogTagIdDec = "70011";
+    const fieldDec = dogTagIdField(dogTagIdDec).toString(10);
+    const fixture = buildVerifiableProfile("Ash", "cat");
+    const [nameLeaf, speciesLeaf] = fixture.leaves;
+    const maskedHash = toHex32(hashLeaf(speciesLeaf!.keyPath, hexToBytes(speciesLeaf!.saltHex), {tag: speciesLeaf!.tag, value: speciesLeaf!.value} as TypedScalar));
+    const tamperedArtifact = {
+      protocolVersion: "dogtag-v2/1",
+      dogTagIdDec,
+      dogTagIdField: fieldDec,
+      root: fixture.root,
+      disclosed: [{...nameLeaf!, value: "NOT-REAL"}],
+      obfuscatedLeafHashes: [maskedHash],
+      reservedLeafHashes: fixture.reservedLeafHashes,
+      issuerClone: FOREIGN_CLONE,
+    };
+    // Sanity: genuinely broken before it ever reaches the page (crypto_failed never even reaches the
+    // chain - verifyRedactedFlow.test.ts's own unit test already pins that; no rpc scenario needed).
+    expect(verifyRedactedArtifact(tamperedArtifact)).toBe(false);
+
+    await page.goto("/verify/redacted");
+    await page.getByPlaceholder("Paste a RedactedTagArtifact JSON document here...").fill(JSON.stringify(tamperedArtifact));
+    await page.getByRole("button", {name: "Verify"}).click();
+    await expect(page.getByText("Failed", {exact: true})).toBeVisible({timeout: 15_000});
   });
 });
