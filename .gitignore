@@ -46,3 +46,10 @@ pnpm-debug.log*
 !src/app/(app)/tags/**
 !src/app/api/tags/
 !src/app/api/tags/**
+# WP4.9: same ctags collision, for the new src/lib/tags/ (TagArtifact custody + export/import
+# ceremony logic) and tests/unit/tags/ (its unit tests) - neither is a route directory, but both
+# are still matched by the same bare `tags` global rule (confirmed via `git check-ignore -v`).
+!src/lib/tags/
+!src/lib/tags/**
+!tests/unit/tags/
+!tests/unit/tags/**

@@ -1,9 +1,19 @@
-import {dogTagIdField as computeDogTagIdField, TypeTag, verifyLeafCommitment, type OpenedLeaf} from "@dogtag/standard";
-import type {PetSex} from "@/lib/models/Pet";
+import type {OpenedLeaf} from "@dogtag/standard";
 import type {BookingIdentity} from "@/lib/models/Appointment";
+import {
+  resolveTagRootAndIssuer,
+  verifyTagDataAgainstRoot,
+  mapVerifiedLeavesToPetAttributes,
+  type TagDataChainDeps,
+  type VerifiedPetAttributes,
+} from "@/lib/tags/verifier";
 
-const ZERO_HEX32 = `0x${"0".repeat(64)}`;
-const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
+// Re-exported so every existing import of these two names from THIS module (this repo's own
+// `tests/unit/booking/mobileReconcile.test.ts` included - it is WP4.4's parity proof and must keep
+// compiling and passing completely unmodified) keeps resolving, even though both now live in
+// `lib/tags/verifier.ts` (plan section 2.3's shared-verifier extraction, used by both this file's
+// tier 4 and the WP4.9 import ceremony).
+export {mapVerifiedLeavesToPetAttributes, type VerifiedPetAttributes};
 
 /** The wire's `bookingIdentity.tagResolution` enum - plans/wp4.4-mobile-booking-protocol.md
  * section 1 (normative, LOCKED). */
@@ -39,29 +49,15 @@ export interface MobileTagLookupStore {
   findExternalPetByDogTagField(dogTagIdFieldDec: string): Promise<{petId: string} | null>;
 }
 
-/** Fail-closed chain reads `resolveTagClaim` needs (`lib/chainRead.ts`'s existing readers,
- * `readRootIssuer` is the new one this WP adds) - injected for the same testability reason as
- * `MobileTagLookupStore` above. Every method here is allowed to THROW (an unreachable RPC, per
- * every other reader in this app) - `resolveTagClaim` catches every one of these and folds a
- * failure into `{tagResolution: "unknown", verificationError: true}` rather than propagating, so a
- * chain hiccup degrades the TAG CLAIM only and never loses the booking itself. */
-export interface MobileTagChainDeps {
-  /** `DogTagSBTConsent.profileRoot(dogTagIdField)` - the zero hash when never issued. */
-  readProfileRoot(dogTagIdFieldDec: string): Promise<string>;
-  /** `VetIssuerFactory.rootIssuer(root)` - the zero address when the factory never indexed it. */
-  readRootIssuer(root: string): Promise<string>;
-  /** `VetIssuer.isValid(root)` against the ISSUER clone (never our own - see section 3's note on
-   * why `isValid` on our own clone cannot distinguish foreign from revoked). */
-  readIsValidRoot(issuerCloneAddress: string, root: string): Promise<boolean>;
-}
-
-export interface VerifiedPetAttributes {
-  name?: string;
-  species?: string;
-  breed?: string;
-  sex?: PetSex;
-  dateOfBirth?: string;
-}
+/** Fail-closed chain reads `resolveTagClaim` needs - now `lib/tags/verifier.ts`'s
+ * `TagDataChainDeps` (the shared-verifier extraction), re-exported under this file's own
+ * established name so `lib/booking/mobileMongoAdapters.ts`'s `mongoMobileTagChainDeps`/
+ * `unconfiguredMobileTagChainDeps` and every test importing `MobileTagChainDeps` FROM THIS MODULE
+ * need zero changes. Every method is allowed to THROW (an unreachable RPC, per every other reader
+ * in this app) - `resolveTagClaim` catches every one of these (via the two shared-verifier calls
+ * below) and folds a failure into `{tagResolution: "unknown", verificationError: true}` rather than
+ * propagating, so a chain hiccup degrades the TAG CLAIM only and never loses the booking itself. */
+export type MobileTagChainDeps = TagDataChainDeps;
 
 export interface TagClaimInput {
   dogTagIdDec?: string;
@@ -126,54 +122,17 @@ export type TagClaimResult =
       existingExternalPetId?: string;
     };
 
-/** `credentialSubject.*` is the disclosed-attribute namespace (`OpenedLeaf`'s own wire doc
- * comment: "e.g. `credentialSubject.name`"), distinct from `owner.*`/`owner.identity.*` (owner
- * data, never imported onto a Pet record). Only `TypeTag.String` leaves are read for these fields
- * - every field this maps onto is itself a plain string on `PetDoc`. */
-const NAME_KEY_PATH = "credentialSubject.name";
-const SPECIES_KEY_PATH = "credentialSubject.species";
-const BREED_LABEL_KEY_PATH = "credentialSubject.breedLabel";
-const BREED_VBO_KEY_PATH = "credentialSubject.breedVbo";
-const SEX_KEY_PATH = "credentialSubject.sex";
-const DATE_OF_BIRTH_KEY_PATH = "credentialSubject.dateOfBirth";
-const VALID_PET_SEXES: readonly PetSex[] = ["male", "female", "unknown"];
-
-/**
- * Best-effort mapping from a VERIFIED leaf set (leaves that already passed `verifyLeafCommitment`
- * against the on-chain root - never called on unverified input) onto the subset of `PetDoc`
- * fields WP4.4 imports: "name, species, breed, ..." (section 3.4). Never throws: an unrecognized
- * keyPath, a non-string tag, or an invalid enum value for `sex` is silently skipped rather than
- * propagated - this is enrichment of an already-trusted commitment, not a second security check.
- */
-export function mapVerifiedLeavesToPetAttributes(leaves: OpenedLeaf[]): VerifiedPetAttributes {
-  const byKeyPath = new Map<string, OpenedLeaf>();
-  for (const leaf of leaves) {
-    if (leaf.tag === TypeTag.String) byKeyPath.set(leaf.keyPath, leaf);
-  }
-  const get = (keyPath: string): string | undefined => byKeyPath.get(keyPath)?.value;
-
-  const sexValue = get(SEX_KEY_PATH);
-  const sex = sexValue !== undefined && (VALID_PET_SEXES as string[]).includes(sexValue) ? (sexValue as PetSex) : undefined;
-
-  const attributes: VerifiedPetAttributes = {
-    name: get(NAME_KEY_PATH),
-    species: get(SPECIES_KEY_PATH),
-    breed: get(BREED_LABEL_KEY_PATH) ?? get(BREED_VBO_KEY_PATH),
-    sex,
-    dateOfBirth: get(DATE_OF_BIRTH_KEY_PATH),
-  };
-  // Strip undefined keys so equality assertions against a plain `{}` (no claims at all) hold -
-  // `VerifiedPetAttributes`'s fields are all optional, but an object literal with every value
-  // `undefined` is not structurally `{}` under `toEqual`.
-  return Object.fromEntries(Object.entries(attributes).filter(([, v]) => v !== undefined)) as VerifiedPetAttributes;
-}
-
 /**
  * Tag claim resolution - plans/wp4.4-mobile-booking-protocol.md section 3, tiers 1-4 (normative,
  * LOCKED). Zero writes: this function only READS (the injected store and chain deps) and performs
- * pure local computation (`verifyLeafCommitment`); the caller creates/links a provisional pet only
- * AFTER the appointment itself is durably inserted (avoids an orphaned provisional Pet if the
- * booking itself then loses a slot-capacity race - see the booking route's own doc comment).
+ * pure local computation; the caller creates/links a provisional pet only AFTER the appointment
+ * itself is durably inserted (avoids an orphaned provisional Pet if the booking itself then loses a
+ * slot-capacity race - see the booking route's own doc comment).
+ *
+ * Tiers 2-4 (dec<->field consistency, `profileRoot`, `rootIssuer`, `isValid`, `verifyLeafCommitment`)
+ * are `lib/tags/verifier.ts`'s shared verifier (plan section 2.3) - see that module's own doc
+ * comment for exactly why it is two functions, not one, and why the split boundary sits precisely
+ * where tier 3's `issued_here_unlinked` short-circuit needs it to.
  *
  * Every chain read is wrapped so a transient RPC failure can NEVER lose the booking (Q2's
  * "invalid signature rejects the whole booking" is about the SIGNATURE, a pure local check with no
@@ -200,108 +159,46 @@ export async function resolveTagClaim(
     return {tagResolution: "local", needsReview: true, candidatePetId: local.petId};
   }
 
-  // Tier 2: NOT local -> derive/verify dogTagIdField (no chain) -> readProfileRoot.
-  let dogTagIdFieldDec: string;
-  if (input.dogTagIdField) {
-    // Review finding 5: `bookingHash` binds the signature to `dogTagIdField` alone (see
-    // `bookingHash.ts`'s doc comment) - it says nothing about `dogTagIdDec`. When the wire sends
-    // BOTH, trusting `dogTagIdField` at face value would let a fabricated `dogTagIdDec` ride along
-    // completely unverified into `Pet.create`'s `dogTag.dogTagIdDec` and the provenance box (a real,
-    // signed field id paired with an arbitrary decimal label). Require it recompute to the exact
-    // same field the wire's own dec claims, or reject the claim outright - never a half-trusted mix.
-    if (input.dogTagIdDec) {
-      let derivedFromDec: string;
-      try {
-        derivedFromDec = computeDogTagIdField(input.dogTagIdDec).toString(10);
-      } catch {
-        return {tagResolution: "unknown", verificationError: true};
-      }
-      if (derivedFromDec !== input.dogTagIdField) {
-        return {tagResolution: "unknown", verificationError: true};
-      }
-    }
-    dogTagIdFieldDec = input.dogTagIdField;
-  } else {
-    try {
-      dogTagIdFieldDec = computeDogTagIdField(input.dogTagIdDec!).toString(10);
-    } catch {
-      // A malformed dogTagIdDec (not a canonical integer) can't be resolved on chain at all.
-      return {tagResolution: "unknown", verificationError: true};
-    }
+  // Tier 2/3: NOT local -> shared verifier stage 1 (dec<->field, profileRoot, rootIssuer).
+  const resolved = await resolveTagRootAndIssuer(deps, {dogTagIdDec: input.dogTagIdDec, dogTagIdField: input.dogTagIdField});
+  if (!resolved.ok) {
+    // `root_unset` is the one reason that means "chain read fine, nothing issued" rather than
+    // "could not check" - every other reason is a claim/chain problem, per verifier.ts's own doc
+    // comment on `RootIssuerResolution`.
+    return {tagResolution: "unknown", verificationError: resolved.reason !== "root_unset"};
   }
-
-  let root: string;
-  try {
-    root = await deps.readProfileRoot(dogTagIdFieldDec);
-  } catch {
-    return {tagResolution: "unknown", verificationError: true};
-  }
-  if (root.toLowerCase() === ZERO_HEX32) {
-    return {tagResolution: "unknown", verificationError: false};
-  }
-
-  // Tier 3/4: root exists -> readRootIssuer.
-  let issuer: string;
-  try {
-    issuer = await deps.readRootIssuer(root);
-  } catch {
-    return {tagResolution: "unknown", verificationError: true};
-  }
-  if (issuer.toLowerCase() === ZERO_ADDRESS) {
-    // Invariant violation, defensive only: `VetIssuer.issueTag`/`issueRecord` always call
-    // `factory.indexRoot(root)` atomically in the SAME transaction that sets the root, so a
-    // nonzero root with a zero `rootIssuer` should never occur on a consistent chain. Fail closed
-    // rather than guess.
-    return {tagResolution: "unknown", verificationError: true};
-  }
-  if (issuer.toLowerCase() === input.ourCloneAddress.toLowerCase()) {
-    return {tagResolution: "issued_here_unlinked", issuerClone: issuer.toLowerCase(), dogTagIdField: dogTagIdFieldDec, root};
+  if (resolved.issuerClone === input.ourCloneAddress.toLowerCase()) {
+    return {tagResolution: "issued_here_unlinked", issuerClone: resolved.issuerClone, dogTagIdField: resolved.dogTagIdField, root: resolved.root};
   }
 
   // Tier 4: external. Validity is checked against the ISSUER clone (never our own - `isValid` on
-  // our own clone cannot distinguish "foreign" from "revoked", per section 3's own note).
-  let issuerValid: boolean;
-  try {
-    issuerValid = await deps.readIsValidRoot(issuer, root);
-  } catch {
+  // our own clone cannot distinguish "foreign" from "revoked", per section 3's own note) via the
+  // shared verifier's stage 2.
+  const dataResult = await verifyTagDataAgainstRoot(deps, {
+    issuerClone: resolved.issuerClone,
+    root: resolved.root,
+    leaves: input.leaves,
+    reservedLeafHashes: input.reservedLeafHashes,
+  });
+  if (!dataResult.ok) {
     return {tagResolution: "unknown", verificationError: true};
   }
 
-  const dataVerificationAttempted = Boolean(input.leaves?.length) && Boolean(input.reservedLeafHashes?.length);
-  let dataVerified = false;
-  let verifiedAttributes: VerifiedPetAttributes | undefined;
-  if (dataVerificationAttempted && issuerValid) {
-    // Q3's gate is level-2 (data-verified), not level-3 (ownership-proven): there is no
-    // vet-attested identity-leaf set to check this claim against (unlike custodial-bind, this pet
-    // was never issued here) - the identity-leaf subset is checked against ITSELF, a deliberate
-    // no-op that still exercises every OTHER check `verifyLeafCommitment` performs (reserved
-    // count, leaf cap, no reserved-keyPath spoofing, no duplicate keyPaths, and - the one that
-    // actually matters here - the full Merkle root recompute against the on-chain `root`).
-    const identitySubset = input.leaves!.filter((leaf) => leaf.keyPath.startsWith("owner.identity."));
-    dataVerified = verifyLeafCommitment({
-      root,
-      leaves: input.leaves!,
-      reservedLeafHashes: input.reservedLeafHashes!,
-      expectedIdentityLeaves: identitySubset,
-    });
-    if (dataVerified) verifiedAttributes = mapVerifiedLeavesToPetAttributes(input.leaves!);
-  }
-
   let existingExternalPetId: string | undefined;
-  if (dataVerified) {
-    const existing = await store.findExternalPetByDogTagField(dogTagIdFieldDec);
+  if (dataResult.dataVerified) {
+    const existing = await store.findExternalPetByDogTagField(resolved.dogTagIdField);
     existingExternalPetId = existing?.petId;
   }
 
   return {
     tagResolution: "external",
-    issuerClone: issuer.toLowerCase(),
-    dogTagIdField: dogTagIdFieldDec,
-    root,
-    issuerValid,
-    dataVerificationAttempted,
-    dataVerified,
-    ...(verifiedAttributes ? {verifiedAttributes} : {}),
+    issuerClone: resolved.issuerClone,
+    dogTagIdField: resolved.dogTagIdField,
+    root: resolved.root,
+    issuerValid: dataResult.issuerValid,
+    dataVerificationAttempted: dataResult.dataVerificationAttempted,
+    dataVerified: dataResult.dataVerified,
+    ...(dataResult.verifiedAttributes ? {verifiedAttributes: dataResult.verifiedAttributes} : {}),
     ...(existingExternalPetId ? {existingExternalPetId} : {}),
   };
 }
