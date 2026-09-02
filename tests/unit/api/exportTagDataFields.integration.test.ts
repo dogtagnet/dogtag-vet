@@ -105,9 +105,59 @@ describe("GET /api/pets/:id/export-tag-data/fields", () => {
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.reservedCount).toBe(3);
+    expect(body.alreadyMaskedCount).toBe(0);
     expect(body.fields).toEqual([
       {keyPath: "credentialSubject.name", tag: TypeTag.String, value: "Rex", leafHash: recomputeLeafHash(nameLeaf), group: "pet"},
       {keyPath: "owner.identity.fullName", tag: TypeTag.String, value: "Jane Doe", leafHash: recomputeLeafHash(identityLeaf), group: "owner_identity"},
     ]);
+  });
+
+  it("alreadyMaskedCount reflects partial custody (an artifact imported with some leaves already masked by the owner)", async () => {
+    staffSession();
+    const salt = (n: number) => new Uint8Array(16).fill(n);
+    const saltHexOf = (n: number) => ("0x" + Array.from(salt(n)).map((b) => b.toString(16).padStart(2, "0")).join("")) as `0x${string}`;
+    // Only ONE leaf was ever disclosed to this clinic; the other's value was never received, only
+    // its hash - this pet's TagArtifact.leaves therefore holds strictly fewer entries than went
+    // into the root, mirroring what completeImport actually persists for a WP4.10M-shaped import.
+    const nameLeaf = {keyPath: "credentialSubject.name", saltHex: saltHexOf(11), tag: TypeTag.String, value: "Rex"};
+    const maskedLeaf = {keyPath: "credentialSubject.species", saltHex: saltHexOf(12), tag: TypeTag.String, value: "dog"};
+    const maskedHash = toHex32(hashLeaf(maskedLeaf.keyPath, hexToBytes(maskedLeaf.saltHex), {tag: maskedLeaf.tag, value: maskedLeaf.value} as TypedScalar));
+    const reservedLeafHashes = [
+      toHex32(hashLeaf("owner.address", salt(201), {tag: TypeTag.Bytes, value: new Uint8Array([1])} as TypedScalar)),
+      toHex32(hashLeaf("owner.consentKey", salt(202), {tag: TypeTag.Bytes, value: new Uint8Array([2])} as TypedScalar)),
+      toHex32(hashLeaf("owner.secret", salt(203), {tag: TypeTag.Bytes, value: new Uint8Array([3])} as TypedScalar)),
+    ];
+    const reservedFields = reservedLeafHashes.map((h) => BigInt(h));
+    const nameField = hashLeaf(nameLeaf.keyPath, hexToBytes(nameLeaf.saltHex), {tag: nameLeaf.tag, value: nameLeaf.value} as TypedScalar);
+    const root = toHex32(buildMerkle([...reservedFields, nameField, BigInt(maskedHash)]).root);
+
+    await Pet.create({
+      petId: "pet-partial",
+      name: "Rex",
+      ownerClientIds: [],
+      dogTag: {dogTagIdDec: "43", dogTagIdField: "888888", root, status: "active", cloneAddress: CLONE},
+      searchKey: "rex partial",
+    });
+    await TagArtifact.create({
+      petId: "pet-partial",
+      dogTagIdDec: "43",
+      dogTagIdField: "888888",
+      root,
+      protocolVersion: "dogtag-v2/1",
+      leaves: [nameLeaf],
+      obfuscatedLeafHashes: [maskedHash],
+      reservedLeafHashes,
+      source: "imported",
+      issuerClone: CLONE,
+      verifiedAt: 1_700_000_000,
+      active: true,
+    });
+
+    const res = await getRequest("pet-partial");
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.alreadyMaskedCount).toBe(1);
+    // The masked leaf never appears in `fields` - this clinic has no opening for it, only a hash.
+    expect(body.fields).toEqual([{keyPath: "credentialSubject.name", tag: TypeTag.String, value: "Rex", leafHash: recomputeLeafHash(nameLeaf), group: "pet"}]);
   });
 });
