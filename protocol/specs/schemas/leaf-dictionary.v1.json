@@ -1,0 +1,219 @@
+{
+  "_comment": "Leaf-level (post-flatten) dictionary for the DogTag credential schemas in this registry. Maps every keyPath a schema.ts-valid credential's flatten() walk can produce to {tags, requirement, notes}. This is a DIFFERENT altitude from the JSON Schema files beside it: those validate the pre-wrap plain-JSON credential (the shape validateSchema checks); this dictionary describes the post-flatten typed-scalar leaves specs/leaf-commitment.md's hashLeaf actually commits to. See specs/schemas/README.md for how the two relate and for versioning rules. WP4.10S NOTE: this dictionary's 'credentialSubject.dogTagId': required entry describes ONLY that flatten() pipeline (a WrappedDoc-shaped credential's leaves) - it is NOT a claim about a device-built profile tree's attribute leaves (specs/leaf-commitment.md section 15's RedactedTagArtifact, dogtag.redacted-tag-artifact.v1.schema.json), which never contains a credentialSubject.dogTagId leaf at all (build_profile_tree takes dogTagId as a bare key-derivation input, never an attribute leaf) and has no non-maskable keyPath of its own; this dictionary is not extended for that leaf space because verifyRedactedArtifact never consults it (its disclosed[].keyPath values are checked cryptographically, never against a keyPath allow-list).",
+  "version": "1.0.0",
+  "wildcardConvention": "A segment written [*] is a DICTIONARY PATTERN standing for any concrete array index (weightHistory[*].value matches weightHistory[0].value, weightHistory[1].value, ...). [*] is NOT valid F2a keyPath syntax and must never be hashed literally - it exists only so this dictionary does not need one entry per array position.",
+  "requirementLegend": {
+    "required": "Always present with a non-null value in every schema.ts-valid credential the entry's scope applies to.",
+    "optional": "May be entirely absent (flatten() then produces no leaf at this keyPath at all - not a leaf, not a null leaf, nothing). When present, must conform to the listed tags/shape.",
+    "nullable": "May be present as an explicit TypeTag.Null leaf, either directly or via flatten's empty-object/empty-array collapse rule (F2a: an empty {} or [] at this path produces exactly one leaf here with tag Null)."
+  },
+  "entries": {
+    "@context[*]": {
+      "tags": ["String"],
+      "requirement": "required",
+      "notes": "Every element of the VC @context array. index 0 is pinned to the W3C VC 2.0 base context by the envelope schema; the DogTag context URI must appear at some index."
+    },
+    "type[*]": {
+      "tags": ["String"],
+      "requirement": "required",
+      "notes": "Every element of the VC type array. Must contain \"VerifiableCredential\"; RabiesVaccinationCertificate/DOT are recognized additional values."
+    },
+    "id": {"tags": ["String"], "requirement": "required"},
+    "issuer": {
+      "tags": ["String"],
+      "requirement": "required",
+      "notes": "schema.ts's reqPresent enforces only non-null presence, not a string shape - every existing fixture and this dictionary's String tag covers the DID-string case actually in use. A future W3C-VC-legal object-shaped issuer ({id, ...}) would flatten into issuer.id / issuer.* leaves instead of one issuer leaf; not covered here because no fixture in this repository uses that shape yet."
+    },
+    "validFrom": {"tags": ["String"], "requirement": "required"},
+    "description": {"tags": ["String"], "requirement": "optional"},
+    "credentialSchema.id": {"tags": ["String"], "requirement": "required"},
+    "credentialSchema.type": {"tags": ["String"], "requirement": "required"},
+    "credentialStatus.id": {"tags": ["String"], "requirement": "required"},
+    "credentialStatus.type": {"tags": ["String"], "requirement": "required"},
+    "attestationType": {"tags": ["String"], "requirement": "required"},
+    "signatureTrustTier": {
+      "tags": ["String"],
+      "requirement": "required",
+      "notes": "One of accredited_authority | licensed_vet | self_attested."
+    },
+    "legalEffect": {"tags": ["String"], "requirement": "required", "notes": "Always the literal \"evidentiary\"."},
+    "legalBasisVersion": {"tags": ["String"], "requirement": "required"},
+    "jurisdiction": {"tags": ["String"], "requirement": "required"},
+    "recordType": {
+      "tags": ["String"],
+      "requirement": "optional",
+      "notes": "Absent on a bare/minimal credential. One of DOG_PROFILE | VACCINATION | SERVICE_ATTESTATION | EU_HEALTH_CERT | CDC_IMPORT_FORM in the fixtures this registry covers. RabiesVaccinationCertificate gates on the type array instead of this field - see dogtag.rabies-vaccination.v1's description."
+    },
+    "credentialSubject.dogTagId": {"tags": ["String"], "requirement": "required"},
+
+    "credentialSubject.species": {
+      "tags": ["String"],
+      "requirement": "optional",
+      "notes": "Required when recordType == DOG_PROFILE (dogtag.dog-profile.v1)."
+    },
+    "credentialSubject.breedVbo": {"tags": ["String"], "requirement": "optional", "notes": "Required for DOG_PROFILE."},
+    "credentialSubject.breedLabel": {"tags": ["String"], "requirement": "optional", "notes": "Required for DOG_PROFILE."},
+    "credentialSubject.sex": {
+      "tags": ["String"],
+      "requirement": "optional",
+      "notes": "Required for DOG_PROFILE. One of male | female."
+    },
+    "credentialSubject.neuterStatus": {
+      "tags": ["String"],
+      "requirement": "optional",
+      "notes": "Required for DOG_PROFILE. One of intact | neutered | spayed."
+    },
+    "credentialSubject.dateOfBirth": {
+      "tags": ["String"],
+      "requirement": "optional",
+      "notes": "Required for DOG_PROFILE. Used by RabiesVaccinationCertificate's 12-week minimum-age rule when present, but not required by it."
+    },
+    "credentialSubject.ownerIdentity.countryOfIdentification": {
+      "tags": ["String"],
+      "requirement": "optional",
+      "notes": "Required (key must be present, empty string allowed) whenever credentialSubject.ownerIdentity is present - DOG_PROFILE only."
+    },
+    "credentialSubject.ownerIdentity.identification": {
+      "tags": ["String"],
+      "requirement": "optional",
+      "notes": "Same as countryOfIdentification."
+    },
+    "credentialSubject.ownerIdentity.name": {
+      "tags": ["String"],
+      "requirement": "optional",
+      "notes": "Same as countryOfIdentification."
+    },
+    "credentialSubject.weightHistory[*].unit": {
+      "tags": ["String"],
+      "requirement": "optional",
+      "notes": "One of kg | lb. Present only when credentialSubject.weightHistory is a non-empty array (DOG_PROFILE)."
+    },
+    "credentialSubject.weightHistory[*].value": {
+      "tags": ["Decimal"],
+      "requirement": "optional",
+      "notes": "Canonical Decimal-string weight; no magnitude constraint in schema.ts."
+    },
+    "credentialSubject.weightHistory[*].measuredOn": {"tags": ["String"], "requirement": "optional"},
+    "credentialSubject.weightHistory": {
+      "tags": ["Null"],
+      "requirement": "nullable",
+      "notes": "This exact keyPath is only ever a LEAF (rather than an internal node with weightHistory[*].* children) when the array is present and EMPTY - F2a's empty-array rule. A non-empty array produces weightHistory[*].* leaves instead, never a leaf at this bare path. An absent weightHistory key produces no leaf at all, at either path."
+    },
+
+    "credentialSubject.microchip.code": {
+      "tags": ["String"],
+      "requirement": "optional",
+      "notes": "Required, matching ^[0-9]{15}$, whenever credentialSubject.microchip is present. The whole microchip object is REQUIRED (needsChip) for RabiesVaccinationCertificate and EU_HEALTH_CERT, and for any credential carrying top-level cdcPath == \"standard\"; optional for DOG_PROFILE, SERVICE_ATTESTATION, and CDC_IMPORT_FORM otherwise. When the key is entirely absent, none of the three microchip.* leaves exist."
+    },
+    "credentialSubject.microchip.standard": {
+      "tags": ["String"],
+      "requirement": "optional",
+      "notes": "One of ISO_11784_11785 | OTHER. Same presence condition as microchip.code."
+    },
+    "credentialSubject.microchip.implantDate": {
+      "tags": ["String"],
+      "requirement": "optional",
+      "notes": "Same presence condition as microchip.code. Used in the rabies implantDate <= vaccinationDate cross-field rule."
+    },
+
+    "vaccineProductCode": {"tags": ["String"], "requirement": "optional", "notes": "Required when type includes RabiesVaccinationCertificate."},
+    "vaccineProductName": {"tags": ["String"], "requirement": "optional", "notes": "Required for RabiesVaccinationCertificate."},
+    "vaccineManufacturer": {"tags": ["String"], "requirement": "optional", "notes": "Required for RabiesVaccinationCertificate."},
+    "batchLotNumber": {"tags": ["String"], "requirement": "optional", "notes": "Required for RabiesVaccinationCertificate."},
+    "vaccinationDate": {"tags": ["String"], "requirement": "optional", "notes": "Required for RabiesVaccinationCertificate."},
+    "validUntil": {"tags": ["String"], "requirement": "optional", "notes": "Required for RabiesVaccinationCertificate."},
+    "nextDueDate": {"tags": ["String"], "requirement": "optional", "notes": "Required for RabiesVaccinationCertificate."},
+    "authorizedVet": {"tags": ["String"], "requirement": "optional", "notes": "Required for RabiesVaccinationCertificate."},
+    "series": {
+      "tags": ["String"],
+      "requirement": "optional",
+      "notes": "Required for RabiesVaccinationCertificate. One of primary | booster."
+    },
+    "titer.resultIUml": {
+      "tags": ["Decimal"],
+      "requirement": "optional",
+      "notes": "Required, and must be a canonical Decimal string numerically >= \"0.5\" (x-validationRules), whenever a titer object is present (root-level titer or credentialSubject.titer - schema.ts accepts either location; this dictionary lists the root-level path used by every fixture in this repository). See credentialSubject.titer.resultIUml below for the alternate location's identical field."
+    },
+    "titer.sampledAt": {
+      "tags": ["String"],
+      "requirement": "optional",
+      "notes": "Required whenever a titer object is present; must be >= vaccinationDate + 30 days when it is a string (x-validationRules) - schema.ts silently accepts a non-string, non-null sampledAt with no check at all, a documented code-level quirk this dictionary mirrors rather than tightens. See credentialSubject.titer.sampledAt below for the alternate location's identical field."
+    },
+    "titer.labId": {
+      "tags": ["String"],
+      "requirement": "optional",
+      "notes": "Carried by every fixture in this repository; schema.ts itself places no constraint on titer.labId. See credentialSubject.titer.labId below for the alternate location's identical field."
+    },
+    "credentialSubject.titer.resultIUml": {
+      "tags": ["Decimal"],
+      "requirement": "optional",
+      "notes": "Same field as titer.resultIUml above, at the alternate credentialSubject-nested location schema.ts also accepts for the titer object (used only when a credential places titer under credentialSubject instead of at the root)."
+    },
+    "credentialSubject.titer.sampledAt": {
+      "tags": ["String"],
+      "requirement": "optional",
+      "notes": "Same field as titer.sampledAt above, at the alternate credentialSubject-nested location."
+    },
+    "credentialSubject.titer.labId": {
+      "tags": ["String"],
+      "requirement": "optional",
+      "notes": "Same field as titer.labId above, at the alternate credentialSubject-nested location."
+    },
+
+    "assistanceType": {
+      "tags": ["String"],
+      "requirement": "optional",
+      "notes": "Required for SERVICE_ATTESTATION. One of service_dog | emotional_support | none."
+    },
+    "issuerTrustTier": {
+      "tags": ["String"],
+      "requirement": "optional",
+      "notes": "Required for SERVICE_ATTESTATION. One of adi_accredited | licensed_pro | handler_self_attestation | unverified_registry."
+    },
+    "taskDescription": {"tags": ["String"], "requirement": "optional", "notes": "Required for SERVICE_ATTESTATION."},
+    "legalContext[*]": {
+      "tags": ["String"],
+      "requirement": "optional",
+      "notes": "Each element one of ADA | ACAA | FHA. Present only when legalContext is a non-empty array (SERVICE_ATTESTATION)."
+    },
+    "storage": {
+      "tags": ["String"],
+      "requirement": "optional",
+      "notes": "Required for SERVICE_ATTESTATION. Always the literal \"off_chain\" (Art.9 special-category data never committed on-chain)."
+    },
+
+    "validUntilEntry": {"tags": ["String"], "requirement": "optional", "notes": "Required for EU_HEALTH_CERT; must equal validFrom + 10 days (x-validationRules)."},
+    "onwardValid": {
+      "tags": ["String"],
+      "requirement": "optional",
+      "notes": "EU_HEALTH_CERT only. schema.ts applies its <= entry + 4 months check ONLY when this AND validUntilEntry both already happen to be strings - see specs/leaf-commitment.md's schema.ts/leaf-commitment-boundary note; effectively unconstrained in type at the code layer, so this dictionary does not tighten it beyond String."
+    },
+    "echinococcusRequired": {
+      "tags": ["Bool"],
+      "requirement": "optional",
+      "notes": "EU_HEALTH_CERT only. Only a literal boolean true activates the treatmentBeforeEntry range check."
+    },
+    "treatmentBeforeEntry": {
+      "tags": ["Integer"],
+      "requirement": "optional",
+      "notes": "EU_HEALTH_CERT only, required (range [24,120]) when echinococcusRequired == true. schema.ts checks this as a native JS number pre-wrap; per the leaf-commitment spec's float ban, the leaf-commitment layer represents it as an Integer-tagged canonical decimal string (e.g. \"48\"), never a native number - see specs/leaf-commitment.md section 1 and this WP's LOG item 4."
+    },
+
+    "ageMonthsAtEntry": {
+      "tags": ["Integer"],
+      "requirement": "optional",
+      "notes": "Required for CDC_IMPORT_FORM (>= 6). Same native-JS-number-to-Integer-string canonicization note as treatmentBeforeEntry."
+    },
+    "cdcPath": {
+      "tags": ["String"],
+      "requirement": "optional",
+      "notes": "When exactly \"standard\", triggers the cross-cutting microchip-required rule regardless of recordType (structurally enforced only in dogtag.cdc-import-form.v1 - see that schema and specs/schemas/README.md)."
+    },
+
+    "trustLevel": {
+      "tags": ["String"],
+      "requirement": "optional",
+      "notes": "Stamped by validateSchema itself (mutates the credential in place) to \"SELF_ATTESTED\" whenever type includes \"DOT\" - never authored by the credential's caller, so never present before validation and always present with this exact value after it for a DOT-typed credential."
+    }
+  }
+}

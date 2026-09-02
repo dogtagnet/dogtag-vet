@@ -258,7 +258,7 @@ components:
 
     EntityRow:
       type: object
-      required: [account, kind, name, coordinates, address, contact, platformBaseUrl, cloneAddress, registeredAt, status]
+      required: [account, kind, name, coordinates, address, contact, platformBaseUrl, registeredAt, status]
       properties:
         account: {$ref: '#/components/schemas/Address'}
         kind: {$ref: '#/components/schemas/EntityKind'}
@@ -271,16 +271,6 @@ components:
         platformBaseUrl:
           type: string
           description: This entity's own platform base URL (a `dogtag-vet` deployment for `kind == VET`). Off-chain only, excluded from `docsHash`, so it can change without re-hashing the entity's KYC record.
-        cloneAddress:
-          description: |-
-            This entity's on-chain `VetIssuer` clone contract address (`chain.cloneAddress`) - the
-            EIP-712 `verifyingContract` mobile clients bind booking signatures to (see the mobile
-            booking protocol spec), cross-checked on chain via `factory.cloneOf(account)` so the
-            signature is bound to the chain-verified clinic identity rather than just this URL.
-            `null` if this entity has no clone deployed yet.
-          anyOf:
-            - $ref: '#/components/schemas/Address'
-            - type: "null"
         registeredAt: {type: string, format: date-time, description: When this entity was added to `EntityRegistry`.}
         status: {$ref: '#/components/schemas/EntityStatus'}
 

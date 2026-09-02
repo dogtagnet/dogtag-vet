@@ -1,0 +1,37 @@
+{
+  "$id": "https://dogtag.io/schemas/service-attestation/v1",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "DogTag service-attestation credential v1",
+  "description": "recordType == SERVICE_ATTESTATION. Mirrors the SERVICE_ATTESTATION branch of packages/dogtag-standard-ts/src/schema.ts's validateSchema. Every constraint here is fully expressible in JSON Schema; this record type declares no x-validationRules.",
+  "version": "1.0.0",
+  "x-validationRules": [],
+  "type": "object",
+  "allOf": [{"$ref": "https://dogtag.io/schemas/envelope/v1"}],
+  "required": ["recordType", "assistanceType", "issuerTrustTier", "taskDescription", "storage"],
+  "properties": {
+    "recordType": {"const": "SERVICE_ATTESTATION"},
+    "assistanceType": {"enum": ["service_dog", "emotional_support", "none"]},
+    "issuerTrustTier": {
+      "enum": ["adi_accredited", "licensed_pro", "handler_self_attestation", "unverified_registry"]
+    },
+    "taskDescription": {"not": {"type": "null"}},
+    "legalContext": {
+      "type": "array",
+      "description": "Optional.",
+      "items": {"enum": ["ADA", "ACAA", "FHA"]}
+    },
+    "storage": {
+      "const": "off_chain",
+      "description": "Art.9 special-category data must never be committed on-chain."
+    },
+    "credentialSubject": {
+      "type": "object",
+      "properties": {
+        "microchip": {
+          "$ref": "https://dogtag.io/schemas/envelope/v1#/$defs/microchip",
+          "description": "Optional for SERVICE_ATTESTATION (needsChip is false here). If present, still fully shape-validated."
+        }
+      }
+    }
+  }
+}

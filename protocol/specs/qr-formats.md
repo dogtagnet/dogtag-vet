@@ -49,25 +49,6 @@ https://<vet>/x/<32hex>?a=<relayer>
 2. The path MUST match `^/x/[0-9a-f]{32}$`.
 3. The query string MUST contain exactly one `a` parameter, matching `^0x[0-9a-fA-F]{40}$`; a scanner that finds additional unknown query parameters ignores them rather than rejecting the code (forward compatibility for a future optional hint), but MUST NOT ignore a missing or malformed `a`.
 
-## Wallet registration QR
-
-```
-https://<vet>/w/<32hex>
-```
-
-- `<vet>` is the vet platform's own host, same as the Mint QR above.
-- `<32hex>` is the wallet-registration session token, matching the token grammar above.
-- Resolves via `GET /w/{token}` in `specs/vet-public-api.yaml`.
-- Printed or displayed by vet staff from a client's detail page ("Register wallet"); scanned by the owner's mobile app.
-- Non-consuming: the same code can be rescanned until the owner posts `POST /w/{token}/complete`, which is the action that consumes the token.
-  Unlike the Mint QR, a signature that fails to verify on `/complete` ALSO consumes the token - there is no retry endpoint for a wallet-registration session, so a garbled or wrong-signer submission against a real code permanently kills it and the vet must generate a fresh one.
-
-### Parsing rules
-
-1. The scheme MUST be `https`.
-2. The path MUST match `^/w/[0-9a-f]{32}$` exactly, with no trailing slash, query string, or fragment.
-3. A scanner that recognizes the host as a known DogTag deployment (or recognizes the `/w/` shape generically) should open the app directly; otherwise it should fall through to a normal browser open, which the vet platform's own web page for that path handles by prompting an app install.
-
 ## Payment QR (EIP-681)
 
 Two shapes, depending on whether the expected payment is the chain's native asset or an ERC-20 token.

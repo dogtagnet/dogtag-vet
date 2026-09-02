@@ -12,6 +12,7 @@ import {describe, it, expect} from "vitest";
 import {readFileSync} from "node:fs";
 import {resolve} from "node:path";
 import {poseidon, toHex32, fromHex32} from "../src/field.js";
+import {verifyRedactedArtifact, TypeTag, type OpenedLeaf, type RedactedTagArtifact} from "../src/index.js";
 
 const REPO_ROOT = resolve(__dirname, "..", "..", "..");
 const POSEIDON_VECTORS_PATH = resolve(REPO_ROOT, "circuits", "poseidon-vectors.json");
@@ -102,7 +103,7 @@ describe("testvectors.json (Gate A - leaf/bytesToField/merkle/inclusion shape gu
   });
 
   it("no top-level key is unrecognized (guards a silently renamed/added section going unchecked)", () => {
-    const known = new Set(["_comment", "field_p", "leaves", "bytesToField", "merkle", "inclusion"]);
+    const known = new Set(["_comment", "field_p", "leaves", "bytesToField", "merkle", "inclusion", "redactedArtifacts"]);
     for (const key of Object.keys(file)) {
       expect(known.has(key), `unrecognized testvectors.json key: ${key}`).toBe(true);
     }
@@ -117,6 +118,81 @@ describe("testvectors.json (Gate A - leaf/bytesToField/merkle/inclusion shape gu
     // exceeds the field (or has an odd byte count under the hood) is caught here too.
     for (const v of [...file.leaves, ...file.bytesToField]) {
       expect(toHex32(fromHex32(v.expected_hex))).toBe(v.expected_hex.toLowerCase());
+    }
+  });
+});
+
+interface RedactedArtifactWireLeaf {
+  keyPath: string;
+  saltHex: string;
+  tag: number;
+  value: string;
+}
+
+interface RedactedArtifactVec {
+  name: string;
+  notes: string;
+  disclosed: RedactedArtifactWireLeaf[];
+  obfuscatedLeafHashes: string[];
+  reservedLeafHashes: string[];
+  root: string;
+  expectedIdentityLeaves?: RedactedArtifactWireLeaf[];
+  valid: boolean;
+}
+
+interface RedactedArtifactVectorFile {
+  redactedArtifacts: RedactedArtifactVec[];
+}
+
+describe("testvectors.json redactedArtifacts (Gate A - verifyRedactedArtifact shared cross-language fixture, WP4.10S)", () => {
+  const TESTVECTORS_PATH = resolve(__dirname, "..", "testvectors.json");
+  const file = JSON.parse(readFileSync(TESTVECTORS_PATH, "utf8")) as RedactedArtifactVectorFile;
+
+  it("is present and non-empty, with at least 3 positive and 3 negative entries", () => {
+    expect(Array.isArray(file.redactedArtifacts)).toBe(true);
+    expect(file.redactedArtifacts.length).toBeGreaterThan(0);
+    expect(file.redactedArtifacts.filter((v) => v.valid).length).toBeGreaterThanOrEqual(3);
+    expect(file.redactedArtifacts.filter((v) => !v.valid).length).toBeGreaterThanOrEqual(3);
+  });
+
+  for (const v of file.redactedArtifacts) {
+    it(`${v.name}: verifyRedactedArtifact returns ${v.valid}`, () => {
+      const toOpened = (l: RedactedArtifactWireLeaf): OpenedLeaf => ({keyPath: l.keyPath, saltHex: l.saltHex, tag: l.tag, value: l.value});
+      const artifact: RedactedTagArtifact = {
+        protocolVersion: "dogtag-v2/1",
+        dogTagIdField: "1",
+        issuerClone: "0x" + "11".repeat(20),
+        root: v.root,
+        disclosed: v.disclosed.map(toOpened),
+        obfuscatedLeafHashes: v.obfuscatedLeafHashes,
+        reservedLeafHashes: v.reservedLeafHashes,
+      };
+      const opts = v.expectedIdentityLeaves ? {expectedIdentityLeaves: v.expectedIdentityLeaves.map(toOpened)} : {};
+      expect(verifyRedactedArtifact(artifact, opts)).toBe(v.valid);
+    });
+  }
+
+  it("species_obfuscated and full_artifact_nothing_obfuscated share the identical root (masking never moves R)", () => {
+    const full = file.redactedArtifacts.find((v) => v.name === "full_artifact_nothing_obfuscated")!;
+    const masked = file.redactedArtifacts.find((v) => v.name === "species_obfuscated")!;
+    expect(masked.root).toBe(full.root);
+  });
+
+  // Pins the cross-language TAG-coverage claim itself, not just today's specific vector that
+  // happens to satisfy it: computed as a UNION over every vector's disclosed leaves (never keyed to
+  // "all_six_type_tags_disclosed" by name), so a future regeneration that silently dropped that
+  // vector - or any other change that stopped exercising a tag - fails HERE, not just by shrinking
+  // the file's vector count (redacted_artifact_vectors_parity, Rust side, only asserts >= 8).
+  it("every TypeTag is exercised by at least one disclosed leaf somewhere in this shared file (cross-language parity was actually exercised for all 6 tags, not merely String)", () => {
+    const allNumericTags = Object.values(TypeTag).filter((t): t is number => typeof t === "number");
+    expect(allNumericTags.sort()).toEqual([0, 1, 2, 3, 4, 5]);
+
+    const tagsSeen = new Set<number>();
+    for (const v of file.redactedArtifacts) {
+      for (const l of v.disclosed) tagsSeen.add(l.tag);
+    }
+    for (const tag of allNumericTags) {
+      expect(tagsSeen.has(tag), `TypeTag ${TypeTag[tag]} (${tag}) is never disclosed by any redactedArtifacts vector`).toBe(true);
     }
   });
 });

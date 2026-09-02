@@ -1,0 +1,97 @@
+{
+  "$id": "https://dogtag.io/schemas/rabies-vaccination/v1",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "DogTag rabies-vaccination credential v1",
+  "description": "Gated on type containing RabiesVaccinationCertificate (NOT on recordType - this is a deliberate asymmetry inherited from packages/dogtag-standard-ts/src/schema.ts, where isRabies = type.includes('RabiesVaccinationCertificate') while every other record type below gates on the recordType field instead). Mirrors the VACCINATION branch of validateSchema.",
+  "version": "1.0.0",
+  "x-validationRules": [
+    {
+      "id": "rabies-microchip-implant-before-vaccination",
+      "description": "microchip.implantDate must be <= vaccinationDate. Cross-field date comparison; JSON Schema has no date-arithmetic keyword to express it.",
+      "covers": ["microchip.implantDate must be <= vaccinationDate"]
+    },
+    {
+      "id": "rabies-min-age-12-weeks",
+      "description": "Animal age at vaccination (vaccinationDate - credentialSubject.dateOfBirth) must be >= 12 weeks. Cross-field date arithmetic.",
+      "covers": ["animal age at vaccination must be >= 12 weeks"]
+    },
+    {
+      "id": "rabies-primary-series-valid-from",
+      "description": "When series == \"primary\", validFrom must equal vaccinationDate + 21 days exactly. Cross-field date arithmetic conditioned on a sibling enum value.",
+      "covers": ["primary series: validFrom must == vaccinationDate + 21 days"]
+    },
+    {
+      "id": "rabies-titer-magnitude",
+      "description": "titer.resultIUml, an arbitrary-precision Decimal-tagged STRING (never a JSON number, per the leaf-commitment spec's float ban), must be numerically >= \"0.5\". JSON Schema's minimum/maximum only operate on the number type, not on decimal strings, so this magnitude comparison cannot be expressed structurally; the shape check (must look like a decimal string) IS expressed via this schema's titer.resultIUml pattern.",
+      "covers": ["titer.resultIUml must be >= \"0.5\""]
+    },
+    {
+      "id": "rabies-titer-sampled-after",
+      "description": "titer.sampledAt must be >= vaccinationDate + 30 days. Cross-field date arithmetic.",
+      "covers": ["titer.sampledAt must be >= vaccinationDate + 30 days"]
+    }
+  ],
+  "type": "object",
+  "allOf": [{"$ref": "https://dogtag.io/schemas/envelope/v1"}],
+  "$defs": {
+    "titer": {
+      "type": "object",
+      "required": ["resultIUml", "sampledAt"],
+      "properties": {
+        "resultIUml": {
+          "type": "string",
+          "pattern": "^[0-9]+(\\.[0-9]+)?$",
+          "description": "Shape only (decimal-string form). Magnitude (>= \"0.5\") is x-validationRules rabies-titer-magnitude."
+        },
+        "sampledAt": {"not": {"type": "null"}}
+      }
+    }
+  },
+  "required": [
+    "type",
+    "vaccineProductCode",
+    "vaccineProductName",
+    "vaccineManufacturer",
+    "batchLotNumber",
+    "vaccinationDate",
+    "validFrom",
+    "validUntil",
+    "nextDueDate",
+    "authorizedVet",
+    "series"
+  ],
+  "properties": {
+    "type": {
+      "type": "array",
+      "contains": {"const": "RabiesVaccinationCertificate"}
+    },
+    "vaccineProductCode": {"not": {"type": "null"}},
+    "vaccineProductName": {"not": {"type": "null"}},
+    "vaccineManufacturer": {"not": {"type": "null"}},
+    "batchLotNumber": {"not": {"type": "null"}},
+    "vaccinationDate": {"not": {"type": "null"}},
+    "validUntil": {"not": {"type": "null"}},
+    "nextDueDate": {"not": {"type": "null"}},
+    "authorizedVet": {"not": {"type": "null"}},
+    "series": {"enum": ["primary", "booster"]},
+    "titer": {
+      "$ref": "#/$defs/titer",
+      "description": "Optional. schema.ts also accepts this identical object at credentialSubject.titer instead (root-level titer takes precedence when both are present: schema.ts's own `c.titer !== undefined ? c.titer : subject.titer`). Both locations are declared structurally here via the shared $defs/titer definition, so a shape violation at either location is caught the same way."
+    },
+    "credentialSubject": {
+      "type": "object",
+      "required": ["microchip"],
+      "properties": {
+        "dateOfBirth": {
+          "not": {"type": "null"},
+          "description": "Optional for this record type: schema.ts requires dateOfBirth only when recordType == DOG_PROFILE; the rabies branch merely USES it, when present, for the 12-week minimum-age rule (x-validationRules rabies-min-age-12-weeks). When present, must not be null."
+        },
+        "microchip": {"$ref": "https://dogtag.io/schemas/envelope/v1#/$defs/microchip"},
+        "titer": {
+          "$ref": "#/$defs/titer",
+          "description": "The alternate location schema.ts accepts for the same titer object described on the root-level titer property above."
+        }
+      }
+    }
+  }
+}

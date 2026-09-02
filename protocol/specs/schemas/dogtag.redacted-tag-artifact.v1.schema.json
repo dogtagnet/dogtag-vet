@@ -1,0 +1,91 @@
+{
+  "$id": "https://dogtag.io/schemas/redacted-tag-artifact/v1",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "DogTag RedactedTagArtifact v1",
+  "description": "Selective disclosure by obfuscation over a device-built profile tree (specs/leaf-commitment.md section 15). NOT a W3C VC credential and NOT one of the five record-type schemas beside this file: a RedactedTagArtifact is a TagArtifact-shaped custody/export wire record, so it does not compose dogtag.envelope.v1 and carries no recordType/credentialSubject. Shape only - this schema says nothing about whether `root` actually recomputes from `disclosed`+`obfuscatedLeafHashes`+`reservedLeafHashes`; that is verifyRedactedArtifact's job (packages/dogtag-standard-ts/src/redactedArtifact.ts, crates/dogtag-standard-rs/src/redacted_artifact.rs), a leaf-commitment-layer check this registry layer does not and cannot perform (specs/schemas/README.md - shape and encoding are independent axes).",
+  "version": "1.0.0",
+  "x-validationRules": [],
+  "type": "object",
+  "required": ["protocolVersion", "dogTagIdField", "root", "disclosed", "obfuscatedLeafHashes", "reservedLeafHashes", "issuerClone"],
+  "properties": {
+    "protocolVersion": {
+      "type": "string",
+      "minLength": 1,
+      "description": "e.g. \"dogtag-v2/1\" (specs/leaf-commitment.md section 12) - which fixed encoding-and-hashing manner this artifact's leaves were committed under."
+    },
+    "schemaId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Optional: the registry $id of the record type this credential was issued/received against (e.g. one of this directory's five VC record-type $id values). Absent on a legacy/backfilled artifact whose original bind session predates schemaId stamping - the leaf-commitment root recompute never depends on it."
+    },
+    "dogTagIdDec": {
+      "$ref": "#/$defs/decimalString",
+      "description": "Optional: the issuing clinic's own off-chain decimal handle, for display only. Absent for many imported artifacts."
+    },
+    "dogTagIdField": {
+      "$ref": "#/$defs/decimalString",
+      "description": "The canonical on-chain dogTagId field (specs/leaf-commitment.md section 11's dogTagIdField), as a decimal string - the profileRoot(dogTagIdField) == root binding key. OUTSIDE the leaf-commitment tree entirely: never a leaf, never subject to obfuscatedLeafHashes/disclosed."
+    },
+    "root": {
+      "$ref": "#/$defs/hex32",
+      "description": "The profile tree's Merkle root R (specs/leaf-commitment.md section 7)."
+    },
+    "disclosed": {
+      "type": "array",
+      "description": "Fully opened attribute leaves - the OpenedLeaf shape (packages/dogtag-standard-ts/src/profileBind.ts). A full, unredacted artifact is the degenerate case where this array holds every attribute leaf and obfuscatedLeafHashes is empty.",
+      "items": {"$ref": "#/$defs/openedLeaf"}
+    },
+    "obfuscatedLeafHashes": {
+      "type": "array",
+      "description": "Attribute leaves named ONLY by their opaque hash - masked BY CHOICE (the discloser held the opening and withheld it). Disjoint in principle from disclosed and reservedLeafHashes; verifyRedactedArtifact rejects any overlap at the leaf-commitment layer.",
+      "items": {"$ref": "#/$defs/hex32"}
+    },
+    "reservedLeafHashes": {
+      "type": "array",
+      "description": "The three owner-control leaves (owner.address, owner.consentKey, owner.secret - specs/leaf-commitment.md section 9), always opaque BY CONSTRUCTION. Exactly 3 on every conformant artifact, full or redacted alike; never openable through this or any other wire format.",
+      "minItems": 3,
+      "maxItems": 3,
+      "items": {"$ref": "#/$defs/hex32"}
+    },
+    "issuerClone": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The 0x.. issuer clone address this root was (or is claimed to have been) issued against."
+    }
+  },
+  "$defs": {
+    "hex32": {
+      "type": "string",
+      "pattern": "^0x[0-9a-fA-F]{64}$",
+      "description": "A 32-byte big-endian field element, 0x-prefixed lowercase-or-uppercase hex (specs/leaf-commitment.md section 5). Shape only: a value in this exact pattern can still exceed the BN254 scalar field modulus, which only the leaf-commitment-layer parser (fromHex32/from_hex32) rejects."
+    },
+    "decimalString": {
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]*)$",
+      "description": "A canonical non-negative decimal-digit string (specs/leaf-commitment.md section 2's Integer grammar, restricted to non-negative here - no dogTagId handle or field element is ever negative in practice): no leading zeros."
+    },
+    "openedLeaf": {
+      "type": "object",
+      "description": "keyPath/saltHex/tag/value - the packed wire form specs/leaf-commitment.md section 4 describes, split into named fields.",
+      "required": ["keyPath", "saltHex", "tag", "value"],
+      "properties": {
+        "keyPath": {"type": "string", "minLength": 1},
+        "saltHex": {
+          "type": "string",
+          "pattern": "^(0x)?[0-9a-fA-F]{32}$",
+          "description": "16 raw bytes, hex-encoded. The 0x prefix is optional here (hexToBytes/hex::decode strip it when present) - this schema is deliberately no stricter than the code it mirrors."
+        },
+        "tag": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 5,
+          "description": "TypeTag (specs/leaf-commitment.md section 1's table): 0 Null, 1 Bool, 2 String, 3 Integer, 4 Decimal, 5 Bytes."
+        },
+        "value": {
+          "type": "string",
+          "description": "The packed wire value (section 4): the canonical string form for every tag except Bytes, whose value is lowercase hex with no 0x prefix; Null's value is the empty string."
+        }
+      }
+    }
+  }
+}

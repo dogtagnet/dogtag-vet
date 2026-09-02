@@ -1,0 +1,473 @@
+{
+  "_comment": "DogTag leaf-commitment spec v1 conformance vectors. Every value here was produced by calling the existing dogtag-standard-ts implementation (packages/dogtag-standard-ts/src) directly - none are hand-computed. field_p is the BN254 scalar field modulus. See specs/leaf-commitment.md (conformance clause): an implementation is conformant iff it reproduces every vector here. Every leafHashVectors[].value is the exact literal to pass back into {tag, value} to reproduce expected_hex/expected_dec, EXCEPT Bytes, whose value is lowercase hex (no 0x prefix) - decode with hexToBytes before constructing the scalar. redactedArtifactVectors (section 15, WP4.10S) exercises verifyRedactedArtifact; its three disclosed-leaf openings are the SAME keyPath/saltHex/value triples as merkleVectors[0] (\"size_3_pet_profile_promotion\"), and every entry's expected_leaf_hex there matches this file's own leafHashVectors/merkleVectors values byte-for-byte - masking never changes a leaf's hash, only whether it is opened or left opaque.",
+  "field_p": "21888242871839275222246405745257275088548364400416034343698204186575808495617",
+  "leafHashVectors": [
+    {
+      "name": "null_leaf",
+      "keyPath": "credentialSubject.owner.identity.middleName",
+      "saltHex": "11111111111111111111111111111111",
+      "tag": 0,
+      "tagName": "Null",
+      "value": null,
+      "expected_dec": "17266319828962853664665584095455037700589477320477987142075342223911867690418",
+      "expected_hex": "0x262c640517df5d5afdb55e83d435e3befec9ea7fc6c2603ded6f9f233690adb2",
+      "notes": "TypeTag.Null encodes to zero bytes (encode.ts encodeValue); an absent optional field flattens to this same leaf shape."
+    },
+    {
+      "name": "bool_leaf",
+      "keyPath": "credentialSubject.microchip.implanted",
+      "saltHex": "22222222222222222222222222222222",
+      "tag": 1,
+      "tagName": "Bool",
+      "value": true,
+      "expected_dec": "11274842355658899979441275199497177356171841774195722867250137835220667973293",
+      "expected_hex": "0x18ed55aa22ebcbe58e32f26c16c4f9cdebfba81344caac6a417c7955defbbead",
+      "notes": "TypeTag.Bool encodes to a single byte: 0x01 for true, 0x00 for false."
+    },
+    {
+      "name": "string_leaf",
+      "keyPath": "credentialSubject.name",
+      "saltHex": "33333333333333333333333333333333",
+      "tag": 2,
+      "tagName": "String",
+      "value": "Rex",
+      "expected_dec": "17778837494001300665411110353085676977861328780589625820488712155390506135223",
+      "expected_hex": "0x274e7725d924cad641568371de49ac31d34cf7999e94248c60dd27f4fc1f6eb7",
+      "notes": "TypeTag.String encodes to NFC-normalized UTF-8 bytes."
+    },
+    {
+      "name": "string_nfc_leaf",
+      "keyPath": "credentialSubject.ownerIdentity.name",
+      "saltHex": "44444444444444444444444444444444",
+      "tag": 2,
+      "tagName": "String",
+      "value": "José",
+      "expected_dec": "4294772050342946187790688158690045399801875713061181409897624249652649098061",
+      "expected_hex": "0x097ec13d0ca08d7481ad94b6b2b51145b15595fcc2d52d78f6ffaa0efd537b4d",
+      "notes": "NFC case: the input string must already be NFC-normalized before hashing (encode.ts nfc()); a decomposed form (e + combining acute) normalizes to this same precomposed form and MUST hash identically - see nfc_alias_leaf."
+    },
+    {
+      "name": "nfc_alias_leaf",
+      "keyPath": "credentialSubject.ownerIdentity.name",
+      "saltHex": "44444444444444444444444444444444",
+      "tag": 2,
+      "tagName": "String",
+      "value": "José",
+      "expected_dec": "4294772050342946187790688158690045399801875713061181409897624249652649098061",
+      "expected_hex": "0x097ec13d0ca08d7481ad94b6b2b51145b15595fcc2d52d78f6ffaa0efd537b4d",
+      "notes": "Byte-distinct input, same NFC normal form as string_nfc_leaf above - MUST produce the identical expected_hex, proving NFC normalization runs before hashing."
+    },
+    {
+      "name": "integer_leaf",
+      "keyPath": "credentialSubject.weightHistory[0].measuredOnEpochDay",
+      "saltHex": "55555555555555555555555555555555",
+      "tag": 3,
+      "tagName": "Integer",
+      "value": "19723",
+      "expected_dec": "12871954936296524911537842795495225963868097694285998055839796145209265304966",
+      "expected_hex": "0x1c7544b035f88d5b82ba3816518d9d4c6dffc355f1fa5d5455a531e95eff3586",
+      "notes": "TypeTag.Integer encodes to the canonical decimal-integer ASCII string (no leading zeros, no sign for zero)."
+    },
+    {
+      "name": "decimal_leaf",
+      "keyPath": "credentialSubject.weightHistory[0].value",
+      "saltHex": "66666666666666666666666666666666",
+      "tag": 4,
+      "tagName": "Decimal",
+      "value": "22.70",
+      "expected_dec": "12317994778572365933553764692587150099725563806663868250483896226239929403025",
+      "expected_hex": "0x1b3bbcebf7d970735f715cdc8ed230e02633b3d43d3bffc693a60efac34c4691",
+      "notes": "TypeTag.Decimal encodes the CANONICAL form of the input string: trailing fractional zeros stripped, so this and decimal_leaf_canonical_form_check's raw input differ but MUST hash identically."
+    },
+    {
+      "name": "decimal_leaf_canonical_form_check",
+      "keyPath": "credentialSubject.weightHistory[0].value",
+      "saltHex": "66666666666666666666666666666666",
+      "tag": 4,
+      "tagName": "Decimal",
+      "value": "22.7",
+      "expected_dec": "12317994778572365933553764692587150099725563806663868250483896226239929403025",
+      "expected_hex": "0x1b3bbcebf7d970735f715cdc8ed230e02633b3d43d3bffc693a60efac34c4691",
+      "notes": "Same keyPath/salt as decimal_leaf, different raw input string, same canonical form - expected_hex MUST equal decimal_leaf's expected_hex."
+    },
+    {
+      "name": "bytes_leaf",
+      "keyPath": "credentialSubject.photoHash",
+      "saltHex": "77777777777777777777777777777777",
+      "tag": 5,
+      "tagName": "Bytes",
+      "value": "deadbeef",
+      "expected_dec": "14049694124559521743240598942761375384146333919139977887457385817119108552255",
+      "expected_hex": "0x1f0fd8569ef5563a8de2b9d7c64c92fcc2850b20af3e994da75c3cef839ed63f",
+      "notes": "TypeTag.Bytes encodes to the raw bytes unchanged (no NFC, no length prefix at the encodeValue layer). The JSON value here is lowercase hex, no 0x prefix - decode with hexToBytes before hashing."
+    }
+  ],
+  "merkleVectors": [
+    {
+      "name": "size_3_pet_profile_promotion",
+      "notes": "Odd leaf count (3) exercises odd-promotion: buildMerkle sorts the 3 leaf hashes ascending, hashNode's the first pair, and promotes the third (numerically largest) hash unchanged to the next level, where it is hashNode'd against the first pair's result to form the root. This vector carries the full chain - openings, per-leaf hashes, and the root - so an implementation can be checked at every stage, not just the final root.",
+      "leaves": [
+        {
+          "keyPath": "credentialSubject.name",
+          "saltHex": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "tag": 2,
+          "tagName": "String",
+          "value": "Rex",
+          "expected_leaf_hex": "0x0760e0486c4c08cce2a5fa6e07dce2a86b89e12c24681186a0b67b3c4a44c977"
+        },
+        {
+          "keyPath": "credentialSubject.species",
+          "saltHex": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "tag": 2,
+          "tagName": "String",
+          "value": "dog",
+          "expected_leaf_hex": "0x1e2a8b2327908e91408416c14f99554c373d9ebad6571754b82cf319f676953d"
+        },
+        {
+          "keyPath": "credentialSubject.microchip.code",
+          "saltHex": "cccccccccccccccccccccccccccccccc",
+          "tag": 2,
+          "tagName": "String",
+          "value": "985141006580319",
+          "expected_leaf_hex": "0x09fb163b818c8482976dcc3a149eb2336da14662a67c88aee86111f6aa254ec8"
+        }
+      ],
+      "promoted_leaf_hex": "0x1e2a8b2327908e91408416c14f99554c373d9ebad6571754b82cf319f676953d",
+      "promoted_leaf_keyPath": "credentialSubject.species",
+      "root_hex": "0x0aab4b016bf14b1f08ec9542fa10a675c02f6ce6879470b226b12f25d643c624"
+    },
+    {
+      "name": "size_5_multi_level_fold",
+      "notes": "Five leaves - the smallest size at which a per-level re-sort of the fold changes the root (specs/leaf-commitment.md section 7: only the leaf level is ever sorted; every level above it keeps the order the fold produced). `levels` is buildMerkle's own internal layer-by-layer output: levels[0] is the sorted leaf hashes, the last entry is [root_hex]. This tree promotes credentialSubject.name TWICE in a row: once from levels[0] to levels[1] (the leaf-level promotion promoted_leaf_hex/promoted_leaf_keyPath describe below, per this file's existing single-promotion convention from size_3_pet_profile_promotion), and again from levels[1] to levels[2], because levels[1] also has odd length (3) and is never re-sorted before that second fold. levels[1] as the real fold produces it is NOT ascending (species+color's node hash sorts higher than breed+microchip.code's node hash, yet appears first because it was computed first) - an implementation that re-sorted levels[1] before folding would pair a different sibling at levels[2] and reach a different root_hex than the one recorded here.",
+      "leaves": [
+        {
+          "keyPath": "credentialSubject.name",
+          "saltHex": "88888888888888888888888888888888",
+          "tag": 2,
+          "tagName": "String",
+          "value": "Milo",
+          "expected_leaf_hex": "0x1d1682d37ad5eb4c6ad965c9bb0ceb043d3297458ecae1118e17caecee178c5c"
+        },
+        {
+          "keyPath": "credentialSubject.species",
+          "saltHex": "99999999999999999999999999999999",
+          "tag": 2,
+          "tagName": "String",
+          "value": "cat",
+          "expected_leaf_hex": "0x01ab8b8d054aa7a4da5cc18abac47ed5d4b72dbcac95f5155ec205e60587e267"
+        },
+        {
+          "keyPath": "credentialSubject.breed",
+          "saltHex": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+          "tag": 2,
+          "tagName": "String",
+          "value": "Siamese",
+          "expected_leaf_hex": "0x1474bdb6319f04c1fa80cd2c2310d3e7dba7520bf4d6e143223e7a775daf45e9"
+        },
+        {
+          "keyPath": "credentialSubject.microchip.code",
+          "saltHex": "dddddddddddddddddddddddddddddddd",
+          "tag": 2,
+          "tagName": "String",
+          "value": "985141007771234",
+          "expected_leaf_hex": "0x1637c2f347b482d621eda7bc4ff831b6a8dc4a14d5e1222442c597d456fae11f"
+        },
+        {
+          "keyPath": "credentialSubject.color",
+          "saltHex": "ffffffffffffffffffffffffffffffff",
+          "tag": 2,
+          "tagName": "String",
+          "value": "brown",
+          "expected_leaf_hex": "0x13640476abffe9fcf07413c69f71a5148f9fc6c442660fcf159e7bf56b3dcea5"
+        }
+      ],
+      "promoted_leaf_hex": "0x1d1682d37ad5eb4c6ad965c9bb0ceb043d3297458ecae1118e17caecee178c5c",
+      "promoted_leaf_keyPath": "credentialSubject.name",
+      "levels": [
+        [
+          "0x01ab8b8d054aa7a4da5cc18abac47ed5d4b72dbcac95f5155ec205e60587e267",
+          "0x13640476abffe9fcf07413c69f71a5148f9fc6c442660fcf159e7bf56b3dcea5",
+          "0x1474bdb6319f04c1fa80cd2c2310d3e7dba7520bf4d6e143223e7a775daf45e9",
+          "0x1637c2f347b482d621eda7bc4ff831b6a8dc4a14d5e1222442c597d456fae11f",
+          "0x1d1682d37ad5eb4c6ad965c9bb0ceb043d3297458ecae1118e17caecee178c5c"
+        ],
+        [
+          "0x26025df80af4e9754b574d49ae869b1aef3b9756bbba94395a5aae7e7b74cc60",
+          "0x0051dd4399d30742b2305b37897433efce478ad9387b97075f771407b0315686",
+          "0x1d1682d37ad5eb4c6ad965c9bb0ceb043d3297458ecae1118e17caecee178c5c"
+        ],
+        [
+          "0x236116e24dfd0cc4f44b7a4838b57abdb959b86ad1cd79768cf8fc51f874bd58",
+          "0x1d1682d37ad5eb4c6ad965c9bb0ceb043d3297458ecae1118e17caecee178c5c"
+        ],
+        [
+          "0x0cf5926b1866f107db9c9ac45f6ad43dba060cb25475774f9a46b333c13edc21"
+        ]
+      ],
+      "root_hex": "0x0cf5926b1866f107db9c9ac45f6ad43dba060cb25475774f9a46b333c13edc21"
+    }
+  ],
+  "inclusionVectors": [
+    {
+      "name": "size_3_pet_profile_leaf0_inclusion",
+      "references": "merkleVectors[0]",
+      "keyPath": "credentialSubject.name",
+      "saltHex": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "tag": 2,
+      "tagName": "String",
+      "value": "Rex",
+      "steps": [
+        {
+          "sibling": "0x09fb163b818c8482976dcc3a149eb2336da14662a67c88aee86111f6aa254ec8"
+        },
+        {
+          "sibling": "0x1e2a8b2327908e91408416c14f99554c373d9ebad6571754b82cf319f676953d"
+        }
+      ],
+      "root_hex": "0x0aab4b016bf14b1f08ec9542fa10a675c02f6ce6879470b226b12f25d643c624",
+      "valid": true,
+      "notes": "verifyInclusion recomputes hashLeaf(keyPath, salt, scalar) itself, then folds `steps` root-ward; it never trusts a caller-supplied leaf hash."
+    },
+    {
+      "name": "size_3_pet_profile_leaf0_tampered_value",
+      "references": "merkleVectors[0]",
+      "keyPath": "credentialSubject.name",
+      "saltHex": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "tag": 2,
+      "tagName": "String",
+      "value": "Max",
+      "steps": [
+        {
+          "sibling": "0x09fb163b818c8482976dcc3a149eb2336da14662a67c88aee86111f6aa254ec8"
+        },
+        {
+          "sibling": "0x1e2a8b2327908e91408416c14f99554c373d9ebad6571754b82cf319f676953d"
+        }
+      ],
+      "root_hex": "0x0aab4b016bf14b1f08ec9542fa10a675c02f6ce6879470b226b12f25d643c624",
+      "valid": false,
+      "notes": "Same proof and root as the valid vector above, wrong disclosed value - recomputing the leaf yields a different hash, so folding never reaches root_hex."
+    },
+    {
+      "name": "size_3_pet_profile_leaf2_species_promote_inclusion",
+      "references": "merkleVectors[0]",
+      "keyPath": "credentialSubject.species",
+      "saltHex": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "tag": 2,
+      "tagName": "String",
+      "value": "dog",
+      "steps": [
+        {
+          "promote": true
+        },
+        {
+          "sibling": "0x0d8cafa1138c3cedacc45fddd512991adaec2966265b340acd8c2cdbd55342e5"
+        }
+      ],
+      "root_hex": "0x0aab4b016bf14b1f08ec9542fa10a675c02f6ce6879470b226b12f25d643c624",
+      "valid": true,
+      "notes": "Same three-leaf tree as size_3_pet_profile_leaf0_inclusion above, proving inclusion of credentialSubject.species instead of credentialSubject.name. species is the leaf buildMerkle PROMOTES unchanged from level 0 to level 1 (section 7's worked example), so its proof's first step is {promote: true} rather than {sibling} - inclusionVectors[0] and [1] use only {sibling} steps. inclusionVectors[3] also exercises both step shapes, on a taller tree and with two CONSECUTIVE promotions."
+    },
+    {
+      "name": "size_5_multi_level_leaf_name_double_promote_inclusion",
+      "references": "merkleVectors[1]",
+      "keyPath": "credentialSubject.name",
+      "saltHex": "88888888888888888888888888888888",
+      "tag": 2,
+      "tagName": "String",
+      "value": "Milo",
+      "steps": [
+        {
+          "promote": true
+        },
+        {
+          "promote": true
+        },
+        {
+          "sibling": "0x236116e24dfd0cc4f44b7a4838b57abdb959b86ad1cd79768cf8fc51f874bd58"
+        }
+      ],
+      "root_hex": "0x0cf5926b1866f107db9c9ac45f6ad43dba060cb25475774f9a46b333c13edc21",
+      "valid": true,
+      "notes": "The first proof in this file with more than 2 steps, over the 5-leaf tree (merkleVectors[1] / size_5_multi_level_fold), pinning section 8's one-step-per-tree-level rule on a tree taller than 2 levels. credentialSubject.name is PROMOTED twice in a row: once from levels[0] to levels[1] (it is the unpaired last element of the 5-element level 0), and again from levels[1] to levels[2] (it is again the unpaired last element of the 3-element level 1) - the first two proof steps are therefore both {promote: true}, back to back. The third and final step pairs it against levels[2][0] (already pinned in merkleVectors[1]) to form the root."
+    }
+  ],
+  "dogTagIdFieldVectors": [
+    {
+      "handleDec": "424242",
+      "expected_dec": "19282080935305080861096842252900215298393603684181619512414474199363734335896",
+      "expected_hex": "0x2aa145640869b118466a6f897b37241ea667694826ac38a8ce7bdcba5ad1f198"
+    },
+    {
+      "handleDec": "0",
+      "expected_dec": "5303345339220914292775686013608821825994062894759722744871619979296614690413",
+      "expected_hex": "0x0bb9964b83bb4ee0ca2038456dbcca3e578e2fd809a1862094d2e20b9f0cae6d"
+    },
+    {
+      "handleDec": "1",
+      "expected_dec": "8234027165855484825059457262856023715249120623833441764963510593320928109984",
+      "expected_hex": "0x12344b5215ceabe7b3bac9ada69342cfd02e08a4715e3344ce889d99a24765a0"
+    }
+  ],
+  "redactedArtifactVectors": [
+    {
+      "name": "profile_tree_base_full_artifact",
+      "notes": "The same three attribute leaves as merkleVectors[0] (\"size_3_pet_profile_promotion\"), plus the 3 reserved owner-control hashes every real profile tree carries. Nothing masked: obfuscatedLeafHashes is empty. This is the reference root the masked variants below must reproduce exactly.",
+      "disclosed": [
+        {
+          "keyPath": "credentialSubject.name",
+          "saltHex": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "tag": 2,
+          "tagName": "String",
+          "value": "Rex",
+          "expected_leaf_hex": "0x0760e0486c4c08cce2a5fa6e07dce2a86b89e12c24681186a0b67b3c4a44c977"
+        },
+        {
+          "keyPath": "credentialSubject.species",
+          "saltHex": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "tag": 2,
+          "tagName": "String",
+          "value": "dog",
+          "expected_leaf_hex": "0x1e2a8b2327908e91408416c14f99554c373d9ebad6571754b82cf319f676953d"
+        },
+        {
+          "keyPath": "credentialSubject.microchip.code",
+          "saltHex": "cccccccccccccccccccccccccccccccc",
+          "tag": 2,
+          "tagName": "String",
+          "value": "985141006580319",
+          "expected_leaf_hex": "0x09fb163b818c8482976dcc3a149eb2336da14662a67c88aee86111f6aa254ec8"
+        }
+      ],
+      "obfuscatedLeafHashes": [],
+      "reservedLeafHashes": [
+        "0x0f13786f97376a95f1792232e1eb21ba543d2532682a18452269bf60488edc55",
+        "0x1f1da980caae326d2c4cf7b4bb1b132bd1eb09dd542bcf92c564564398733f91",
+        "0x23cb052273f35cd1043b73a10f82d4c86f1ed6cb4c5546ff6de1365c27800c78"
+      ],
+      "root_hex": "0x1a83320d99311513328b702a719dcd59f87b3892e1a04f339937dceaa9de02a8",
+      "valid": true
+    },
+    {
+      "name": "masked_variant_species_obfuscated",
+      "notes": "species moved into obfuscatedLeafHashes. root_hex is IDENTICAL to profile_tree_base_full_artifact's - masking a disclosed leaf never moves R.",
+      "disclosed": [
+        {
+          "keyPath": "credentialSubject.name",
+          "saltHex": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "tag": 2,
+          "tagName": "String",
+          "value": "Rex",
+          "expected_leaf_hex": "0x0760e0486c4c08cce2a5fa6e07dce2a86b89e12c24681186a0b67b3c4a44c977"
+        },
+        {
+          "keyPath": "credentialSubject.microchip.code",
+          "saltHex": "cccccccccccccccccccccccccccccccc",
+          "tag": 2,
+          "tagName": "String",
+          "value": "985141006580319",
+          "expected_leaf_hex": "0x09fb163b818c8482976dcc3a149eb2336da14662a67c88aee86111f6aa254ec8"
+        }
+      ],
+      "obfuscatedLeafHashes": [
+        "0x1e2a8b2327908e91408416c14f99554c373d9ebad6571754b82cf319f676953d"
+      ],
+      "reservedLeafHashes": [
+        "0x0f13786f97376a95f1792232e1eb21ba543d2532682a18452269bf60488edc55",
+        "0x1f1da980caae326d2c4cf7b4bb1b132bd1eb09dd542bcf92c564564398733f91",
+        "0x23cb052273f35cd1043b73a10f82d4c86f1ed6cb4c5546ff6de1365c27800c78"
+      ],
+      "root_hex": "0x1a83320d99311513328b702a719dcd59f87b3892e1a04f339937dceaa9de02a8",
+      "valid": true
+    },
+    {
+      "name": "masked_variant_fully_obfuscated",
+      "notes": "Every attribute leaf masked (disclosed: []). Still valid: this artifact format has NO non-maskable attribute keyPath (section 15) - the identity anchor (dogTagIdField) lives outside the tree entirely, never a leaf, so it is never a candidate for masking or omission in the first place.",
+      "disclosed": [],
+      "obfuscatedLeafHashes": [
+        "0x0760e0486c4c08cce2a5fa6e07dce2a86b89e12c24681186a0b67b3c4a44c977",
+        "0x1e2a8b2327908e91408416c14f99554c373d9ebad6571754b82cf319f676953d",
+        "0x09fb163b818c8482976dcc3a149eb2336da14662a67c88aee86111f6aa254ec8"
+      ],
+      "reservedLeafHashes": [
+        "0x0f13786f97376a95f1792232e1eb21ba543d2532682a18452269bf60488edc55",
+        "0x1f1da980caae326d2c4cf7b4bb1b132bd1eb09dd542bcf92c564564398733f91",
+        "0x23cb052273f35cd1043b73a10f82d4c86f1ed6cb4c5546ff6de1365c27800c78"
+      ],
+      "root_hex": "0x1a83320d99311513328b702a719dcd59f87b3892e1a04f339937dceaa9de02a8",
+      "valid": true
+    },
+    {
+      "name": "negative_overlap",
+      "notes": "species is claimed BOTH disclosed (with its real opening) AND separately obfuscated (with its own genuine hash) - rejected on overlap even though every individual hash is authentic on its own.",
+      "disclosed": [
+        {
+          "keyPath": "credentialSubject.name",
+          "saltHex": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "tag": 2,
+          "tagName": "String",
+          "value": "Rex",
+          "expected_leaf_hex": "0x0760e0486c4c08cce2a5fa6e07dce2a86b89e12c24681186a0b67b3c4a44c977"
+        },
+        {
+          "keyPath": "credentialSubject.species",
+          "saltHex": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "tag": 2,
+          "tagName": "String",
+          "value": "dog",
+          "expected_leaf_hex": "0x1e2a8b2327908e91408416c14f99554c373d9ebad6571754b82cf319f676953d"
+        },
+        {
+          "keyPath": "credentialSubject.microchip.code",
+          "saltHex": "cccccccccccccccccccccccccccccccc",
+          "tag": 2,
+          "tagName": "String",
+          "value": "985141006580319",
+          "expected_leaf_hex": "0x09fb163b818c8482976dcc3a149eb2336da14662a67c88aee86111f6aa254ec8"
+        }
+      ],
+      "obfuscatedLeafHashes": [
+        "0x1e2a8b2327908e91408416c14f99554c373d9ebad6571754b82cf319f676953d"
+      ],
+      "reservedLeafHashes": [
+        "0x0f13786f97376a95f1792232e1eb21ba543d2532682a18452269bf60488edc55",
+        "0x1f1da980caae326d2c4cf7b4bb1b132bd1eb09dd542bcf92c564564398733f91",
+        "0x23cb052273f35cd1043b73a10f82d4c86f1ed6cb4c5546ff6de1365c27800c78"
+      ],
+      "root_hex": "0x1a83320d99311513328b702a719dcd59f87b3892e1a04f339937dceaa9de02a8",
+      "valid": false
+    },
+    {
+      "name": "negative_reserved_relabeled_as_obfuscated",
+      "notes": "One of the 3 reserved hashes is moved into obfuscatedLeafHashes instead, leaving only 2 reservedLeafHashes. The naive leaf multiset fed to buildMerkle - and hence the recomputed root - is BIT-IDENTICAL to masked_variant_species_obfuscated's (root_hex matches exactly): only the exactly-3-reserved-hashes count check rejects this. This is the actual non-maskable invariant this artifact format has (section 15) - the reserved triple's count and slot, never an attribute keyPath.",
+      "disclosed": [
+        {
+          "keyPath": "credentialSubject.name",
+          "saltHex": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "tag": 2,
+          "tagName": "String",
+          "value": "Rex",
+          "expected_leaf_hex": "0x0760e0486c4c08cce2a5fa6e07dce2a86b89e12c24681186a0b67b3c4a44c977"
+        },
+        {
+          "keyPath": "credentialSubject.microchip.code",
+          "saltHex": "cccccccccccccccccccccccccccccccc",
+          "tag": 2,
+          "tagName": "String",
+          "value": "985141006580319",
+          "expected_leaf_hex": "0x09fb163b818c8482976dcc3a149eb2336da14662a67c88aee86111f6aa254ec8"
+        }
+      ],
+      "obfuscatedLeafHashes": [
+        "0x1e2a8b2327908e91408416c14f99554c373d9ebad6571754b82cf319f676953d",
+        "0x23cb052273f35cd1043b73a10f82d4c86f1ed6cb4c5546ff6de1365c27800c78"
+      ],
+      "reservedLeafHashes": [
+        "0x0f13786f97376a95f1792232e1eb21ba543d2532682a18452269bf60488edc55",
+        "0x1f1da980caae326d2c4cf7b4bb1b132bd1eb09dd542bcf92c564564398733f91"
+      ],
+      "root_hex": "0x1a83320d99311513328b702a719dcd59f87b3892e1a04f339937dceaa9de02a8",
+      "valid": false
+    }
+  ]
+}

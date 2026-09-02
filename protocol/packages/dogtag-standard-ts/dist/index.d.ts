@@ -10,4 +10,5 @@ export * from "./schema.js";
 export * from "./consent.js";
 export * from "./disclosure.js";
 export * from "./profileBind.js";
+export * from "./redactedArtifact.js";
 //# sourceMappingURL=index.d.ts.map

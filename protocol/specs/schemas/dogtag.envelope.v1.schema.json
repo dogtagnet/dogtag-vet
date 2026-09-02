@@ -1,0 +1,80 @@
+{
+  "$id": "https://dogtag.io/schemas/envelope/v1",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "DogTag credential envelope v1",
+  "description": "Shared W3C VC 2.0 envelope and legal-meta fields every DogTag credential carries, mirroring the unconditional checks in packages/dogtag-standard-ts/src/schema.ts (validateSchema). Every per-record-type schema in this registry composes this one via allOf. Deliberately open-world (no additionalProperties/unevaluatedProperties restriction): schema.ts itself never rejects an unknown field, and the plan's own versioning rule treats adding a keyPath within a version as always allowed, so a record-type schema layering extra fields on top of this envelope must not be rejected by it.",
+  "version": "1.0.0",
+  "type": "object",
+  "$defs": {
+    "microchip": {
+      "type": "object",
+      "description": "The shared microchip shape, referenced by $ref from every record-type schema that can carry one (mirrors schema.ts's single needsChip-gated microchip block, reused verbatim across record types).",
+      "required": ["code", "standard", "implantDate"],
+      "properties": {
+        "code": {
+          "type": "string",
+          "pattern": "^[0-9]{15}$",
+          "description": "ISO 11784/11785 15-digit microchip code, always a string (never a bare number - schema.ts rejects a numeric code outright)."
+        },
+        "standard": {
+          "enum": ["ISO_11784_11785", "OTHER"]
+        },
+        "implantDate": {
+          "not": {"type": "null"},
+          "description": "Presence-only at this layer; cross-field date comparisons against implantDate are declared in each consuming record schema's x-validationRules where they apply."
+        }
+      }
+    }
+  },
+  "required": [
+    "@context",
+    "type",
+    "id",
+    "issuer",
+    "validFrom",
+    "credentialSubject",
+    "credentialSchema",
+    "credentialStatus",
+    "attestationType",
+    "signatureTrustTier",
+    "legalEffect",
+    "legalBasisVersion",
+    "jurisdiction"
+  ],
+  "properties": {
+    "@context": {
+      "type": "array",
+      "minItems": 2,
+      "prefixItems": [
+        {"const": "https://www.w3.org/ns/credentials/v2"}
+      ],
+      "items": true,
+      "contains": {"const": "https://dogtag.io/credentials/v1"},
+      "description": "@context[0] must be the W3C VC 2.0 base context exactly; the DogTag context URI must appear somewhere in the array (schema.ts checks membership, not position). items:true after the 1-tuple prefixItems means any further entries are unrestricted."
+    },
+    "type": {
+      "type": "array",
+      "contains": {"const": "VerifiableCredential"}
+    },
+    "id": {"not": {"type": "null"}},
+    "issuer": {"not": {"type": "null"}},
+    "validFrom": {"not": {"type": "null"}},
+    "description": {"type": "string"},
+    "credentialSubject": {
+      "type": "object",
+      "required": ["dogTagId"],
+      "properties": {
+        "dogTagId": {"not": {"type": "null"}}
+      }
+    },
+    "credentialSchema": {"not": {"type": "null"}},
+    "credentialStatus": {"not": {"type": "null"}},
+    "attestationType": {"not": {"type": "null"}},
+    "signatureTrustTier": {
+      "enum": ["accredited_authority", "licensed_vet", "self_attested"]
+    },
+    "legalEffect": {"const": "evidentiary"},
+    "legalBasisVersion": {"not": {"type": "null"}},
+    "jurisdiction": {"not": {"type": "null"}}
+  }
+}

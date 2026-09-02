@@ -1,0 +1,48 @@
+{
+  "$id": "https://dogtag.io/schemas/cdc-import-form/v1",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "DogTag CDC import form credential v1",
+  "description": "recordType == CDC_IMPORT_FORM. Mirrors the CDC_IMPORT_FORM branch of packages/dogtag-standard-ts/src/schema.ts's validateSchema, plus the cdcPath == \"standard\" cross-cutting microchip rule (see the if/then below and specs/schemas/README.md - schema.ts enforces that rule for ANY record type, but this registry structurally encodes it only here, the one record type it is documented against).",
+  "version": "1.0.0",
+  "x-validationRules": [],
+  "type": "object",
+  "allOf": [{"$ref": "https://dogtag.io/schemas/envelope/v1"}],
+  "required": ["recordType", "ageMonthsAtEntry"],
+  "properties": {
+    "recordType": {"const": "CDC_IMPORT_FORM"},
+    "ageMonthsAtEntry": {
+      "type": "number",
+      "minimum": 6,
+      "description": "A bare JSON number, not a canonical Integer-tagged string - schema.ts checks typeof === 'number' here, unlike every leaf-commitment-layer Integer field. type:number here also rejects a string-typed value the same way schema.ts's typeof check does, so this one constraint covers both violation shapes schema.ts can produce for this field."
+    },
+    "cdcPath": {
+      "type": "string",
+      "description": "Optional. schema.ts's needsChip flag is also set (independent of recordType) whenever cdcPath == \"standard\" anywhere in the codebase; this registry expresses that consequence structurally only for this record type via the if/then below."
+    },
+    "credentialSubject": {
+      "type": "object",
+      "description": "microchip is optional here UNLESS cdcPath == \"standard\" (see the if/then below, which additionally requires it in that case). Declared here too, unconditionally, purely so its shape is still validated on the rare credential that carries a microchip without cdcPath == \"standard\".",
+      "properties": {
+        "microchip": {"$ref": "https://dogtag.io/schemas/envelope/v1#/$defs/microchip"}
+      }
+    }
+  },
+  "if": {
+    "type": "object",
+    "properties": {"cdcPath": {"const": "standard"}},
+    "required": ["cdcPath"]
+  },
+  "then": {
+    "type": "object",
+    "required": ["credentialSubject"],
+    "properties": {
+      "credentialSubject": {
+        "type": "object",
+        "required": ["microchip"],
+        "properties": {
+          "microchip": {"$ref": "https://dogtag.io/schemas/envelope/v1#/$defs/microchip"}
+        }
+      }
+    }
+  }
+}

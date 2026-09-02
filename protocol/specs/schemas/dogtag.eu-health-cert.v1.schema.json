@@ -1,0 +1,55 @@
+{
+  "$id": "https://dogtag.io/schemas/eu-health-cert/v1",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "DogTag EU health certificate credential v1",
+  "description": "recordType == EU_HEALTH_CERT. Mirrors the EU_HEALTH_CERT branch of packages/dogtag-standard-ts/src/schema.ts's validateSchema.",
+  "version": "1.0.0",
+  "x-validationRules": [
+    {
+      "id": "eu-entry-plus-10-days",
+      "description": "validUntilEntry must equal validFrom + 10 days exactly. Cross-field date arithmetic; JSON Schema has no date-offset keyword.",
+      "covers": ["EU_HEALTH_CERT: validUntilEntry must == validFrom + 10 days"]
+    },
+    {
+      "id": "eu-onward-within-4-months",
+      "description": "onwardValid (when present as a string) must be <= validUntilEntry + 4 calendar months. Cross-field date arithmetic with calendar-month semantics (day clamping), not expressible via JSON Schema.",
+      "covers": ["EU_HEALTH_CERT: onwardValid must be <= entry + 4 months"]
+    }
+  ],
+  "type": "object",
+  "allOf": [{"$ref": "https://dogtag.io/schemas/envelope/v1"}],
+  "required": ["recordType", "validUntilEntry"],
+  "properties": {
+    "recordType": {"const": "EU_HEALTH_CERT"},
+    "validUntilEntry": {"not": {"type": "null"}},
+    "echinococcusRequired": {
+      "type": "boolean",
+      "description": "Optional. Only a literal boolean true activates the treatmentBeforeEntry range check below (schema.ts compares with === true, so any other value, including the truthy but non-boolean case, is inert rather than an error)."
+    },
+    "credentialSubject": {
+      "type": "object",
+      "description": "microchip is REQUIRED for EU_HEALTH_CERT unconditionally - needsChip is always true for this record type, unlike DOG_PROFILE/SERVICE_ATTESTATION/CDC_IMPORT_FORM where it is optional.",
+      "required": ["microchip"],
+      "properties": {
+        "microchip": {"$ref": "https://dogtag.io/schemas/envelope/v1#/$defs/microchip"}
+      }
+    }
+  },
+  "if": {
+    "type": "object",
+    "properties": {"echinococcusRequired": {"const": true}},
+    "required": ["echinococcusRequired"]
+  },
+  "then": {
+    "type": "object",
+    "required": ["treatmentBeforeEntry"],
+    "properties": {
+      "treatmentBeforeEntry": {
+        "type": "number",
+        "minimum": 24,
+        "maximum": 120,
+        "description": "Hours before entry the echinococcus treatment must have been administered."
+      }
+    }
+  }
+}

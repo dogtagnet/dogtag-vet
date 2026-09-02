@@ -1,0 +1,57 @@
+{
+  "$id": "https://dogtag.io/schemas/dog-profile/v1",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "DogTag dog-profile credential v1",
+  "description": "recordType == DOG_PROFILE. Mirrors the DOG_PROFILE branch of packages/dogtag-standard-ts/src/schema.ts's validateSchema. Every constraint here is fully expressible in JSON Schema; this record type declares no x-validationRules.",
+  "version": "1.0.0",
+  "x-validationRules": [],
+  "type": "object",
+  "allOf": [{"$ref": "https://dogtag.io/schemas/envelope/v1"}],
+  "required": ["recordType"],
+  "properties": {
+    "recordType": {"const": "DOG_PROFILE"},
+    "credentialSubject": {
+      "type": "object",
+      "required": ["species", "breedVbo", "breedLabel", "sex", "neuterStatus", "dateOfBirth", "ownerIdentity"],
+      "properties": {
+        "species": {"not": {"type": "null"}},
+        "breedVbo": {"not": {"type": "null"}},
+        "breedLabel": {"not": {"type": "null"}},
+        "sex": {"enum": ["male", "female"]},
+        "neuterStatus": {"enum": ["intact", "neutered", "spayed"]},
+        "dateOfBirth": {"not": {"type": "null"}},
+        "ownerIdentity": {
+          "type": "object",
+          "description": "Owner's official identity. Keys must be present; empty strings are allowed for non-admin mint paths (schema.ts only checks isString, not non-empty).",
+          "required": ["countryOfIdentification", "identification", "name"],
+          "properties": {
+            "countryOfIdentification": {"type": "string"},
+            "identification": {"type": "string"},
+            "name": {"type": "string"}
+          }
+        },
+        "weightHistory": {
+          "type": "array",
+          "description": "Optional. When present, each entry is fully shape-checked (schema.ts validates every entry unconditionally once the array exists).",
+          "items": {
+            "type": "object",
+            "required": ["unit", "value", "measuredOn"],
+            "properties": {
+              "unit": {"enum": ["kg", "lb"]},
+              "value": {
+                "type": "string",
+                "pattern": "^[0-9]+(\\.[0-9]+)?$",
+                "description": "Canonical Decimal-shaped string. Magnitude has no constraint at this record type; unlike titer, schema.ts places no minimum on a weight value."
+              },
+              "measuredOn": {"not": {"type": "null"}}
+            }
+          }
+        },
+        "microchip": {
+          "$ref": "https://dogtag.io/schemas/envelope/v1#/$defs/microchip",
+          "description": "Optional for DOG_PROFILE (needsChip is false here unless the credential's top-level cdcPath == \"standard\", a cross-cutting rule this registry structurally enforces only in dogtag.cdc-import-form.v1 - see that schema's notes and specs/schemas/README.md). If present, still fully shape-validated."
+        }
+      }
+    }
+  }
+}

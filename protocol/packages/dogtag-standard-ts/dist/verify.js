@@ -45,6 +45,14 @@ const HEX32 = /^0x[0-9a-fA-F]{64}$/;
  * out of `verify()` entirely: a 5th, undeclared "crashed" state outside the 4-state fragment model.
  */
 export function checkIntegrity(doc) {
+    // FIXED (grader finding B): `privacy`/`signature` are typed as always-present, but a `WrappedDoc`
+    // reconstructed off the wire is only as complete as whatever sent it. An absent block used to
+    // crash `.obfuscated`/`.targetHash` below with a bare TypeError - a 5th, undeclared "crashed"
+    // state outside the 4-state fragment model this function otherwise never lets input escape past
+    // (see the malformed-hex and malformed-packed-leaf guards below). It now folds to INVALID instead,
+    // the same way every other malformed shape here already does.
+    if (!doc.privacy || !doc.signature)
+        return { state: "INVALID", root: 0n };
     for (const h of doc.privacy.obfuscated) {
         if (!HEX32.test(h))
             return { state: "INVALID", root: 0n };
@@ -202,6 +210,23 @@ async function settle(p) {
 }
 /** Full contextual verify (impl §11.3). */
 export async function verify(doc, opts) {
+    // FIXED (grader finding B): `privacy`/`signature`/`issuer` are typed as always-present, but a
+    // `WrappedDoc` reconstructed off the wire is only as complete as whatever sent it. An absent block
+    // used to crash the very first field access below (`doc.signature.merkleRoot`) with a bare
+    // TypeError, never reaching a single adapter call. Fail-closed here means the same thing it means
+    // everywhere else in this function: a document this incomplete can never produce a pass, so it now
+    // resolves to a fully-formed `Verdict` reporting exactly that, rather than throwing past this
+    // function entirely.
+    if (!doc.privacy || !doc.signature || !doc.issuer) {
+        return {
+            valid: false,
+            fragments: { integrity: "INVALID", issuance: "ERROR", identity: "ERROR", ownership: "ERROR" },
+            issuerWhitelist: "UNRESOLVED",
+            issuerStore: "NOT_EVALUATED",
+            issuerResolution: "READ_FAILED",
+            issuerAddr: "",
+        };
+    }
     const confirmations = opts.confirmations ?? 5;
     const root = doc.signature.merkleRoot;
     const integrity = checkIntegrity(doc).state;

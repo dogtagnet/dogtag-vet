@@ -12,8 +12,12 @@ import {
   hashLeaf,
   merkleProof,
   verifyInclusion,
+  verifyRedactedArtifact,
+  scalarFromPacked,
   toHex32,
+  type OpenedLeaf,
   type ProofStep,
+  type RedactedTagArtifact,
   type TypedScalar,
 } from "../src/index.js";
 import {hexToBytes, bytesToHex} from "../src/encode.js";
@@ -253,17 +257,374 @@ if (!inclusion.some((v) => v.valid && v.promotes >= 2)) {
   throw new Error("gen: no inclusion vector exercises multi-level promotion (>= 2 Promote steps)");
 }
 
+// --- Redacted-artifact vectors (WP4.10S item 3: shared TS/Rust parity fixture) ---
+// Exercises `verifyRedactedArtifact` over a small 3-attribute profile (name/species/
+// microchip.code - the same keyPaths merkleVectors[0] uses) plus 3 reserved owner-control hashes
+// and 3 owner.identity.* attributes, masked various ways. Every vector is SELF-CHECKED against the
+// real `verifyRedactedArtifact` before being written (never hand-computed), exactly like the
+// inclusion vectors above.
+interface RedactedArtifactWireLeaf {
+  keyPath: string;
+  saltHex: string;
+  tag: number;
+  value: string;
+}
+
+interface RedactedArtifactVec {
+  name: string;
+  notes: string;
+  disclosed: RedactedArtifactWireLeaf[];
+  obfuscatedLeafHashes: string[];
+  reservedLeafHashes: string[];
+  root: string;
+  expectedIdentityLeaves?: RedactedArtifactWireLeaf[];
+  valid: boolean;
+}
+
+function raLeaf(keyPath: string, s: Uint8Array, value: string): OpenedLeaf {
+  return {keyPath, saltHex: bytesToHex(s), tag: TypeTag.String, value};
+}
+
+// Every OTHER redactedArtifacts vector below discloses String-tagged (tag 2) leaves only, because
+// they exist to exercise verifyRedactedArtifact's STRUCTURAL checks (counts, overlap, duplicate
+// keyPath, root recompute), not per-tag encoding - leafHashVectors already covers per-tag encoding
+// exhaustively on its own. But the cross-language PARITY claim this file backs
+// (redacted_artifact_parity.rs) is "the same VERDICT for the same artifact," and encoding is exactly
+// where two independent implementations are most likely to silently diverge (WP4.10S grading pass:
+// every disclosed leaf across all 8 original vectors was tag 2, so tags 0/1/3/4/5 were asserted
+// identical by claim only, never actually exercised cross-language). raLeafTagged plus the vector
+// below closes that: one artifact disclosing all 6 TypeTags at once, self-checked here exactly like
+// every other vector, then asserted by both languages via the same shared file.
+function raLeafTagged(keyPath: string, s: Uint8Array, tag: TypeTag, value: string): OpenedLeaf {
+  return {keyPath, saltHex: bytesToHex(s), tag, value};
+}
+
+function raWire(l: OpenedLeaf): RedactedArtifactWireLeaf {
+  return {keyPath: l.keyPath, saltHex: l.saltHex, tag: l.tag, value: l.value};
+}
+
+function raHash(l: OpenedLeaf): bigint {
+  // scalarFromPacked (not a naive {tag, value} cast) - the wire OpenedLeaf.value is always a STRING
+  // (e.g. Bytes is hex text, Null is ""), and only scalarFromPacked decodes it into the shape
+  // hashLeaf actually expects per tag (Uint8Array for Bytes, literal null for Null, etc.) - the exact
+  // same conversion recomputeLeaf (redactedArtifact.ts) and recompute_leaf (Rust) perform. A naive
+  // cast happened to work for the String/Integer/Decimal-only vectors above (their wire value IS
+  // already the correct TypedScalar.value), which is exactly why this only surfaced once a
+  // Null/Bool/Bytes-tagged leaf was added below.
+  return hashLeaf(l.keyPath, hexToBytes(l.saltHex), scalarFromPacked(l.tag, l.value));
+}
+
+function raArtifact(
+  root: string,
+  disclosed: OpenedLeaf[],
+  obfuscatedLeafHashes: string[],
+  reservedLeafHashes: string[],
+): RedactedTagArtifact {
+  return {
+    protocolVersion: "dogtag-v2/1",
+    dogTagIdField: "1",
+    issuerClone: "0x" + "11".repeat(20),
+    root,
+    disclosed,
+    obfuscatedLeafHashes,
+    reservedLeafHashes,
+  };
+}
+
+function raRootOver(disclosed: OpenedLeaf[], obfuscated: string[], reserved: string[]): bigint {
+  const leafHashes = [...reserved.map((h) => BigInt(h)), ...obfuscated.map((h) => BigInt(h)), ...disclosed.map(raHash)];
+  return buildMerkle(leafHashes).root;
+}
+
+const raName = raLeaf("credentialSubject.name", salt(0xaa), "Rex");
+const raSpecies = raLeaf("credentialSubject.species", salt(0xbb), "dog");
+const raMicrochip = raLeaf("credentialSubject.microchip.code", salt(0xcc), "985141006580319");
+const raIdentity = [
+  raLeaf("owner.identity.fullName", salt(0xd1), "Alice Owner"),
+  raLeaf("owner.identity.country", salt(0xd2), "GB"),
+  raLeaf("owner.identity.docNumber", salt(0xd3), "PASSPORT-123"),
+];
+const raReserved = [
+  toHex32(hashLeaf("owner.address", salt(0xe1), {tag: TypeTag.Bytes, value: new Uint8Array([1])})),
+  toHex32(hashLeaf("owner.consentKey", salt(0xe2), {tag: TypeTag.Bytes, value: new Uint8Array([2])})),
+  toHex32(hashLeaf("owner.secret", salt(0xe3), {tag: TypeTag.Bytes, value: new Uint8Array([3])})),
+];
+
+const redactedArtifacts: RedactedArtifactVec[] = [];
+
+function pushRedacted(
+  name: string,
+  notes: string,
+  disclosed: OpenedLeaf[],
+  obfuscatedLeafHashes: string[],
+  reservedLeafHashes: string[],
+  root: bigint,
+  valid: boolean,
+  expectedIdentityLeaves?: OpenedLeaf[],
+) {
+  const rootHex = toHex32(root);
+  const artifact = raArtifact(rootHex, disclosed, obfuscatedLeafHashes, reservedLeafHashes);
+  const got = verifyRedactedArtifact(artifact, expectedIdentityLeaves ? {expectedIdentityLeaves} : {});
+  if (got !== valid) {
+    throw new Error(`gen: redacted-artifact vector ${name} expected valid=${valid} but verifyRedactedArtifact returned ${got}`);
+  }
+  redactedArtifacts.push({
+    name,
+    notes,
+    disclosed: disclosed.map(raWire),
+    obfuscatedLeafHashes,
+    reservedLeafHashes,
+    root: rootHex,
+    ...(expectedIdentityLeaves ? {expectedIdentityLeaves: expectedIdentityLeaves.map(raWire)} : {}),
+    valid,
+  });
+}
+
+{
+  const fullRoot = raRootOver([raName, raSpecies, raMicrochip], [], raReserved);
+
+  pushRedacted(
+    "full_artifact_nothing_obfuscated",
+    "The degenerate case: every attribute disclosed, obfuscatedLeafHashes empty.",
+    [raName, raSpecies, raMicrochip],
+    [],
+    raReserved,
+    fullRoot,
+    true,
+  );
+
+  pushRedacted(
+    "species_obfuscated",
+    "species masked into obfuscatedLeafHashes; root is IDENTICAL to full_artifact_nothing_obfuscated (masking never moves R).",
+    [raName, raMicrochip],
+    [toHex32(raHash(raSpecies))],
+    raReserved,
+    fullRoot,
+    true,
+  );
+
+  pushRedacted(
+    "fully_obfuscated_disclosed_empty",
+    "Every attribute masked (disclosed: []) - proves this artifact type has NO non-maskable attribute keyPath (WP4.10S item 1).",
+    [],
+    [toHex32(raHash(raName)), toHex32(raHash(raSpecies)), toHex32(raHash(raMicrochip))],
+    raReserved,
+    fullRoot,
+    true,
+  );
+
+  const identityRoot = raRootOver([raName, ...raIdentity], [], raReserved);
+  pushRedacted(
+    "with_matching_identity_oracle",
+    "owner.identity.* leaves disclosed and cross-checked against expectedIdentityLeaves (generalizes verifyLeafCommitment's mandatory check).",
+    [raName, ...raIdentity],
+    [],
+    raReserved,
+    identityRoot,
+    true,
+    raIdentity,
+  );
+
+  // --- Negatives ---
+
+  pushRedacted(
+    "negative_overlap",
+    "species claimed BOTH disclosed and separately obfuscated - rejected on overlap even though every individual hash is genuine.",
+    [raName, raSpecies, raMicrochip],
+    [toHex32(raHash(raSpecies))],
+    raReserved,
+    fullRoot,
+    false,
+  );
+
+  const relabeledReserved = raReserved.slice(0, 2);
+  const relabeledObfuscated = [toHex32(raHash(raSpecies)), raReserved[2]!];
+  const relabeledRoot = raRootOver([raName, raMicrochip], relabeledObfuscated, relabeledReserved);
+  if (toHex32(relabeledRoot) !== toHex32(fullRoot)) {
+    throw new Error("gen: reserved-relabel vector's naive multiset must recompute the SAME root as the genuine artifact");
+  }
+  pushRedacted(
+    "negative_reserved_relabeled_as_obfuscated",
+    "One reserved hash moved into obfuscatedLeafHashes instead: the naive leaf multiset (and hence buildMerkle's root) is IDENTICAL to species_obfuscated's, so only the exactly-3-reserved count check rejects this - the real non-maskable invariant this artifact type has (WP4.10S item 1), never a keyPath rule.",
+    [raName, raMicrochip],
+    relabeledObfuscated,
+    relabeledReserved,
+    fullRoot,
+    false,
+  );
+
+  pushRedacted(
+    "negative_wrong_root",
+    "Correct disclosed/obfuscated/reserved split, but a root belonging to a different artifact entirely.",
+    [raName, raMicrochip],
+    [toHex32(raHash(raSpecies))],
+    raReserved,
+    999999n,
+    false,
+  );
+
+  pushRedacted(
+    "negative_two_reserved_hashes",
+    "Only 2 reserved hashes posted (the frozen profile tree always has exactly 3).",
+    [raName, raSpecies, raMicrochip],
+    [],
+    raReserved.slice(0, 2),
+    fullRoot,
+    false,
+  );
+
+  // Full TypeTag coverage: one artifact disclosing all 6 tags at once (String was already covered
+  // above; this adds Null, Bool, Integer, Decimal, Bytes) - closes the parity gap where every prior
+  // vector's disclosed leaves were tag 2 only, so per-tag decode agreement between
+  // recomputeLeaf (TS) and recompute_leaf (Rust) was asserted by claim, never actually exercised
+  // cross-language for tags 0/1/3/4/5.
+  const raNickname = raLeafTagged("credentialSubject.nickname", salt(0xf0), TypeTag.Null, "");
+  const raImplanted = raLeafTagged("credentialSubject.microchip.implanted", salt(0xf1), TypeTag.Bool, "true");
+  const raIssuedYear = raLeafTagged("credentialSubject.microchip.issuedYear", salt(0xf2), TypeTag.Integer, "2021");
+  const raWeightKg = raLeafTagged("credentialSubject.weightKg", salt(0xf3), TypeTag.Decimal, "22.7");
+  const raPhotoHash = raLeafTagged("credentialSubject.photoHash", salt(0xf4), TypeTag.Bytes, "deadbeef");
+  const allTagsDisclosed = [raName, raNickname, raImplanted, raIssuedYear, raWeightKg, raPhotoHash];
+  const allTagsRoot = raRootOver(allTagsDisclosed, [], raReserved);
+  pushRedacted(
+    "all_six_type_tags_disclosed",
+    "One disclosed leaf per TypeTag (0 Null, 1 Bool, 2 String, 3 Integer, 4 Decimal, 5 Bytes) - proves recomputeLeaf/recompute_leaf agree on EVERY tag's wire decoding, not just String (every other vector in this section discloses String-tagged leaves exclusively).",
+    allTagsDisclosed,
+    [],
+    raReserved,
+    allTagsRoot,
+    true,
+  );
+
+  // --- D4 bite-proof negatives (WP4.10S fix round 1) ---
+  // grade round 1 mutation-tested every negative vector above by deleting one normative check at a
+  // time and re-running the full suite: the overlap check, the duplicate-keyPath guard, the 64-leaf
+  // cap, and both opaque-hash shape checks could each be deleted outright with every vector above
+  // (and both languages' full test suites) still passing, because a DIFFERENT check (usually the root
+  // comparison) happens to reject the same construction for an unrelated reason. Each vector below is
+  // built so the posted root is the GENUINE root of the EXACT multiset verifyRedactedArtifact folds -
+  // the only check able to reject it is the one it names.
+
+  // D2/D4#1: species genuinely committed TWICE - the device tree builder (build_profile_tree) only
+  // guards the 3 reserved keyPaths, never cross-attribute uniqueness, so a real tree may commit to the
+  // same attribute leaf hash twice. One copy disclosed, the other separately obfuscated: only the
+  // overlap check's OBFUSCATED-half comparison can reject this.
+  const dupObfuscatedRoot = raRootOver([raSpecies, raMicrochip], [toHex32(raHash(raSpecies))], raReserved);
+  pushRedacted(
+    "negative_overlap_root_preserving_duplicate_leaf",
+    "species genuinely committed TWICE (a legitimate duplicate attribute leaf - build_profile_tree enforces keyPath uniqueness only against the 3 reserved keyPaths): one copy disclosed, the other separately obfuscated. The root recomputes EXACTLY; only the overlap check (obfuscated half) can reject this (D2/D4 bite proof).",
+    [raSpecies, raMicrochip],
+    [toHex32(raHash(raSpecies))],
+    raReserved,
+    dupObfuscatedRoot,
+    false,
+  );
+
+  // D3/D4#2: reservedLeafHashes[0] deliberately set equal to a disclosed leaf's recomputed hash -
+  // tests the VERIFIER's behavior on this wire input (unreachable via a genuine tree without a
+  // Poseidon preimage: hash_reserved_leaf's raw-field slot cannot equal hashLeaf's output). Only the
+  // overlap check's RESERVED-half comparison can reject this. The identical input is ACCEPTED by
+  // verifyLeafCommitment (TS-only; see redacted_artifact.test.ts for that half of the proof) - the
+  // exact divergence D3 documents.
+  const reservedHalfHexes = [toHex32(raHash(raSpecies)), raReserved[1]!, raReserved[2]!];
+  const reservedHalfRoot = raRootOver([raSpecies, raMicrochip], [], reservedHalfHexes);
+  pushRedacted(
+    "negative_overlap_reserved_half_matches_disclosed",
+    "reservedLeafHashes[0] deliberately equals a disclosed leaf's recomputed hash. The root recomputes EXACTLY; only the overlap check (reserved half) can reject this - and the identical input is ACCEPTED by verifyLeafCommitment (D3's documented, safe-direction-only divergence).",
+    [raSpecies, raMicrochip],
+    [],
+    reservedHalfHexes,
+    reservedHalfRoot,
+    false,
+  );
+
+  // D4#3: credentialSubject.name disclosed TWICE with DIFFERENT salts (both genuinely fold into the
+  // root - not a malformed posting), no identity oracle supplied (irrelevant regardless: not an
+  // owner.identity.* keyPath). Only the duplicate-keyPath guard can reject this.
+  const raNameDupA = raLeaf("credentialSubject.name", salt(0x10), "Rex");
+  const raNameDupB = raLeaf("credentialSubject.name", salt(0x20), "Rex");
+  const dupKeyPathRoot = raRootOver([raNameDupA, raNameDupB], [], raReserved);
+  pushRedacted(
+    "negative_duplicate_pet_keypath_no_identity_oracle",
+    "credentialSubject.name disclosed TWICE with different salts (both genuinely fold into the root), no identity oracle supplied so the identity multiset check cannot mask it. Only the duplicate-keyPath guard can reject this, since the root recomputes exactly (D4 bite proof).",
+    [raNameDupA, raNameDupB],
+    [],
+    raReserved,
+    dupKeyPathRoot,
+    false,
+  );
+
+  // D4#4: 65 total leaves (3 reserved + 62 disclosed), one over the 64-leaf cap, carrying their OWN
+  // genuine root. Only the cap comparison can reject this. Pairs with all_six_type_tags_disclosed /
+  // full_artifact_nothing_obfuscated as under-cap accepts.
+  const many62 = Array.from({length: 62}, (_, i) => raLeaf(`credentialSubject.extra[${i}]`, salt(i + 1), `v${i}`));
+  const cap65Root = raRootOver(many62, [], raReserved);
+  pushRedacted(
+    "negative_65_leaves_genuine_root_over_cap",
+    "65 total leaves (3 reserved + 62 disclosed), one over the 64-leaf cap, carrying their OWN genuine root. Only the cap comparison can reject this, since the root recomputes exactly (D4 bite proof).",
+    many62,
+    [],
+    raReserved,
+    cap65Root,
+    false,
+  );
+
+  // D4#5: a reservedLeafHashes/obfuscatedLeafHashes entry MISSING its "0x" prefix (otherwise a
+  // perfectly valid, in-field 64-hex-char hash), root built over the SAME parsed value.
+  // DISCREPANCY vs. the grade recipe's literal "0x12" (wrong-length) suggestion, logged in the
+  // progress LOG: "0x12" isolates TS's shape check (fromHex32 has no length check of its own) but does
+  // NOT isolate Rust's - from_hex32 (wrap.rs) independently enforces exactly-32-bytes, so a
+  // wrong-length string is already rejected there with or without is_hex32 (confirmed empirically: the
+  // "0x12" construction survived the is_hex32-deleted mutant in Rust - a false bite proof, corrected
+  // here). The missing-"0x"-prefix construction isolates BOTH languages' shape check: isHex32/is_hex32
+  // require the literal "0x" prefix, while fromHex32/from_hex32 treat it as OPTIONAL (strip if present,
+  // else use the string as-is), so the identical numeric value round-trips either way.
+  const noPrefixReserved0 = raReserved[0]!.slice(2);
+  const reservedShapeRoot = raRootOver([raSpecies], [], raReserved);
+  pushRedacted(
+    "negative_hex32_shape_reserved_missing_0x_prefix",
+    "reservedLeafHashes[0] missing its \"0x\" prefix (otherwise a perfectly valid, in-field 64-hex-char hash), root built over the SAME parsed value. Only the hex32 shape check can reject this (D4 bite proof).",
+    [raSpecies],
+    [],
+    [noPrefixReserved0, raReserved[1]!, raReserved[2]!],
+    reservedShapeRoot,
+    false,
+  );
+
+  const noPrefixObfuscated = toHex32(raHash(raSpecies)).slice(2);
+  const obfuscatedShapeRoot = raRootOver([raMicrochip], [toHex32(raHash(raSpecies))], raReserved);
+  pushRedacted(
+    "negative_hex32_shape_obfuscated_missing_0x_prefix",
+    "obfuscatedLeafHashes[0] missing its \"0x\" prefix (otherwise a perfectly valid, in-field 64-hex-char hash), root built over the SAME parsed value. Only the hex32 shape check can reject this (D4 bite proof).",
+    [raMicrochip],
+    [noPrefixObfuscated],
+    raReserved,
+    obfuscatedShapeRoot,
+    false,
+  );
+}
+
+if (redactedArtifacts.filter((v) => v.valid).length < 3) {
+  throw new Error("gen: expected at least 3 positive redacted-artifact vectors");
+}
+if (redactedArtifacts.filter((v) => !v.valid).length < 3) {
+  throw new Error("gen: expected at least 3 negative redacted-artifact vectors");
+}
+
 const out = {
   _comment:
     "Shared DogTag SDK test vectors (impl §9; inclusion proofs per DSDP plan §2.3). TS = reference; " +
     "dogtag-standard-rs + the iOS Swift verifier assert this file. " +
     "Leaf = Poseidon(DS_LEAF, fieldOf(keyPath), fieldOf(salt), fieldOf(typeTag), fieldOf(value)); " +
-    "inclusion steps are root-ward {sibling:0x..}|{promote:true}; salts are fixed for reproducibility.",
+    "inclusion steps are root-ward {sibling:0x..}|{promote:true}; salts are fixed for reproducibility. " +
+    "redactedArtifacts (WP4.10S) exercises verifyRedactedArtifact - masking a disclosed leaf into " +
+    "obfuscatedLeafHashes never changes root, and the deliberately-invalid entries are equally " +
+    "implementation-generated (self-checked against verifyRedactedArtifact before being written).",
   field_p: FIELD_P.toString(),
   leaves,
   bytesToField: btf,
   merkle,
   inclusion,
+  redactedArtifacts,
 };
 
 const path = resolve(__dirname, "..", "testvectors.json");
@@ -271,5 +632,7 @@ writeFileSync(path, JSON.stringify(out, null, 2) + "\n");
 console.log(
   `wrote ${path}: ${leaves.length} leaf, ${btf.length} bytesToField, ${merkle.length} merkle, ` +
     `${inclusion.length} inclusion vectors (${inclusion.filter((v) => v.valid).length} valid, ` +
-    `${inclusion.filter((v) => !v.valid).length} negative)`,
+    `${inclusion.filter((v) => !v.valid).length} negative), ` +
+    `${redactedArtifacts.length} redactedArtifacts (${redactedArtifacts.filter((v) => v.valid).length} valid, ` +
+    `${redactedArtifacts.filter((v) => !v.valid).length} negative)`,
 );
