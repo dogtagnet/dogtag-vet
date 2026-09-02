@@ -14,9 +14,11 @@ import {listRecentAbuse} from "@/lib/abuseLog";
 import {AbuseLogSection} from "@/app/(app)/settings/AbuseLogSection";
 import {BookingConfigSection} from "@/app/(app)/settings/BookingConfigSection";
 import {IcsFeedSection} from "@/app/(app)/settings/IcsFeedSection";
+import {MyWalletSection} from "@/app/(app)/settings/MyWalletSection";
 import {OperatorsSection} from "@/app/(app)/settings/OperatorsSection";
 import {SettingsForm} from "@/app/(app)/settings/SettingsForm";
 import {StaffSection} from "@/app/(app)/settings/StaffSection";
+import {isVetOrOwner} from "@/lib/staffRoleTone";
 import {toPlain} from "@/lib/toPlain";
 
 export default async function SettingsPage() {
@@ -34,6 +36,12 @@ export default async function SettingsPage() {
   const env = getServerEnv();
   const smtpConfigured = Boolean(env.EMAIL_SERVER && env.EMAIL_FROM);
   const isOwner = session?.user?.role === "owner";
+  // WP4.7C item 2 - "My issuance wallet" is a vet/owner SELF-service card, scoped to the signed-in
+  // staff member's own row (`staff` here already came from `listStaff()` above, so no extra query
+  // is needed to find it). `myStaff` can only be missing for a session whose Staff row was deleted
+  // out from under it mid-session (this app only ever disables, never deletes - Staff.ts's own doc
+  // comment - so this is a defensive absence check, not an expected path).
+  const myStaff = staff.find((s) => s.staffId === session?.user?.staffId);
 
   return (
     <>
@@ -82,6 +90,7 @@ export default async function SettingsPage() {
       <SettingsForm initial={settings} />
       <div className="mt-6 max-w-2xl space-y-6">
         <StaffSection initial={staff} isOwner={isOwner} currentStaffId={session?.user?.staffId} />
+        {isVetOrOwner(session?.user?.role) && myStaff && <MyWalletSection initial={myStaff} />}
         <OperatorsSection staff={staff} cloneAddress={settings.cloneAddress} isOwner={isOwner} />
         <BookingConfigSection settings={bookingSettings} rules={rules} exceptions={exceptions} practitioners={practitioners} isOwner={isOwner} />
         <IcsFeedSection initialToken={settings.icsFeedToken} publicBaseUrl={env.PUBLIC_BASE_URL} />

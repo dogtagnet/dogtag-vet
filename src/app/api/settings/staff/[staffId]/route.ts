@@ -38,8 +38,17 @@ export async function PATCH(request: Request, {params}: {params: Promise<{staffI
   const body = await request.json().catch(() => null);
   const parsed = updateStaffSchema.safeParse(body);
   if (!parsed.success) {
+    // Was hardcoded to the top-level `.refine`'s own message ("At least one field is required.")
+    // regardless of WHICH check actually failed - wrong and confusing for, say, a malformed
+    // `walletAddress` (zod never even reaches the whole-object `.refine` when a field itself fails
+    // its own schema, so that case's real message - "Must be a 0x-prefixed 40-hex-character
+    // address" - was silently discarded in favor of the unrelated refine text). `issues[0]` is
+    // always the one relevant failure for this schema (a field regex/type failure when one exists,
+    // else the refine's own "at least one field" message when the body was empty), found and fixed
+    // in passing while building WP4.7C's self-service counterpart route, which uses this same
+    // pattern from the start - see `selfWalletSchema`'s route.
     return NextResponse.json(
-      {error: {code: "invalid_input", message: "At least one field is required.", details: parsed.error.flatten()}},
+      {error: {code: "invalid_input", message: parsed.error.issues[0]?.message ?? "Invalid input.", details: parsed.error.flatten()}},
       {status: 400},
     );
   }

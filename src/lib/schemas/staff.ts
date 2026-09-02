@@ -29,3 +29,19 @@ export const updateStaffSchema = z
     {message: "At least one field is required."},
   );
 export type UpdateStaffInput = z.infer<typeof updateStaffSchema>;
+
+/**
+ * WP4.7C item 2 - the self-service counterpart to `updateStaffSchema` above: a vet/owner setting
+ * or clearing THEIR OWN `walletAddress` (K2: "the vet can register their own... address"). Always
+ * exactly one field, always required (never "leave unchanged" - this route only ever does one
+ * thing), `.strict()` so an unexpected key (e.g. a `role` a client should never be able to send
+ * here) is rejected outright with a 400 rather than silently dropped - there is no key in this
+ * schema that could ever change who is vet/owner/staff, or touch any row but the caller's own
+ * (staffId comes from the session, never from the body - see the route handler).
+ */
+export const selfWalletSchema = z
+  .object({
+    walletAddress: lowercaseHexAddress.nullable(),
+  })
+  .strict();
+export type SelfWalletInput = z.infer<typeof selfWalletSchema>;
