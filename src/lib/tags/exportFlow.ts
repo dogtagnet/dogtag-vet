@@ -61,6 +61,33 @@ export interface ExportFlowStore {
   getClinicName(): Promise<string | undefined>;
 }
 
+/** The crypto-bearing subset of a `RedactedTagArtifact` this module ever produces - shared by the
+ * ceremony's response (`ExportResult.data`, plus display context) and the staff-only preview/
+ * download route (`buildRedactedExportPayload`'s own doc comment), so both surfaces always agree
+ * byte-for-byte on what a given (artifact, mask) pair actually exports. */
+export interface RedactedExportData {
+  protocolVersion: string;
+  schemaId?: string;
+  dogTagIdDec?: string;
+  dogTagIdField: string;
+  root: string;
+  /** The UNMASKED openings only - plan section 2's `disclosed` field, the same name the registry
+   * schema and `@dogtag/standard`'s `RedactedTagArtifact` type both use. Renamed from this route's
+   * pre-WP4.10V `leaves` field: no shipped consumer parses the old name (the phone-side scan
+   * screen for this ceremony has never been built - MANUAL-E2E.md Part 8's own text), and keeping
+   * two different names for "the disclosed subset" between this wire response and the registry/TS
+   * format it now IS would leave a masked export this route itself produced unable to pass the
+   * very `dogtag.redacted-tag-artifact.v1.schema.json` shape this same wave registers. */
+  disclosed: {keyPath: string; saltHex: string; tag: TypeTag; value: string}[];
+  /** Every leaf hash this response withholds the opening for - the union of whatever the artifact
+   * ITSELF already carried as opaque (partial custody, item 6) and whatever staff additionally
+   * masked for THIS export. `[]` for an ordinary, fully-disclosed export - the exact pre-WP4.10V
+   * behavior, still fully supported. */
+  obfuscatedLeafHashes: string[];
+  reservedLeafHashes: string[];
+  issuerClone: string;
+}
+
 export type ExportResult =
   | {
       ok: true;
@@ -68,31 +95,7 @@ export type ExportResult =
        * a database fact, so the ROUTE splices it into the wire response directly, the same place
        * `POST /api/clients/:id/wallet-registrations` already reads `roax.id` rather than threading
        * it through a store method for a value that never varies per call. */
-      data: {
-        protocolVersion: string;
-        schemaId?: string;
-        dogTagIdDec?: string;
-        dogTagIdField: string;
-        root: string;
-        /** The UNMASKED openings only - plan section 2's `disclosed` field, the same name the
-         * registry schema and `@dogtag/standard`'s `RedactedTagArtifact` type both use. Renamed
-         * from this route's pre-WP4.10V `leaves` field: no shipped consumer parses the old name
-         * (the phone-side scan screen for this ceremony has never been built - MANUAL-E2E.md Part
-         * 8's own text), and keeping two different names for "the disclosed subset" between this
-         * wire response and the registry/TS format it now IS would leave a masked export this
-         * route itself produced unable to pass the very `dogtag.redacted-tag-artifact.v1.schema.
-         * json` shape this same wave registers. */
-        disclosed: {keyPath: string; saltHex: string; tag: TypeTag; value: string}[];
-        /** Every leaf hash this response withholds the opening for - the union of whatever the
-         * artifact ITSELF already carried as opaque (partial custody, item 6) and whatever staff
-         * additionally masked for THIS export (the session's own `mask`). `[]` for an ordinary,
-         * fully-disclosed export - the exact pre-WP4.10V behavior, still fully supported. */
-        obfuscatedLeafHashes: string[];
-        reservedLeafHashes: string[];
-        issuerClone: string;
-        petName: string;
-        clinicName: string;
-      };
+      data: RedactedExportData & {petName: string; clinicName: string};
     }
   | {ok: false; code: "not_found"}
   | {ok: false; code: "expired_or_reused"}
@@ -110,10 +113,106 @@ export type ExportResult =
  * `hexToBytes`, `toHex32`), not a shared import, matching that file's own precedent for why (see
  * its header: any future drift is exactly what a cross-check test would catch). Never trusts a
  * stored hash for a leaf THIS clinic is about to mask - it only ever discloses a leaf's hash by
- * recomputing it fresh from the opening this clinic actually holds. */
-function recomputeLeafHash(leaf: {keyPath: string; saltHex: string; tag: TypeTag; value: string}): string {
+ * recomputing it fresh from the opening this clinic actually holds. Exported so the field-picker's
+ * own listing route (`listExportableFields` below) shares the identical computation, never a
+ * second copy that could drift from what `resolveAndConsumeExport` actually serves. */
+export function recomputeLeafHash(leaf: {keyPath: string; saltHex: string; tag: TypeTag; value: string}): string {
   const scalar = scalarFromPacked(leaf.tag, leaf.value);
   return toHex32(hashLeaf(leaf.keyPath, hexToBytes(leaf.saltHex), scalar));
+}
+
+/** `owner.identity.*` - the one namespace WP4.10S's ruling still treats as conceptually distinct
+ * from an ordinary pet attribute for DISPLAY/grouping purposes (item 4's field picker groups "pet
+ * attributes" apart from "owner identity"), even though both are equally maskable. Never the
+ * reserved owner-CONTROL namespace (`owner.address`/`owner.consentKey`/`owner.secret`) - those are
+ * never leaves at all, so they never appear in this listing in the first place. */
+const OWNER_IDENTITY_PREFIX = "owner.identity.";
+
+export interface ExportableField {
+  keyPath: string;
+  tag: TypeTag;
+  value: string;
+  /** Precomputed server-side - WP4.10V item 4's staff-facing field-picker route serves this so its
+   * "use client" component never needs to import `@dogtag/standard` (this repo's own
+   * `serverExternalPackages`/cold-client-build hazard, `tag-custody.spec.ts`'s own doc comment) -
+   * the live preview becomes a pure client-side value-to-hash swap, no crypto in the browser. */
+  leafHash: string;
+  group: "pet" | "owner_identity";
+}
+
+/**
+ * The staff-facing field-picker listing (WP4.10V item 4) - every leaf THIS clinic currently holds
+ * an opening for on the active artifact, each with its precomputed leaf hash (what it would become
+ * in `obfuscatedLeafHashes` if staff picks it to mask) and its display group. Pure, no I/O - the
+ * route wraps this around `findActiveTagArtifact`'s own leaves.
+ */
+export function listExportableFields(leaves: {keyPath: string; saltHex: string; tag: TypeTag; value: string}[]): ExportableField[] {
+  return leaves.map((leaf) => ({
+    keyPath: leaf.keyPath,
+    tag: leaf.tag,
+    value: leaf.value,
+    leafHash: recomputeLeafHash(leaf),
+    group: leaf.keyPath.startsWith(OWNER_IDENTITY_PREFIX) ? "owner_identity" : "pet",
+  }));
+}
+
+/**
+ * Given an artifact (its full leaves plus whatever it already carries as opaque) and a set of
+ * NEWLY staff-picked keyPaths to mask, produces the exact `RedactedTagArtifact`-shaped payload
+ * this app ever serves for it - shared by the ceremony (`resolveAndConsumeExport` below) and the
+ * staff-only preview/download route (`buildRedactedExportPayload`'s caller in
+ * `lib/tags/exportPreview.ts`), so both always agree on what a given (artifact, mask) pair
+ * actually exports, never two independently-maintained copies of this logic.
+ *
+ * Splits `artifact.leaves` into `disclosed` (not in `mask`) and newly-masked (in `mask` - hash
+ * RECOMPUTED fresh from the opening via `recomputeLeafHash`, never trusted from storage, opening
+ * dropped). Unions the newly-masked hashes with whatever `obfuscatedLeafHashes` the artifact
+ * already carried (partial custody, item 6) - a partial-custody artifact re-exported with an EMPTY
+ * mask still includes its inherited hashes, never silently drops them.
+ *
+ * Self-checks the WHOLE result with `verifyRedactedArtifact` before ever returning it - the
+ * falsifiable version of "never trusts stored hashes without recomputing from openings". `ok:
+ * false` is a server BUG (a genuinely device-built, already-`createTagArtifact`-verified artifact
+ * plus a validated mask should never fail to recompute) - every caller refuses rather than serves
+ * on this branch.
+ */
+export function buildRedactedExportPayload(
+  artifact: Pick<
+    ExportedArtifactRow,
+    "protocolVersion" | "schemaId" | "dogTagIdDec" | "dogTagIdField" | "root" | "leaves" | "obfuscatedLeafHashes" | "reservedLeafHashes" | "issuerClone"
+  >,
+  mask: string[],
+): {ok: true; data: RedactedExportData} | {ok: false} {
+  const maskedKeyPaths = new Set(mask);
+  const disclosed = artifact.leaves.filter((l) => !maskedKeyPaths.has(l.keyPath));
+  const newlyMaskedHashes = artifact.leaves.filter((l) => maskedKeyPaths.has(l.keyPath)).map(recomputeLeafHash);
+  const obfuscatedLeafHashes = [...artifact.obfuscatedLeafHashes, ...newlyMaskedHashes];
+
+  const verifies = verifyRedactedArtifact({
+    protocolVersion: artifact.protocolVersion,
+    dogTagIdField: artifact.dogTagIdField,
+    root: artifact.root,
+    disclosed,
+    obfuscatedLeafHashes,
+    reservedLeafHashes: artifact.reservedLeafHashes,
+    issuerClone: artifact.issuerClone,
+  });
+  if (!verifies) return {ok: false};
+
+  return {
+    ok: true,
+    data: {
+      protocolVersion: artifact.protocolVersion,
+      schemaId: artifact.schemaId,
+      dogTagIdDec: artifact.dogTagIdDec,
+      dogTagIdField: artifact.dogTagIdField,
+      root: artifact.root,
+      disclosed,
+      obfuscatedLeafHashes,
+      reservedLeafHashes: artifact.reservedLeafHashes,
+      issuerClone: artifact.issuerClone,
+    },
+  };
 }
 
 /**
@@ -158,21 +257,8 @@ export async function resolveAndConsumeExport(store: ExportFlowStore, token: str
   const pet = await store.findPetForExport(session.petId);
   if (pet?.dogTagStatus === "revoked") return {ok: false, code: "revoked"};
 
-  const maskedKeyPaths = new Set(session.mask ?? []);
-  const disclosed = artifact.leaves.filter((l) => !maskedKeyPaths.has(l.keyPath));
-  const newlyMaskedHashes = artifact.leaves.filter((l) => maskedKeyPaths.has(l.keyPath)).map(recomputeLeafHash);
-  const obfuscatedLeafHashes = [...artifact.obfuscatedLeafHashes, ...newlyMaskedHashes];
-
-  const verifies = verifyRedactedArtifact({
-    protocolVersion: artifact.protocolVersion,
-    dogTagIdField: artifact.dogTagIdField,
-    root: artifact.root,
-    disclosed,
-    obfuscatedLeafHashes,
-    reservedLeafHashes: artifact.reservedLeafHashes,
-    issuerClone: artifact.issuerClone,
-  });
-  if (!verifies) {
+  const built = buildRedactedExportPayload(artifact, session.mask ?? []);
+  if (!built.ok) {
     console.error(
       `export-tag-data self-check failed: the redacted payload for petId=${session.petId} root=${artifact.root} did not recompute its own root (mask=${JSON.stringify(session.mask ?? [])}) - refusing to serve it.`,
     );
@@ -183,15 +269,7 @@ export async function resolveAndConsumeExport(store: ExportFlowStore, token: str
   return {
     ok: true,
     data: {
-      protocolVersion: artifact.protocolVersion,
-      schemaId: artifact.schemaId,
-      dogTagIdDec: artifact.dogTagIdDec,
-      dogTagIdField: artifact.dogTagIdField,
-      root: artifact.root,
-      disclosed,
-      obfuscatedLeafHashes,
-      reservedLeafHashes: artifact.reservedLeafHashes,
-      issuerClone: artifact.issuerClone,
+      ...built.data,
       petName: pet?.name ?? "",
       clinicName: clinicName ?? "",
     },

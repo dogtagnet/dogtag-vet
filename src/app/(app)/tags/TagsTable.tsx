@@ -9,6 +9,7 @@ import {HashCell} from "@/components/ui/HashCell";
 import {Button, Select} from "@/components/ui/controls";
 import {useSnackbar} from "@/components/ui/Snackbar";
 import {ExportQrPanel} from "@/components/tags/ExportQrPanel";
+import {MaskedExportPanel} from "@/components/tags/MaskedExportPanel";
 import {vetIssuerAbi} from "@/lib/abi";
 import {roax} from "@/lib/chains";
 import {legacyTxWithGas} from "@/lib/chainWrite";
@@ -34,9 +35,11 @@ export function TagsTable({timeZone}: {timeZone: string}) {
   const [data, setData] = useState<TagsResponse | null>(null);
   const [busyPetId, setBusyPetId] = useState<string | null>(null);
   const [reasonByPet, setReasonByPet] = useState<Record<string, ReasonCodeName>>({});
-  // At most one row's export QR panel expanded at a time - petId-keyed, same idiom
-  // WalletsPanel.tsx's expandedAddress uses for its own row expansion.
-  const [expandedExportPetId, setExpandedExportPetId] = useState<string | null>(null);
+  // At most one row's export panel expanded at a time, and at most one KIND per row (a row's
+  // expansion slot is a single area) - petId-keyed, same idiom WalletsPanel.tsx's expandedAddress
+  // uses for its own row expansion. WP4.10V item 4 added the "mask" kind alongside the pre-existing
+  // "share" (full, unmasked) export.
+  const [expandedExport, setExpandedExport] = useState<{petId: string; kind: "share" | "mask"} | null>(null);
   const [pendingTx, setPendingTx] = useState<{hash: `0x${string}`; petId: string; action: "revoke" | "reactivate"; reasonCode: ReasonCodeName} | null>(null);
 
   const receipt = useWaitForTransactionReceipt({hash: pendingTx?.hash, chainId: roax.id});
@@ -165,15 +168,30 @@ export function TagsTable({timeZone}: {timeZone: string}) {
                   Replace
                 </Link>
                 {p.dogTag.status !== "revoked" && (
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    aria-expanded={expandedExportPetId === p.petId}
-                    aria-controls={`export-panel-${p.petId}`}
-                    onClick={() => setExpandedExportPetId((prev) => (prev === p.petId ? null : p.petId))}
-                  >
-                    {expandedExportPetId === p.petId ? "Hide share code" : "Share tag data"}
-                  </Button>
+                  <>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      aria-expanded={expandedExport?.petId === p.petId && expandedExport.kind === "share"}
+                      aria-controls={`export-panel-${p.petId}`}
+                      onClick={() =>
+                        setExpandedExport((prev) => (prev?.petId === p.petId && prev.kind === "share" ? null : {petId: p.petId, kind: "share"}))
+                      }
+                    >
+                      {expandedExport?.petId === p.petId && expandedExport.kind === "share" ? "Hide share code" : "Share tag data"}
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      aria-expanded={expandedExport?.petId === p.petId && expandedExport.kind === "mask"}
+                      aria-controls={`export-panel-${p.petId}`}
+                      onClick={() =>
+                        setExpandedExport((prev) => (prev?.petId === p.petId && prev.kind === "mask" ? null : {petId: p.petId, kind: "mask"}))
+                      }
+                    >
+                      {expandedExport?.petId === p.petId && expandedExport.kind === "mask" ? "Hide masked export" : "Export with masking"}
+                    </Button>
+                  </>
                 )}
               </div>
             ),
@@ -183,9 +201,13 @@ export function TagsTable({timeZone}: {timeZone: string}) {
         getRowKey={(p) => p.petId}
         emptyMessage="No tags issued yet."
         renderExpansion={(p) =>
-          expandedExportPetId === p.petId ? (
+          expandedExport?.petId === p.petId ? (
             <div id={`export-panel-${p.petId}`}>
-              <ExportQrPanel petId={p.petId} onClose={() => setExpandedExportPetId(null)} />
+              {expandedExport.kind === "share" ? (
+                <ExportQrPanel petId={p.petId} onClose={() => setExpandedExport(null)} />
+              ) : (
+                <MaskedExportPanel petId={p.petId} onClose={() => setExpandedExport(null)} />
+              )}
             </div>
           ) : null
         }

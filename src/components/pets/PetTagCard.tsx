@@ -5,6 +5,7 @@ import {HashCell} from "@/components/ui/HashCell";
 import {MonoValue} from "@/components/ui/MonoValue";
 import {StatusBadge} from "@/components/ui/StatusBadge";
 import {ShareTagDataAction} from "@/components/tags/ShareTagDataAction";
+import {MaskedExportAction} from "@/components/tags/MaskedExportAction";
 import {ImportTagAction} from "@/components/tags/ImportTagAction";
 import {dogTagStatusLabel, dogTagStatusTone} from "@/lib/tagStatusTone";
 import {formatUnixSeconds} from "@/lib/format";
@@ -139,7 +140,14 @@ export function PetTagCard({petId, dogTag = {}, timeZone}: {petId: string; dogTa
             Manage in Tags
           </Link>
         )}
-        {dogTag.status !== "revoked" ? <ShareTagDataAction petId={petId} /> : <ImportTagAction petId={petId} />}
+        {dogTag.status !== "revoked" ? (
+          <>
+            <ShareTagDataAction petId={petId} />
+            <MaskedExportAction petId={petId} />
+          </>
+        ) : (
+          <ImportTagAction petId={petId} />
+        )}
       </div>
     </section>
   );
