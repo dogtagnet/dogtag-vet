@@ -1,5 +1,5 @@
 {
-  "_comment": "DogTag leaf-commitment spec v1 conformance vectors. Every value here was produced by calling the existing dogtag-standard-ts implementation (packages/dogtag-standard-ts/src) directly - none are hand-computed. field_p is the BN254 scalar field modulus. See specs/leaf-commitment.md (conformance clause): an implementation is conformant iff it reproduces every vector here. Every leafHashVectors[].value is the exact literal to pass back into {tag, value} to reproduce expected_hex/expected_dec, EXCEPT Bytes, whose value is lowercase hex (no 0x prefix) - decode with hexToBytes before constructing the scalar. redactedArtifactVectors (section 15, WP4.10S) exercises verifyRedactedArtifact; its three disclosed-leaf openings are the SAME keyPath/saltHex/value triples as merkleVectors[0] (\"size_3_pet_profile_promotion\"), and every entry's expected_leaf_hex there matches this file's own leafHashVectors/merkleVectors values byte-for-byte - masking never changes a leaf's hash, only whether it is opened or left opaque.",
+  "_comment": "DogTag leaf-commitment spec v1 conformance vectors. Every value here was produced by calling the existing dogtag-standard-ts implementation (packages/dogtag-standard-ts/src) directly - none are hand-computed. field_p is the BN254 scalar field modulus. See specs/leaf-commitment.md (conformance clause): an implementation is conformant iff it reproduces every vector here. Every leafHashVectors[].value is the exact literal to pass back into {tag, value} to reproduce expected_hex/expected_dec, EXCEPT Bytes, whose value is lowercase hex (no 0x prefix) - decode with hexToBytes before constructing the scalar. redactedArtifactVectors (section 15, WP4.10S) exercises verifyRedactedArtifact; profile_tree_base_full_artifact's three disclosed-leaf openings are the SAME keyPath/saltHex/value triples as merkleVectors[0] (\"size_3_pet_profile_promotion\"), and its expected_leaf_hex values match this file's own leafHashVectors/merkleVectors values byte-for-byte - masking never changes a leaf's hash, only whether it is opened or left opaque. Six further isolating negatives (negative_overlap_root_preserving_duplicate_leaf, negative_overlap_reserved_half_matches_disclosed, negative_duplicate_pet_keypath_no_identity_oracle, negative_65_leaves_genuine_root_over_cap, negative_hex32_shape_reserved_missing_0x_prefix, negative_hex32_shape_obfuscated_missing_0x_prefix) were promoted from packages/dogtag-standard-ts/testvectors.json by packages/dogtag-standard-ts/scripts/promote-spec-vectors.ts (WP4.10S P1), which recomputes every disclosed leaf's hash and re-verifies every promoted artifact against the real verifyRedactedArtifact before writing - never hand-copied. Two of the six (the duplicate-keyPath and 64-leaf-cap vectors) use their own distinct keyPath/salt combinations rather than reusing merkleVectors[0]'s three leaves, since isolating those specific checks requires leaves outside that reused set.",
   "field_p": "21888242871839275222246405745257275088548364400416034343698204186575808495617",
   "leafHashVectors": [
     {
@@ -467,6 +467,654 @@
         "0x1f1da980caae326d2c4cf7b4bb1b132bd1eb09dd542bcf92c564564398733f91"
       ],
       "root_hex": "0x1a83320d99311513328b702a719dcd59f87b3892e1a04f339937dceaa9de02a8",
+      "valid": false
+    },
+    {
+      "name": "negative_overlap_root_preserving_duplicate_leaf",
+      "notes": "species's leaf hash is genuinely committed TWICE in this tree (the tree builder enforces keyPath uniqueness only for the 3 reserved leaves, never across ordinary attribute leaves, so two attribute leaves may legitimately fold to the same hash) - one copy is disclosed normally, the other copy's hash is separately listed in obfuscatedLeafHashes. root_hex is the genuine Merkle root over this exact 6-hash multiset (3 reserved + the duplicated species hash + microchip.code), so step 4's root comparison cannot tell this apart from a genuine artifact; only step 3's overlap check, on its obfuscated-half comparison, rejects it.",
+      "disclosed": [
+        {
+          "keyPath": "credentialSubject.species",
+          "saltHex": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "tag": 2,
+          "tagName": "String",
+          "value": "dog",
+          "expected_leaf_hex": "0x1e2a8b2327908e91408416c14f99554c373d9ebad6571754b82cf319f676953d"
+        },
+        {
+          "keyPath": "credentialSubject.microchip.code",
+          "saltHex": "cccccccccccccccccccccccccccccccc",
+          "tag": 2,
+          "tagName": "String",
+          "value": "985141006580319",
+          "expected_leaf_hex": "0x09fb163b818c8482976dcc3a149eb2336da14662a67c88aee86111f6aa254ec8"
+        }
+      ],
+      "obfuscatedLeafHashes": [
+        "0x1e2a8b2327908e91408416c14f99554c373d9ebad6571754b82cf319f676953d"
+      ],
+      "reservedLeafHashes": [
+        "0x0f13786f97376a95f1792232e1eb21ba543d2532682a18452269bf60488edc55",
+        "0x1f1da980caae326d2c4cf7b4bb1b132bd1eb09dd542bcf92c564564398733f91",
+        "0x23cb052273f35cd1043b73a10f82d4c86f1ed6cb4c5546ff6de1365c27800c78"
+      ],
+      "root_hex": "0x1de11231401379f29d9a5e5f6979d187c354993fa36d856adff877cbf6cd8bfc",
+      "valid": false
+    },
+    {
+      "name": "negative_overlap_reserved_half_matches_disclosed",
+      "notes": "reservedLeafHashes[0] is deliberately set equal to the disclosed species leaf's own recomputed hash, rather than a genuine owner-control hash (unreachable from a real device tree without a Poseidon preimage - this exercises the verifier's behavior on the wire input directly, not a claim about what a real tree can produce). root_hex is the genuine root over this exact multiset, so only step 3's overlap check, on its reserved-half comparison, rejects it; step 1's exactly-3-reservedLeafHashes count check does not help, since there really are 3 entries.",
+      "disclosed": [
+        {
+          "keyPath": "credentialSubject.species",
+          "saltHex": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "tag": 2,
+          "tagName": "String",
+          "value": "dog",
+          "expected_leaf_hex": "0x1e2a8b2327908e91408416c14f99554c373d9ebad6571754b82cf319f676953d"
+        },
+        {
+          "keyPath": "credentialSubject.microchip.code",
+          "saltHex": "cccccccccccccccccccccccccccccccc",
+          "tag": 2,
+          "tagName": "String",
+          "value": "985141006580319",
+          "expected_leaf_hex": "0x09fb163b818c8482976dcc3a149eb2336da14662a67c88aee86111f6aa254ec8"
+        }
+      ],
+      "obfuscatedLeafHashes": [],
+      "reservedLeafHashes": [
+        "0x1e2a8b2327908e91408416c14f99554c373d9ebad6571754b82cf319f676953d",
+        "0x1f1da980caae326d2c4cf7b4bb1b132bd1eb09dd542bcf92c564564398733f91",
+        "0x23cb052273f35cd1043b73a10f82d4c86f1ed6cb4c5546ff6de1365c27800c78"
+      ],
+      "root_hex": "0x01b54f08f60e67a10b142bb3925c1634e9a34bb87bd4f4ebd4738500307b8047",
+      "valid": false
+    },
+    {
+      "name": "negative_duplicate_pet_keypath_no_identity_oracle",
+      "notes": "credentialSubject.name is disclosed TWICE, with different salts, and both openings genuinely fold into root_hex (a device tree has no rule against this for an ordinary attribute keyPath). No expectedIdentityLeaves oracle is supplied, which changes nothing here regardless: credentialSubject.name is not an owner.identity.* keyPath, so that optional cross-check was never going to see it. Since the root recomputes exactly over both openings, only step 2's duplicate-keyPath guard rejects this.",
+      "disclosed": [
+        {
+          "keyPath": "credentialSubject.name",
+          "saltHex": "10101010101010101010101010101010",
+          "tag": 2,
+          "tagName": "String",
+          "value": "Rex",
+          "expected_leaf_hex": "0x29d13dbea8ac72213104c6e8208a3b06c2c19579e0ffec24f63778cbed167290"
+        },
+        {
+          "keyPath": "credentialSubject.name",
+          "saltHex": "20202020202020202020202020202020",
+          "tag": 2,
+          "tagName": "String",
+          "value": "Rex",
+          "expected_leaf_hex": "0x22929c318d7f9f6b3f9c7806280def759b378e388f41e0b65a1894193dcf59b6"
+        }
+      ],
+      "obfuscatedLeafHashes": [],
+      "reservedLeafHashes": [
+        "0x0f13786f97376a95f1792232e1eb21ba543d2532682a18452269bf60488edc55",
+        "0x1f1da980caae326d2c4cf7b4bb1b132bd1eb09dd542bcf92c564564398733f91",
+        "0x23cb052273f35cd1043b73a10f82d4c86f1ed6cb4c5546ff6de1365c27800c78"
+      ],
+      "root_hex": "0x2174111daa512b4a5d0a2941e757fd637948f56b60c0ac607af3ce5dcfda400f",
+      "valid": false
+    },
+    {
+      "name": "negative_65_leaves_genuine_root_over_cap",
+      "notes": "65 total leaf hashes - 3 reserved plus 62 disclosed attribute leaves, one more than the 64-leaf cap (section 10) allows - carrying their own genuine Merkle root over that full multiset, so step 4's root comparison cannot reject it. Only step 1's total-leaf-count check (reservedLeafHashes.length + disclosed.length + obfuscatedLeafHashes.length <= 64) rejects this. The vector is necessarily large: 65 is the smallest leaf count that both exceeds the cap and still carries a self-consistent genuine root, so every one of the 62 attribute leaves has to be listed for root_hex to check out.",
+      "disclosed": [
+        {
+          "keyPath": "credentialSubject.extra[0]",
+          "saltHex": "01010101010101010101010101010101",
+          "tag": 2,
+          "tagName": "String",
+          "value": "v0",
+          "expected_leaf_hex": "0x14bee6c3357103e7a686e742287a760d37d29d56a62e14313a143975623ae3e1"
+        },
+        {
+          "keyPath": "credentialSubject.extra[1]",
+          "saltHex": "02020202020202020202020202020202",
+          "tag": 2,
+          "tagName": "String",
+          "value": "v1",
+          "expected_leaf_hex": "0x119868dc4b51893285921c0b404fb3fa721dac77b68a38801ded3a5bbb95abb6"
+        },
+        {
+          "keyPath": "credentialSubject.extra[2]",
+          "saltHex": "03030303030303030303030303030303",
+          "tag": 2,
+          "tagName": "String",
+          "value": "v2",
+          "expected_leaf_hex": "0x07056148c0328cc6a3c568f01e6859ca3dd110c9c88bae85b87aa298a3a5b823"
+        },
+        {
+          "keyPath": "credentialSubject.extra[3]",
+          "saltHex": "04040404040404040404040404040404",
+          "tag": 2,
+          "tagName": "String",
+          "value": "v3",
+          "expected_leaf_hex": "0x1b8c0f943d82f5934e64ad0f2d7fdb346d5274297fc787abe72dbe301a347da4"
+        },
+        {
+          "keyPath": "credentialSubject.extra[4]",
+          "saltHex": "05050505050505050505050505050505",
+          "tag": 2,
+          "tagName": "String",
+          "value": "v4",
+          "expected_leaf_hex": "0x00e6561ee73491fa71acd8ceff4c391b39df4338eeda4a440452e79496315b6c"
+        },
+        {
+          "keyPath": "credentialSubject.extra[5]",
+          "saltHex": "06060606060606060606060606060606",
+          "tag": 2,
+          "tagName": "String",
+          "value": "v5",
+          "expected_leaf_hex": "0x2c125a97f63c6e66479b55a0e2c465040acb0338e96050172b57a0165d244c18"
+        },
+        {
+          "keyPath": "credentialSubject.extra[6]",
+          "saltHex": "07070707070707070707070707070707",
+          "tag": 2,
+          "tagName": "String",
+          "value": "v6",
+          "expected_leaf_hex": "0x28536fb671d7182a2abc35c316cb4d2f14eae343a3e8203fd99dc65fcbac7256"
+        },
+        {
+          "keyPath": "credentialSubject.extra[7]",
+          "saltHex": "08080808080808080808080808080808",
+          "tag": 2,
+          "tagName": "String",
+          "value": "v7",
+          "expected_leaf_hex": "0x0b44d8e8319cbe00a074398bd00ff5be74b266826818811b920b8902cc3791e7"
+        },
+        {
+          "keyPath": "credentialSubject.extra[8]",
+          "saltHex": "09090909090909090909090909090909",
+          "tag": 2,
+          "tagName": "String",
+          "value": "v8",
+          "expected_leaf_hex": "0x235b0ff38ddb910a26ad7eda5dc0cdca1b37f4a9e790021f9fcda75373108e3a"
+        },
+        {
+          "keyPath": "credentialSubject.extra[9]",
+          "saltHex": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a",
+          "tag": 2,
+          "tagName": "String",
+          "value": "v9",
+          "expected_leaf_hex": "0x0bd98cec6bf6eb9cc4a9a7adff941cc90657e0b8d9e91b794e4f6513ab2c4974"
+        },
+        {
+          "keyPath": "credentialSubject.extra[10]",
+          "saltHex": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b",
+          "tag": 2,
+          "tagName": "String",
+          "value": "v10",
+          "expected_leaf_hex": "0x110a4124e7b6eea2e8b064216968d5acf3f82e802046e66b3f3118727d497cfe"
+        },
+        {
+          "keyPath": "credentialSubject.extra[11]",
+          "saltHex": "0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c",
+          "tag": 2,
+          "tagName": "String",
+          "value": "v11",
+          "expected_leaf_hex": "0x1ee1e5e7191b1db6909d90cb70beede399625777f1ce87f4d1c17594ed3615d0"
+        },
+        {
+          "keyPath": "credentialSubject.extra[12]",
+          "saltHex": "0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d",
+          "tag": 2,
+          "tagName": "String",
+          "value": "v12",
+          "expected_leaf_hex": "0x271e2a4c0cf3061c0827f7c8f2f3fd4473ed3fd882c4243e5f5e5888cee6f382"
+        },
+        {
+          "keyPath": "credentialSubject.extra[13]",
+          "saltHex": "0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e",
+          "tag": 2,
+          "tagName": "String",
+          "value": "v13",
+          "expected_leaf_hex": "0x2fb107770fa1fd1a2bb2b08f3ae880104accf6a05fafde95a29d53eaec77a161"
+        },
+        {
+          "keyPath": "credentialSubject.extra[14]",
+          "saltHex": "0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f",
+          "tag": 2,
+          "tagName": "String",
+          "value": "v14",
+          "expected_leaf_hex": "0x0506d929da785963635b0e54319e49a8558c2fdef39e4e5446d82b9c530125e9"
+        },
+        {
+          "keyPath": "credentialSubject.extra[15]",
+          "saltHex": "10101010101010101010101010101010",
+          "tag": 2,
+          "tagName": "String",
+          "value": "v15",
+          "expected_leaf_hex": "0x12477063f7e38fccf3102aa99b4ab82f3ad2358545ddd1a627bca260ae9c9d98"
+        },
+        {
+          "keyPath": "credentialSubject.extra[16]",
+          "saltHex": "11111111111111111111111111111111",
+          "tag": 2,
+          "tagName": "String",
+          "value": "v16",
+          "expected_leaf_hex": "0x2e053735509193034f0be5fb8773bd21f4cfca26430a8585c7ad40e7e437b99f"
+        },
+        {
+          "keyPath": "credentialSubject.extra[17]",
+          "saltHex": "12121212121212121212121212121212",
+          "tag": 2,
+          "tagName": "String",
+          "value": "v17",
+          "expected_leaf_hex": "0x170f4999e79574cb24a4375fad21b95e4ef66a2e5d52b87aecad5253856afb2c"
+        },
+        {
+          "keyPath": "credentialSubject.extra[18]",
+          "saltHex": "13131313131313131313131313131313",
+          "tag": 2,
+          "tagName": "String",
+          "value": "v18",
+          "expected_leaf_hex": "0x24e4995431e19ad60599f0821538cb96bfaf6c756e7084114c9ef8fb9cd56997"
+        },
+        {
+          "keyPath": "credentialSubject.extra[19]",
+          "saltHex": "14141414141414141414141414141414",
+          "tag": 2,
+          "tagName": "String",
+          "value": "v19",
+          "expected_leaf_hex": "0x0e1f77f24567540765d663aa3ad87f29fa18b8a90daf3437954bb292c92f87b0"
+        },
+        {
+          "keyPath": "credentialSubject.extra[20]",
+          "saltHex": "15151515151515151515151515151515",
+          "tag": 2,
+          "tagName": "String",
+          "value": "v20",
+          "expected_leaf_hex": "0x22adc5bc257fe37939edf0390922707c0714e7ed880bac0b36d7c43cc6a200c8"
+        },
+        {
+          "keyPath": "credentialSubject.extra[21]",
+          "saltHex": "16161616161616161616161616161616",
+          "tag": 2,
+          "tagName": "String",
+          "value": "v21",
+          "expected_leaf_hex": "0x19a09388919dbb230baeb8ad4541e4644032ee0d7c17cd32a388d0547dacb328"
+        },
+        {
+          "keyPath": "credentialSubject.extra[22]",
+          "saltHex": "17171717171717171717171717171717",
+          "tag": 2,
+          "tagName": "String",
+          "value": "v22",
+          "expected_leaf_hex": "0x30284dc6a9403435d8dc70e867fec0197c3c875a1fdf1d098a60c419413c2181"
+        },
+        {
+          "keyPath": "credentialSubject.extra[23]",
+          "saltHex": "18181818181818181818181818181818",
+          "tag": 2,
+          "tagName": "String",
+          "value": "v23",
+          "expected_leaf_hex": "0x0c9b57cdc85f0e614d5ca44f2e3c8a9016e70f720f167c5281d6827726ce39dd"
+        },
+        {
+          "keyPath": "credentialSubject.extra[24]",
+          "saltHex": "19191919191919191919191919191919",
+          "tag": 2,
+          "tagName": "String",
+          "value": "v24",
+          "expected_leaf_hex": "0x2334ac0732a8877b4d5589be59e24d1f7af9220e35568034654d9c865b2bfb36"
+        },
+        {
+          "keyPath": "credentialSubject.extra[25]",
+          "saltHex": "1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
+          "tag": 2,
+          "tagName": "String",
+          "value": "v25",
+          "expected_leaf_hex": "0x14b89f7be4a388bd754a6f8244ba6fb52008508103f97121bdb5261e409b276f"
+        },
+        {
+          "keyPath": "credentialSubject.extra[26]",
+          "saltHex": "1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b",
+          "tag": 2,
+          "tagName": "String",
+          "value": "v26",
+          "expected_leaf_hex": "0x0eaa74088ea165dd3d83470fa8d076a26aed7f2e5676eb6017ea6f8ab2c88c74"
+        },
+        {
+          "keyPath": "credentialSubject.extra[27]",
+          "saltHex": "1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c",
+          "tag": 2,
+          "tagName": "String",
+          "value": "v27",
+          "expected_leaf_hex": "0x01e659e1b1b013c4331fffc0f05ff4fa7c177bc80761624e1c79e659856d2a66"
+        },
+        {
+          "keyPath": "credentialSubject.extra[28]",
+          "saltHex": "1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d",
+          "tag": 2,
+          "tagName": "String",
+          "value": "v28",
+          "expected_leaf_hex": "0x20713e2f7b0efac61c028b8bde5b09e65b9d9f291fe7b5b984875e101cb13c64"
+        },
+        {
+          "keyPath": "credentialSubject.extra[29]",
+          "saltHex": "1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e",
+          "tag": 2,
+          "tagName": "String",
+          "value": "v29",
+          "expected_leaf_hex": "0x2b1278d0fd529caf546b4da9211f8db869697ef4255bd47e7b305fe438e91e18"
+        },
+        {
+          "keyPath": "credentialSubject.extra[30]",
+          "saltHex": "1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f",
+          "tag": 2,
+          "tagName": "String",
+          "value": "v30",
+          "expected_leaf_hex": "0x190f0a3a272020b606f84d9d3d99a56a8d2cf180bacb8338d2aad0bad7064788"
+        },
+        {
+          "keyPath": "credentialSubject.extra[31]",
+          "saltHex": "20202020202020202020202020202020",
+          "tag": 2,
+          "tagName": "String",
+          "value": "v31",
+          "expected_leaf_hex": "0x25d432fd38e4e230c8091106c18b323b99ad6ff3a16101be0aed943075734200"
+        },
+        {
+          "keyPath": "credentialSubject.extra[32]",
+          "saltHex": "21212121212121212121212121212121",
+          "tag": 2,
+          "tagName": "String",
+          "value": "v32",
+          "expected_leaf_hex": "0x032ecc75f0198c8e646a301344e4d8cc88144b162a24f05e4f4664b68e0c4ca7"
+        },
+        {
+          "keyPath": "credentialSubject.extra[33]",
+          "saltHex": "22222222222222222222222222222222",
+          "tag": 2,
+          "tagName": "String",
+          "value": "v33",
+          "expected_leaf_hex": "0x1a33d5c0bd240f72d978ef1a58f54123724eabd3978b3a5a7680687c6e31c841"
+        },
+        {
+          "keyPath": "credentialSubject.extra[34]",
+          "saltHex": "23232323232323232323232323232323",
+          "tag": 2,
+          "tagName": "String",
+          "value": "v34",
+          "expected_leaf_hex": "0x0a3a029734c03a9473545f261616957afcb8af24c2c826e2ab8a0d6035c1c28e"
+        },
+        {
+          "keyPath": "credentialSubject.extra[35]",
+          "saltHex": "24242424242424242424242424242424",
+          "tag": 2,
+          "tagName": "String",
+          "value": "v35",
+          "expected_leaf_hex": "0x28f80ced4cd8d173cc90481f2959ab2c414474c0c8c9e10aff7028d1af5ff969"
+        },
+        {
+          "keyPath": "credentialSubject.extra[36]",
+          "saltHex": "25252525252525252525252525252525",
+          "tag": 2,
+          "tagName": "String",
+          "value": "v36",
+          "expected_leaf_hex": "0x2ebc9f59882432c137a45bd25eb6889ac517771f8f44cc7d034ba58cbfac03ac"
+        },
+        {
+          "keyPath": "credentialSubject.extra[37]",
+          "saltHex": "26262626262626262626262626262626",
+          "tag": 2,
+          "tagName": "String",
+          "value": "v37",
+          "expected_leaf_hex": "0x0b11ea7f8346417c213319392e79e79e881efda712ab56270a916255f29844a3"
+        },
+        {
+          "keyPath": "credentialSubject.extra[38]",
+          "saltHex": "27272727272727272727272727272727",
+          "tag": 2,
+          "tagName": "String",
+          "value": "v38",
+          "expected_leaf_hex": "0x08abf1c30c0498e2df6fe0b0281e8bed73f083901d37426d7390ec9fc25ce471"
+        },
+        {
+          "keyPath": "credentialSubject.extra[39]",
+          "saltHex": "28282828282828282828282828282828",
+          "tag": 2,
+          "tagName": "String",
+          "value": "v39",
+          "expected_leaf_hex": "0x0773d00ff599fb7e3235abdd5a4c382818217657f4f24b04c3e1b62a9bd0f677"
+        },
+        {
+          "keyPath": "credentialSubject.extra[40]",
+          "saltHex": "29292929292929292929292929292929",
+          "tag": 2,
+          "tagName": "String",
+          "value": "v40",
+          "expected_leaf_hex": "0x2289a2bd19b92cdbaed530794108d3dace035d801541a70a7adcfa7e52c0e88b"
+        },
+        {
+          "keyPath": "credentialSubject.extra[41]",
+          "saltHex": "2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a",
+          "tag": 2,
+          "tagName": "String",
+          "value": "v41",
+          "expected_leaf_hex": "0x0e02f97f37fe75a050523cc94d319ae9128928a7fa0cc55b6852a32076ed07ac"
+        },
+        {
+          "keyPath": "credentialSubject.extra[42]",
+          "saltHex": "2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b",
+          "tag": 2,
+          "tagName": "String",
+          "value": "v42",
+          "expected_leaf_hex": "0x1adc0f0a92e2c1abe9476c14671a80002dfe5bfb39b957a3e5cb3e6f5affc61f"
+        },
+        {
+          "keyPath": "credentialSubject.extra[43]",
+          "saltHex": "2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c",
+          "tag": 2,
+          "tagName": "String",
+          "value": "v43",
+          "expected_leaf_hex": "0x017ce02638fe373a338da4cd956db1abfb5a5299677d1336d2f7a033077aabdb"
+        },
+        {
+          "keyPath": "credentialSubject.extra[44]",
+          "saltHex": "2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d",
+          "tag": 2,
+          "tagName": "String",
+          "value": "v44",
+          "expected_leaf_hex": "0x182654d9e44d2ab801f29258907bd659c02f22e6af98a93c5904f63e9cd970ef"
+        },
+        {
+          "keyPath": "credentialSubject.extra[45]",
+          "saltHex": "2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e",
+          "tag": 2,
+          "tagName": "String",
+          "value": "v45",
+          "expected_leaf_hex": "0x1ced38ba1961cb028c14e83844b6cb296cd445a74f67920bb2941ab911d3b7c0"
+        },
+        {
+          "keyPath": "credentialSubject.extra[46]",
+          "saltHex": "2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f",
+          "tag": 2,
+          "tagName": "String",
+          "value": "v46",
+          "expected_leaf_hex": "0x236954c068e95ea51447d06a1d6a02ebcd962083650a2d8e1c303f26d49bc739"
+        },
+        {
+          "keyPath": "credentialSubject.extra[47]",
+          "saltHex": "30303030303030303030303030303030",
+          "tag": 2,
+          "tagName": "String",
+          "value": "v47",
+          "expected_leaf_hex": "0x02b4711d14fc4f8f73d0be583bd52f9403e5b4f4322e7bc1d15d4c1155642e2f"
+        },
+        {
+          "keyPath": "credentialSubject.extra[48]",
+          "saltHex": "31313131313131313131313131313131",
+          "tag": 2,
+          "tagName": "String",
+          "value": "v48",
+          "expected_leaf_hex": "0x176bbf7a31cee13561c617374a2bbdaa87f92ddda44fdb9d8417406f802a598d"
+        },
+        {
+          "keyPath": "credentialSubject.extra[49]",
+          "saltHex": "32323232323232323232323232323232",
+          "tag": 2,
+          "tagName": "String",
+          "value": "v49",
+          "expected_leaf_hex": "0x03e0722cd56ce2f4b50d62e2de8b91534f0f1c9b920949a0d89a83df3ea3f194"
+        },
+        {
+          "keyPath": "credentialSubject.extra[50]",
+          "saltHex": "33333333333333333333333333333333",
+          "tag": 2,
+          "tagName": "String",
+          "value": "v50",
+          "expected_leaf_hex": "0x229bcc8d3c7c17f5e7365e7021ec735fea1a413ccabdbfb0c5538bb0eaf36467"
+        },
+        {
+          "keyPath": "credentialSubject.extra[51]",
+          "saltHex": "34343434343434343434343434343434",
+          "tag": 2,
+          "tagName": "String",
+          "value": "v51",
+          "expected_leaf_hex": "0x11d509bb969c196821dabe2314f47110249f2e29ef1ce7fe42695c03c03d8d98"
+        },
+        {
+          "keyPath": "credentialSubject.extra[52]",
+          "saltHex": "35353535353535353535353535353535",
+          "tag": 2,
+          "tagName": "String",
+          "value": "v52",
+          "expected_leaf_hex": "0x1058ac23912f6532d5c1f2366933db29c515eae13eb43cb08750efe150ecb9ec"
+        },
+        {
+          "keyPath": "credentialSubject.extra[53]",
+          "saltHex": "36363636363636363636363636363636",
+          "tag": 2,
+          "tagName": "String",
+          "value": "v53",
+          "expected_leaf_hex": "0x2fe28f73fd9e59841068dab9e6d3198c63ca223e5f052b8bd4b86355a9026c71"
+        },
+        {
+          "keyPath": "credentialSubject.extra[54]",
+          "saltHex": "37373737373737373737373737373737",
+          "tag": 2,
+          "tagName": "String",
+          "value": "v54",
+          "expected_leaf_hex": "0x0fc625306f4d141c9d78e99829caf9f60ede0afd99088ca46bf51ffa66703edc"
+        },
+        {
+          "keyPath": "credentialSubject.extra[55]",
+          "saltHex": "38383838383838383838383838383838",
+          "tag": 2,
+          "tagName": "String",
+          "value": "v55",
+          "expected_leaf_hex": "0x2deaf4afae939dfca29ba03a9194965c236faa2f1aca0e4eb4c33d878f25e4f9"
+        },
+        {
+          "keyPath": "credentialSubject.extra[56]",
+          "saltHex": "39393939393939393939393939393939",
+          "tag": 2,
+          "tagName": "String",
+          "value": "v56",
+          "expected_leaf_hex": "0x000fa8177e80a0109931fb7c74fe463825d419f897fa45099eaa3cf2d683f776"
+        },
+        {
+          "keyPath": "credentialSubject.extra[57]",
+          "saltHex": "3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a",
+          "tag": 2,
+          "tagName": "String",
+          "value": "v57",
+          "expected_leaf_hex": "0x29a5e398edbf97dc2ef8a5cebfd8622242209de63092dbab701f80a682022ce3"
+        },
+        {
+          "keyPath": "credentialSubject.extra[58]",
+          "saltHex": "3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b",
+          "tag": 2,
+          "tagName": "String",
+          "value": "v58",
+          "expected_leaf_hex": "0x13005de17a573a7e53a3fac039186208c6a80b143f29a8475efb0a2439fe95a6"
+        },
+        {
+          "keyPath": "credentialSubject.extra[59]",
+          "saltHex": "3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c",
+          "tag": 2,
+          "tagName": "String",
+          "value": "v59",
+          "expected_leaf_hex": "0x1e343674adece84a4c2c50671d75e67c4f8837742521d976a6468f446e4bda3c"
+        },
+        {
+          "keyPath": "credentialSubject.extra[60]",
+          "saltHex": "3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d",
+          "tag": 2,
+          "tagName": "String",
+          "value": "v60",
+          "expected_leaf_hex": "0x1fada433faa4bcc6f225fcf4b8a68f0c07178c9486972f64ebf5ff9a9fb4c822"
+        },
+        {
+          "keyPath": "credentialSubject.extra[61]",
+          "saltHex": "3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e",
+          "tag": 2,
+          "tagName": "String",
+          "value": "v61",
+          "expected_leaf_hex": "0x1ab024f7828681ea57e2520130e2f4699bc7c5c01892a3deb0cd9518593837aa"
+        }
+      ],
+      "obfuscatedLeafHashes": [],
+      "reservedLeafHashes": [
+        "0x0f13786f97376a95f1792232e1eb21ba543d2532682a18452269bf60488edc55",
+        "0x1f1da980caae326d2c4cf7b4bb1b132bd1eb09dd542bcf92c564564398733f91",
+        "0x23cb052273f35cd1043b73a10f82d4c86f1ed6cb4c5546ff6de1365c27800c78"
+      ],
+      "root_hex": "0x007bb174eefa8f54e54cc04efeb2f6caeae710f302bd28a07dc5c82e9621dc87",
+      "valid": false
+    },
+    {
+      "name": "negative_hex32_shape_reserved_missing_0x_prefix",
+      "notes": "reservedLeafHashes[0] is a genuine 64-hex-character field element with its \"0x\" prefix stripped. It decodes to the identical field element either way (the parser that folds it into the root treats the prefix as optional, stripping it when present), so root_hex is the same genuine root a fully-prefixed posting would produce. Only step 1's hex32-shape check, which requires the literal \"0x\" prefix, rejects this.",
+      "disclosed": [
+        {
+          "keyPath": "credentialSubject.species",
+          "saltHex": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "tag": 2,
+          "tagName": "String",
+          "value": "dog",
+          "expected_leaf_hex": "0x1e2a8b2327908e91408416c14f99554c373d9ebad6571754b82cf319f676953d"
+        }
+      ],
+      "obfuscatedLeafHashes": [],
+      "reservedLeafHashes": [
+        "0f13786f97376a95f1792232e1eb21ba543d2532682a18452269bf60488edc55",
+        "0x1f1da980caae326d2c4cf7b4bb1b132bd1eb09dd542bcf92c564564398733f91",
+        "0x23cb052273f35cd1043b73a10f82d4c86f1ed6cb4c5546ff6de1365c27800c78"
+      ],
+      "root_hex": "0x24c9eb07642564a0811b978c58c0d929da71d26b03fa3240c7856b3530dca753",
+      "valid": false
+    },
+    {
+      "name": "negative_hex32_shape_obfuscated_missing_0x_prefix",
+      "notes": "obfuscatedLeafHashes[0] (species's hash) is a genuine 64-hex-character field element with its \"0x\" prefix stripped, decoding to the identical field element either way, so root_hex is the same genuine root a fully-prefixed posting would produce. Only step 1's hex32-shape check, which requires the literal \"0x\" prefix, rejects this.",
+      "disclosed": [
+        {
+          "keyPath": "credentialSubject.microchip.code",
+          "saltHex": "cccccccccccccccccccccccccccccccc",
+          "tag": 2,
+          "tagName": "String",
+          "value": "985141006580319",
+          "expected_leaf_hex": "0x09fb163b818c8482976dcc3a149eb2336da14662a67c88aee86111f6aa254ec8"
+        }
+      ],
+      "obfuscatedLeafHashes": [
+        "1e2a8b2327908e91408416c14f99554c373d9ebad6571754b82cf319f676953d"
+      ],
+      "reservedLeafHashes": [
+        "0x0f13786f97376a95f1792232e1eb21ba543d2532682a18452269bf60488edc55",
+        "0x1f1da980caae326d2c4cf7b4bb1b132bd1eb09dd542bcf92c564564398733f91",
+        "0x23cb052273f35cd1043b73a10f82d4c86f1ed6cb4c5546ff6de1365c27800c78"
+      ],
+      "root_hex": "0x07f14f47fabc05671d9ba009ac178dab16838f35ec9f1fdd576caf3843c0a2ed",
       "valid": false
     }
   ]

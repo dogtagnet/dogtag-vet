@@ -44,9 +44,14 @@ See `docs/DEPLOY.md` for the full quickstart, the Kubernetes path (`helm/dogtag-
 
 ## Protocol sync
 
-`protocol/` is vendored, read-only.
+`protocol/` is vendored by `dogtag-protocol/scripts/sync-to.sh`, which mirrors `contracts/exports`, `contracts/flattened`, `packages/dogtag-standard-ts`, `specs/`, and `design/design-system.md` wholesale (`rsync --delete`) and regenerates `protocol/PROVENANCE.md` from scratch every time.
 It holds the contract ABIs, the wire-authoritative OpenAPI spec (`protocol/specs/vet-public-api.yaml`), the QR and issuer-attestation format specs, and the `@dogtag/standard` crypto library, wired in as a pnpm workspace package.
-Re-vendor by re-copying that directory from the protocol repo; nothing in this app should ever need to change what lives inside it.
+
+**Local deviations the sync does not preserve** (re-apply both by hand after every re-sync, since `PROVENANCE.md`'s own generated text is overwritten wholesale and cannot carry this note itself):
+1. `protocol/specs/vet-public-api.yaml` is intentionally AHEAD of `dogtag-protocol`'s own copy - this app's WP4.9V/WP4.10V wire changes (the `leaves`/`disclosed` transition, `obfuscatedLeafHashes`, `schemaId`) are hand-edited here first and only later mirrored upstream. A re-sync silently resets it to master's older copy; diff against this repo's own git history for the file and restore the hand-edited version.
+2. The four EIP-712 vector files under `protocol/specs/` (`eip712-client-registration-vectors.json`, `eip712-client-registration-signature-vectors.json`, `eip712-mobile-booking-vectors.json`, `mobile-booking-hash-vectors.json`) were authored directly into this app's vendored tree by an earlier commit and never existed in `dogtag-protocol` itself - at least 8 of this repo's own test files depend on them. A re-sync deletes all four outright (`git checkout --` restores them from this repo's own history immediately after, since they are tracked here). Relocating them to a proper, non-vendored home is a follow-up, not yet done.
+
+So "nothing in this app should ever need to change what lives inside it" is no longer quite true: exactly these two things do, by design, and both need re-applying after every re-sync until the yaml mirrors upstream and the vector files move out of `protocol/` for good.
 
 ## Tag data custody
 

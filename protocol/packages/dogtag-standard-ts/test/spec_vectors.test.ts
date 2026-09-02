@@ -115,6 +115,25 @@ const vectorsRawText = readFileSync(VECTORS_PATH, "utf8");
 const OLD_TESTVECTORS_PATH = resolve(REPO_ROOT, "packages", "dogtag-standard-ts", "testvectors.json");
 const oldTestvectorsRawText = readFileSync(OLD_TESTVECTORS_PATH, "utf8");
 
+// Parsed (not just raw-text) view of testvectors.json's redactedArtifacts, used only by the
+// "promoted from testvectors.json" drift guard below (WP4.10S P1) - the hex-drift guard above stays
+// a raw substring check, this one needs actual field access to compare vector-to-vector.
+interface OldRedactedArtifactWireLeaf {
+  keyPath: string;
+  saltHex: string;
+  tag: TypeTag;
+  value: string;
+}
+interface OldRedactedArtifactVector {
+  name: string;
+  disclosed: OldRedactedArtifactWireLeaf[];
+  obfuscatedLeafHashes: string[];
+  reservedLeafHashes: string[];
+  root: string;
+  valid: boolean;
+}
+const oldFile = JSON.parse(oldTestvectorsRawText) as {redactedArtifacts: OldRedactedArtifactVector[]};
+
 /**
  * Reconstruct the exact TypedScalar a leafHashVectors/merkleVectors/inclusionVectors entry's
  * `value` field encodes, per the vectors file's own `_comment`: every tag's JSON value IS the
@@ -523,6 +542,72 @@ describe("redactedArtifactVectors - verifyRedactedArtifact reproduces every reco
         reservedLeafHashes: relabeled.reservedLeafHashes,
       }),
     ).toBe(false);
+  });
+});
+
+describe("redactedArtifactVectors - the isolating negatives promoted from testvectors.json (WP4.10S P1)", () => {
+  // The exact 6 vectors scripts/promote-spec-vectors.ts copies from packages/dogtag-standard-ts/
+  // testvectors.json's redactedArtifacts, each constructed so its root is the GENUINE root of its
+  // own exact leaf multiset - so only the ONE structural check it names can be the reason
+  // verifyRedactedArtifact rejects it (specs/leaf-commitment.md section 15's worked examples name
+  // each one explicitly). Listed again here independently, not imported from the promotion script,
+  // so this test keeps checking what the SPEC claims even if the script's own list ever changes -
+  // the same "independent transcription, not a shared import" discipline redactedArtifact.ts itself
+  // documents for its own duplicated helpers.
+  const PROMOTED_NAMES = [
+    "negative_overlap_root_preserving_duplicate_leaf",
+    "negative_overlap_reserved_half_matches_disclosed",
+    "negative_duplicate_pet_keypath_no_identity_oracle",
+    "negative_65_leaves_genuine_root_over_cap",
+    "negative_hex32_shape_reserved_missing_0x_prefix",
+    "negative_hex32_shape_obfuscated_missing_0x_prefix",
+  ];
+
+  it("pins the promoted count (guards a future promotion silently shrinking this set)", () => {
+    expect(PROMOTED_NAMES.length).toBe(6);
+  });
+
+  it("all 6 are present in specs/leaf-commitment-vectors.json, and every one is a deliberately-invalid (valid: false) vector", () => {
+    for (const name of PROMOTED_NAMES) {
+      const v = file.redactedArtifactVectors.find((v) => v.name === name);
+      expect(v, `${name} missing from specs/leaf-commitment-vectors.json's redactedArtifactVectors`).toBeDefined();
+      expect(v!.valid, `${name} should be a negative (rejected) vector`).toBe(false);
+    }
+  });
+
+  // This is the drift guard the promotion script's self-checks (recompute the root, re-run
+  // verifyRedactedArtifact) do not themselves cover: nothing before this stopped a future
+  // `pnpm gen-vectors` run from moving testvectors.json's same-named vector (new salts, a
+  // regenerated root) while specs/leaf-commitment-vectors.json silently kept the stale copy - every
+  // OTHER test in this file only checks the curated JSON against the implementation, never the two
+  // vectors files against each other. Field-for-field, not a whole-object deep-equal, because the
+  // curated side carries two EXTRA per-leaf fields (tagName, expected_leaf_hex) testvectors.json's
+  // wire shape does not.
+  it("every promoted vector is field-for-field identical to its same-named testvectors.json source (a promotion, not a re-invention)", () => {
+    for (const name of PROMOTED_NAMES) {
+      const curated = file.redactedArtifactVectors.find((v) => v.name === name)!;
+      const source = oldFile.redactedArtifacts.find((v) => v.name === name);
+      expect(source, `${name} missing from testvectors.json's redactedArtifacts - nothing to promote FROM`).toBeDefined();
+
+      expect(curated.disclosed.length, `${name}: disclosed.length must match its source`).toBe(source!.disclosed.length);
+      curated.disclosed.forEach((l, i) => {
+        const s = source!.disclosed[i]!;
+        expect(l.keyPath, `${name}.disclosed[${i}].keyPath`).toBe(s.keyPath);
+        expect(l.saltHex.toLowerCase(), `${name}.disclosed[${i}].saltHex`).toBe(s.saltHex.toLowerCase());
+        expect(l.tag, `${name}.disclosed[${i}].tag`).toBe(s.tag);
+        expect(l.value, `${name}.disclosed[${i}].value`).toBe(s.value);
+      });
+      expect(
+        curated.obfuscatedLeafHashes.map((h) => h.toLowerCase()),
+        `${name}.obfuscatedLeafHashes`,
+      ).toEqual(source!.obfuscatedLeafHashes.map((h) => h.toLowerCase()));
+      expect(
+        curated.reservedLeafHashes.map((h) => h.toLowerCase()),
+        `${name}.reservedLeafHashes`,
+      ).toEqual(source!.reservedLeafHashes.map((h) => h.toLowerCase()));
+      expect(curated.root_hex.toLowerCase(), `${name}.root_hex vs source root`).toBe(source!.root.toLowerCase());
+      expect(curated.valid, `${name}.valid`).toBe(source!.valid);
+    }
   });
 });
 

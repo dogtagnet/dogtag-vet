@@ -78,7 +78,20 @@ describe("dogtag.redacted-tag-artifact.v1.schema.json - shape validation", () =>
   // `negative_reserved_relabeled_as_obfuscated` is the opposite illustration: it has only 2
   // `reservedLeafHashes`, a SHAPE violation the schema's `minItems: 3` catches directly, even though
   // its root is bit-identical to a genuine artifact's (section 15's own worked example).
-  const SHAPE_INVALID_VECTOR_NAMES = new Set(["negative_reserved_relabeled_as_obfuscated"]);
+  // `negative_hex32_shape_reserved_missing_0x_prefix` and `..._obfuscated_missing_0x_prefix` (WP4.10S
+  // P1 promotion) are a THIRD illustration of the same independence, on the opposite check from
+  // `negative_reserved_relabeled_as_obfuscated`: each has an otherwise-genuine 64-hex-char hash with
+  // its "0x" stripped, which the schema's `hex32` pattern (`^0x[0-9a-fA-F]{64}$`) requires and
+  // therefore rejects on SHAPE, even though the leaf-commitment layer's own parser (`fromHex32`)
+  // treats the prefix as optional and folds the identical field element into a genuine root either
+  // way - `verifyRedactedArtifact` rejects these two for a DIFFERENT reason (its own, stricter hex32
+  // shape check, isHex32, which - unlike fromHex32 - does require the prefix): see the dedicated
+  // test below for both halves of that claim, proven rather than merely asserted by exclusion here.
+  const SHAPE_INVALID_VECTOR_NAMES = new Set([
+    "negative_reserved_relabeled_as_obfuscated",
+    "negative_hex32_shape_reserved_missing_0x_prefix",
+    "negative_hex32_shape_obfuscated_missing_0x_prefix",
+  ]);
 
   describe("positive: every SHAPE-valid redactedArtifactVectors entry (specs/leaf-commitment-vectors.json) validates, whether full, masked, or fully-obfuscated", () => {
     for (const v of vectorsFile.redactedArtifactVectors.filter((v) => !SHAPE_INVALID_VECTOR_NAMES.has(v.name))) {
@@ -108,6 +121,25 @@ describe("dogtag.redacted-tag-artifact.v1.schema.json - shape validation", () =>
     expect(v.reservedLeafHashes.length).toBe(2);
     const artifact = envelopeOf(v);
     expect(validate(artifact)).toBe(false);
+    expect(verifyRedactedArtifact(artifact)).toBe(false);
+  });
+
+  it("negative_hex32_shape_reserved_missing_0x_prefix is schema-INVALID (shape: reservedLeafHashes[0] missing its \"0x\" prefix) despite recomputing a genuine root - the registry's hex32 pattern requires the literal prefix even though the leaf-commitment layer's own fromHex32 parser treats it as optional", () => {
+    const v = vectorsFile.redactedArtifactVectors.find((v) => v.name === "negative_hex32_shape_reserved_missing_0x_prefix")!;
+    expect(v.reservedLeafHashes[0]!.startsWith("0x")).toBe(false);
+    const artifact = envelopeOf(v);
+    expect(validate(artifact), JSON.stringify(validate.errors)).toBe(false);
+    // verifyRedactedArtifact ALSO rejects it - but via its own isHex32 shape check (step 1), a
+    // DIFFERENT reason than the schema's pattern mismatch; redacted_artifact.test.ts's D4 bite-proof
+    // tests pin that this specific check (not e.g. a root mismatch) is what does the rejecting there.
+    expect(verifyRedactedArtifact(artifact)).toBe(false);
+  });
+
+  it("negative_hex32_shape_obfuscated_missing_0x_prefix is schema-INVALID (shape: obfuscatedLeafHashes[0] missing its \"0x\" prefix) despite recomputing a genuine root - same independence as the reserved-half vector above, on the other array this check covers", () => {
+    const v = vectorsFile.redactedArtifactVectors.find((v) => v.name === "negative_hex32_shape_obfuscated_missing_0x_prefix")!;
+    expect(v.obfuscatedLeafHashes[0]!.startsWith("0x")).toBe(false);
+    const artifact = envelopeOf(v);
+    expect(validate(artifact), JSON.stringify(validate.errors)).toBe(false);
     expect(verifyRedactedArtifact(artifact)).toBe(false);
   });
 
