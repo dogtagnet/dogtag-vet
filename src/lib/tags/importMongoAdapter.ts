@@ -76,6 +76,17 @@ export const mongoImportStore: ImportFlowStore = {
     // not the earlier previewTargetPet call, is what actually prevents two concurrent imports
     // from both attaching to the same target - the same "one round trip, no check-then-write
     // window" shape lib/registration/mongoStore.ts's appendWalletToClient already established.
+    //
+    // `resolvedAttributes.name` is ALWAYS defined here for an EXISTING pet target: `Pet.name` is
+    // schema-required (never blank in the database), and `mergeVerifiedAttributes` only ever
+    // FILLS an empty field - name can never be one, so `resolved.name` is always just whatever
+    // the pet's own name already was. An explicit invariant check (never a silent `?? ""`
+    // fallback into `buildPetSearchKey`) - a wrongly-empty searchKey would silently drop this pet
+    // from search results, exactly the kind of untruthful, hard-to-notice failure this app's own
+    // MAJOR-2 lesson warns against papering over.
+    if (!resolvedAttributes.name) {
+      throw new Error(`attachToExistingPet invariant violated: pet ${petId} resolved with no name`);
+    }
     const conflictsField = importConflictsField(conflicts, now);
     const updated = await Pet.findOneAndUpdate(
       {
@@ -91,7 +102,7 @@ export const mongoImportStore: ImportFlowStore = {
           ...(resolvedAttributes.dateOfBirth !== undefined ? {dateOfBirth: resolvedAttributes.dateOfBirth} : {}),
           dogTag: {...dogTagSubdoc(tag), ...(conflictsField ? {importConflicts: conflictsField} : {})},
           searchKey: buildPetSearchKey({
-            name: resolvedAttributes.name ?? "",
+            name: resolvedAttributes.name,
             species: resolvedAttributes.species,
             breed: resolvedAttributes.breed,
           }),

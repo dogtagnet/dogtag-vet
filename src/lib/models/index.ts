@@ -14,3 +14,6 @@ export * from "@/lib/models/ChainActivity";
 export * from "@/lib/models/StoredFile";
 export * from "@/lib/models/Staff";
 export * from "@/lib/models/ClinicSettings";
+export * from "@/lib/models/TagArtifact";
+export * from "@/lib/models/ArtifactExportSession";
+export * from "@/lib/models/ArtifactImportSession";
