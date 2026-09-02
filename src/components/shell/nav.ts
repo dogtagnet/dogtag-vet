@@ -29,6 +29,7 @@ export const navGroups: NavGroup[] = [
       {href: "/tags", label: "Tags"},
       {href: "/tags/issue", label: "Issue tag"},
       {href: "/verify", label: "Verify"},
+      {href: "/verify/redacted", label: "Verify redacted artifact"},
       {href: "/verifications", label: "Verification history"},
       {href: "/activity", label: "On-chain activity"},
     ],
