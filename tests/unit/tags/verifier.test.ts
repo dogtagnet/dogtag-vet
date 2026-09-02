@@ -123,28 +123,28 @@ describe("resolveTagRootAndIssuer (shared verifier stage 1)", () => {
 describe("verifyTagDataAgainstRoot (shared verifier stage 2)", () => {
   it("no data sent: dataVerificationAttempted false, dataVerified false, isValid still read", async () => {
     const deps = fakeDeps();
-    const result = await verifyTagDataAgainstRoot(deps, {issuerClone: FOREIGN_CLONE, root: A_ROOT});
+    const result = await verifyTagDataAgainstRoot(deps, {issuerClone: FOREIGN_CLONE, dogTagIdField: DOG_TAG_ID_FIELD, root: A_ROOT});
     expect(result).toEqual({ok: true, issuerValid: true, dataVerificationAttempted: false, dataVerified: false});
     expect(deps.readIsValidRoot).toHaveBeenCalledWith(FOREIGN_CLONE, A_ROOT);
   });
 
   it("chain_unreadable: readIsValidRoot throws", async () => {
     const deps = fakeDeps({readIsValidRoot: vi.fn().mockRejectedValue(new Error("RPC timeout"))});
-    const result = await verifyTagDataAgainstRoot(deps, {issuerClone: FOREIGN_CLONE, root: A_ROOT});
+    const result = await verifyTagDataAgainstRoot(deps, {issuerClone: FOREIGN_CLONE, dogTagIdField: DOG_TAG_ID_FIELD, root: A_ROOT});
     expect(result).toEqual({ok: false});
   });
 
   it("issuer invalid (revoked or foreign-invalid): data verification is never attempted even if data was sent", async () => {
     const {leaves, reservedLeafHashes, root} = buildVerifiableFixture();
     const deps = fakeDeps({readIsValidRoot: vi.fn().mockResolvedValue(false)});
-    const result = await verifyTagDataAgainstRoot(deps, {issuerClone: FOREIGN_CLONE, root, leaves, reservedLeafHashes});
+    const result = await verifyTagDataAgainstRoot(deps, {issuerClone: FOREIGN_CLONE, dogTagIdField: DOG_TAG_ID_FIELD, root, leaves, reservedLeafHashes});
     expect(result).toEqual({ok: true, issuerValid: false, dataVerificationAttempted: true, dataVerified: false});
   });
 
   it("issuer valid + genuine leaves: dataVerified true with verifiedAttributes populated", async () => {
     const {leaves, reservedLeafHashes, root} = buildVerifiableFixture();
     const deps = fakeDeps();
-    const result = await verifyTagDataAgainstRoot(deps, {issuerClone: FOREIGN_CLONE, root, leaves, reservedLeafHashes});
+    const result = await verifyTagDataAgainstRoot(deps, {issuerClone: FOREIGN_CLONE, dogTagIdField: DOG_TAG_ID_FIELD, root, leaves, reservedLeafHashes});
     expect(result).toEqual({
       ok: true,
       issuerValid: true,
@@ -158,15 +158,75 @@ describe("verifyTagDataAgainstRoot (shared verifier stage 2)", () => {
     const {leaves, reservedLeafHashes, root} = buildVerifiableFixture();
     const tampered = leaves.map((l) => (l.keyPath === "credentialSubject.name" ? {...l, value: "Max"} : l));
     const deps = fakeDeps();
-    const result = await verifyTagDataAgainstRoot(deps, {issuerClone: FOREIGN_CLONE, root, leaves: tampered, reservedLeafHashes});
+    const result = await verifyTagDataAgainstRoot(deps, {issuerClone: FOREIGN_CLONE, dogTagIdField: DOG_TAG_ID_FIELD, root, leaves: tampered, reservedLeafHashes});
     expect(result).toEqual({ok: true, issuerValid: true, dataVerificationAttempted: true, dataVerified: false});
   });
 
   it("only leaves sent, no reservedLeafHashes: dataVerificationAttempted stays false", async () => {
     const {leaves} = buildVerifiableFixture();
     const deps = fakeDeps();
-    const result = await verifyTagDataAgainstRoot(deps, {issuerClone: FOREIGN_CLONE, root: A_ROOT, leaves});
+    const result = await verifyTagDataAgainstRoot(deps, {issuerClone: FOREIGN_CLONE, dogTagIdField: DOG_TAG_ID_FIELD, root: A_ROOT, leaves});
     expect(result).toEqual({ok: true, issuerValid: true, dataVerificationAttempted: false, dataVerified: false});
+  });
+
+  it("WP4.10V: a REDACTED claim (one leaf moved into obfuscatedLeafHashes) still verifies against the SAME root - masking never moves it", async () => {
+    const {leaves, reservedLeafHashes, root} = buildVerifiableFixture();
+    const [disclosed, masked] = leaves; // species disclosed, name masked
+    const maskedHash = toHex32(hashLeaf(masked!.keyPath, hexToBytes(masked!.saltHex), {tag: masked!.tag, value: masked!.value} as TypedScalar));
+    const deps = fakeDeps();
+    const result = await verifyTagDataAgainstRoot(deps, {
+      issuerClone: FOREIGN_CLONE,
+      dogTagIdField: DOG_TAG_ID_FIELD,
+      root,
+      leaves: [disclosed!],
+      obfuscatedLeafHashes: [maskedHash],
+      reservedLeafHashes,
+    });
+    expect(result).toEqual({
+      ok: true,
+      issuerValid: true,
+      dataVerificationAttempted: true,
+      dataVerified: true,
+      // Only the DISCLOSED leaf ever contributes an attribute - the masked one (name) is honestly
+      // absent, never guessed or carried over from elsewhere.
+      verifiedAttributes: {species: "dog"},
+    });
+  });
+
+  it("WP4.10V: FULLY masked (leaves: [], every leaf in obfuscatedLeafHashes) still verifies - dataVerificationAttempted true, not mistaken for 'no data sent'", async () => {
+    const {leaves, reservedLeafHashes, root} = buildVerifiableFixture();
+    const allHashes = leaves.map((l) => toHex32(hashLeaf(l.keyPath, hexToBytes(l.saltHex), {tag: l.tag, value: l.value} as TypedScalar)));
+    const deps = fakeDeps();
+    const result = await verifyTagDataAgainstRoot(deps, {
+      issuerClone: FOREIGN_CLONE,
+      dogTagIdField: DOG_TAG_ID_FIELD,
+      root,
+      leaves: [],
+      obfuscatedLeafHashes: allHashes,
+      reservedLeafHashes,
+    });
+    // No attribute can be derived - every leaf is masked - but this is still a genuine, verified
+    // claim, never confused with the "nothing was sent at all" case. `verifiedAttributes` is still
+    // present (an empty object) per this type's own pre-existing contract ("present only when
+    // dataVerified" - not "...and non-empty"), exactly as it already would be for a genuine,
+    // pre-WP4.10V artifact with zero attribute leaves at all.
+    expect(result).toEqual({ok: true, issuerValid: true, dataVerificationAttempted: true, dataVerified: true, verifiedAttributes: {}});
+  });
+
+  it("WP4.10V: an overlap (a leaf disclosed AND separately listed as obfuscated) is rejected - dataVerified false", async () => {
+    const {leaves, reservedLeafHashes, root} = buildVerifiableFixture();
+    const [disclosed] = leaves;
+    const redundantHash = toHex32(hashLeaf(disclosed!.keyPath, hexToBytes(disclosed!.saltHex), {tag: disclosed!.tag, value: disclosed!.value} as TypedScalar));
+    const deps = fakeDeps();
+    const result = await verifyTagDataAgainstRoot(deps, {
+      issuerClone: FOREIGN_CLONE,
+      dogTagIdField: DOG_TAG_ID_FIELD,
+      root,
+      leaves,
+      obfuscatedLeafHashes: [redundantHash],
+      reservedLeafHashes,
+    });
+    expect(result).toEqual({ok: true, issuerValid: true, dataVerificationAttempted: true, dataVerified: false});
   });
 });
 

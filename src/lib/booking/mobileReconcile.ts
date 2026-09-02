@@ -177,6 +177,7 @@ export async function resolveTagClaim(
   const dataResult = await verifyTagDataAgainstRoot(deps, {
     issuerClone: resolved.issuerClone,
     root: resolved.root,
+    dogTagIdField: resolved.dogTagIdField,
     leaves: input.leaves,
     reservedLeafHashes: input.reservedLeafHashes,
   });

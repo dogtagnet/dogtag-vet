@@ -1,4 +1,4 @@
-import {dogTagIdField as computeDogTagIdField, TypeTag, verifyLeafCommitment, type OpenedLeaf} from "@dogtag/standard";
+import {dogTagIdField as computeDogTagIdField, TypeTag, verifyRedactedArtifact, type OpenedLeaf} from "@dogtag/standard";
 import type {PetSex} from "@/lib/models/Pet";
 
 /**
@@ -176,10 +176,21 @@ export async function resolveTagRootAndIssuer(
 export interface VerifyTagDataAgainstRootInput {
   issuerClone: string;
   root: string;
-  /** The pet's FULL opened profile-tree leaves plus the 3 reserved owner-control leaf hashes. Both
-   * fields absent (or empty) means "no data sent" - a legitimate, common shape, not an error. */
+  /** `resolveTagRootAndIssuer`'s own output field of the same name - not itself read by
+   * `verifyRedactedArtifact` (an on-chain-binding field, never a leaf), but part of the wire shape
+   * its TYPE expects, and a real value both callers of this function already have on hand. */
+  dogTagIdField: string;
+  /** The pet's DISCLOSED profile-tree leaves plus the 3 reserved owner-control leaf hashes. Both
+   * fields absent (or empty), with `obfuscatedLeafHashes` also empty, means "no data sent" - a
+   * legitimate, common shape, not an error. */
   leaves?: OpenedLeaf[];
   reservedLeafHashes?: string[];
+  /** WP4.10V - leaves named only by their opaque hash (a REDACTED artifact - the WP4.9 import
+   * ceremony receiving a masked share). Absent/empty for every pre-WP4.10V caller (the WP4.4
+   * booking claim never carries this at all), so this generalization changes nothing for booking's
+   * own tier-4 use. `leaves` MAY legitimately be empty while this is non-empty - a fully-masked
+   * artifact (`disclosed: []`) still verifies, per specs/leaf-commitment.md section 15. */
+  obfuscatedLeafHashes?: string[];
 }
 
 export type TagDataVerification =
@@ -201,13 +212,24 @@ export type TagDataVerification =
       verifiedAttributes?: VerifiedPetAttributes;
     };
 
+/** This app speaks exactly one leaf-commitment protocol version - crypto is frozen
+ * (specs/leaf-commitment.md section 12) - so this is the one value `verifyRedactedArtifact`'s
+ * (unread, wire-shape-only) `protocolVersion` field ever needs here, matching every other hardcoded
+ * `"dogtag-v2/1"` call site in this app (`mongoImportStore.createImportedArtifact`,
+ * `issuedArtifactSideEffect.ts`'s own constant). */
+const PROTOCOL_VERSION = "dogtag-v2/1";
+
 /**
  * Stage 2 of the shared verifier: `isValid(root)` against `issuerClone`, then (only if data was
- * sent and the issuer is valid) `verifyLeafCommitment`. There is no vet-attested identity-leaf set
- * to check a claim against here (unlike custodial-bind) - the `owner.identity.*` subset of the
- * disclosed leaves is checked against ITSELF, a deliberate no-op that still exercises every OTHER
- * check `verifyLeafCommitment` performs (reserved count, leaf cap, no reserved-keyPath spoofing, no
- * duplicate keyPaths, and - the one that actually matters here - the full Merkle root recompute).
+ * sent and the issuer is valid) `verifyRedactedArtifact` - WP4.10V's strict generalization of the
+ * prior `verifyLeafCommitment` call (see `redactedArtifact.ts`'s own file header in
+ * `@dogtag/standard`): a claim with no `obfuscatedLeafHashes` at all (every caller before this
+ * wave, and booking's tier-4 claim forever, since its wire format has no such concept) verifies
+ * IDENTICALLY either way. There is no vet-attested identity-leaf set to check a claim against here
+ * (unlike custodial-bind) - the `owner.identity.*` subset of the disclosed leaves is checked
+ * against ITSELF, a deliberate no-op that still exercises every OTHER check the verifier performs
+ * (reserved count, leaf cap, no reserved-keyPath spoofing, no duplicate keyPaths, no disclosed/
+ * opaque overlap, and - the one that actually matters here - the full Merkle root recompute).
  */
 export async function verifyTagDataAgainstRoot(
   deps: Pick<TagDataChainDeps, "readIsValidRoot">,
@@ -220,18 +242,33 @@ export async function verifyTagDataAgainstRoot(
     return {ok: false};
   }
 
-  const dataVerificationAttempted = Boolean(input.leaves?.length) && Boolean(input.reservedLeafHashes?.length);
+  // "no data sent" (a legitimate, common shape, not an error) means neither an opened leaf NOR an
+  // obfuscated hash was ever supplied - a fully-masked artifact (`leaves` empty, `obfuscatedLeafHashes`
+  // non-empty) IS an attempt, per specs/leaf-commitment.md section 15's own "disclosed: [] still
+  // verifies" case.
+  const dataVerificationAttempted =
+    Boolean(input.reservedLeafHashes?.length) && (Boolean(input.leaves?.length) || Boolean(input.obfuscatedLeafHashes?.length));
   let dataVerified = false;
   let verifiedAttributes: VerifiedPetAttributes | undefined;
   if (dataVerificationAttempted && issuerValid) {
-    const identitySubset = identityLeafSelfCheckSubset(input.leaves!);
-    dataVerified = verifyLeafCommitment({
-      root: input.root,
-      leaves: input.leaves!,
-      reservedLeafHashes: input.reservedLeafHashes!,
-      expectedIdentityLeaves: identitySubset,
-    });
-    if (dataVerified) verifiedAttributes = mapVerifiedLeavesToPetAttributes(input.leaves!);
+    const leaves = input.leaves ?? [];
+    const identitySubset = identityLeafSelfCheckSubset(leaves);
+    dataVerified = verifyRedactedArtifact(
+      {
+        protocolVersion: PROTOCOL_VERSION,
+        dogTagIdField: input.dogTagIdField,
+        root: input.root,
+        disclosed: leaves,
+        obfuscatedLeafHashes: input.obfuscatedLeafHashes ?? [],
+        reservedLeafHashes: input.reservedLeafHashes!,
+        issuerClone: input.issuerClone,
+      },
+      {expectedIdentityLeaves: identitySubset},
+    );
+    // An attribute is only ever derived from a leaf THIS caller actually saw the opening for -
+    // masked leaves contribute no attribute, honestly (mapVerifiedLeavesToPetAttributes never sees
+    // them at all, since they are not in `leaves`).
+    if (dataVerified) verifiedAttributes = mapVerifiedLeavesToPetAttributes(leaves);
   }
 
   return {
