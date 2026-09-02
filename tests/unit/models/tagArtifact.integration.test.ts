@@ -172,14 +172,25 @@ describe("createTagArtifact - the invariant (accept/refuse)", () => {
     expect(activeSecond?.root).toBe(second.artifact.root);
   });
 
-  it("the root unique index rejects a genuine duplicate root (defense in depth beyond the write helper)", async () => {
+  it("refuses a genuine duplicate root claimed by a DIFFERENT pet (should be cryptographically impossible; a real bug upstream if it ever fires)", async () => {
     const input = baseInput();
     const first = await createTagArtifact(input);
     expect(first.ok).toBe(true);
-    // Same root, different pet - createTagArtifact itself does not de-dupe across pets; the unique
-    // index is the backstop. A caller hitting this in practice indicates a genuine bug upstream
-    // (two different pets computing the identical root is not supposed to be possible).
-    await expect(createTagArtifact({...input, petId: "pet-2"})).rejects.toThrow(/duplicate key|E11000/i);
+    await expect(createTagArtifact({...input, petId: "pet-2"})).rejects.toThrow(/already belongs to pet pet-1/i);
+    // Still exactly one row - the rejected attempt never inserted anything.
+    expect(await TagArtifact.countDocuments({})).toBe(1);
+  });
+
+  it("is IDEMPOTENT for the SAME (petId, root): a repeat call returns the existing row, never a duplicate-key error, never a supersede", async () => {
+    const input = baseInput();
+    const first = await createTagArtifact(input);
+    expect(first.ok).toBe(true);
+    if (!first.ok) throw new Error("unreachable");
+
+    const second = await createTagArtifact(input);
+    expect(second).toEqual(first);
+    expect(await TagArtifact.countDocuments({})).toBe(1);
+    expect(await TagArtifact.countDocuments({active: true})).toBe(1);
   });
 });
 

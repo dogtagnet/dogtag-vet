@@ -33,7 +33,12 @@ export interface TagArtifactLeaf {
 export interface TagArtifactDoc {
   artifactId: string;
   petId: string;
-  dogTagIdDec: string;
+  /** Optional - the ISSUING clinic's own off-chain decimal handle. Genuinely absent for many
+   * `imported` artifacts: this label has no meaning outside the clinic that minted it, and the
+   * wire that carries an import claim is not guaranteed to include it at all (unlike
+   * `dogTagIdField`, the on-chain-canonical id every verification gate below actually keys on).
+   * Same optionality as `Pet.dogTag.dogTagIdDec`. */
+  dogTagIdDec?: string;
   dogTagIdField: string;
   root: string;
   protocolVersion: string;
@@ -76,7 +81,7 @@ const tagArtifactSchema = new Schema<TagArtifactDoc>(
   {
     artifactId: {type: String, required: true, unique: true, default: () => randomUUID()},
     petId: {type: String, required: true, index: true},
-    dogTagIdDec: {type: String, required: true},
+    dogTagIdDec: String,
     dogTagIdField: {type: String, required: true, index: true},
     root: {type: String, required: true, unique: true},
     protocolVersion: {type: String, required: true},

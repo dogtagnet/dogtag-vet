@@ -85,6 +85,18 @@ export function mapVerifiedLeavesToPetAttributes(leaves: OpenedLeaf[]): Verified
 const ZERO_HEX32 = `0x${"0".repeat(64)}`;
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
 
+/**
+ * The `owner.identity.*` subset of a disclosed leaf set - used both by `verifyTagDataAgainstRoot`
+ * below (checked against ITSELF, the deliberate no-op documented on `TagDataVerification.dataVerified`)
+ * and by every "imported" `TagArtifact` write path (`lib/booking/postBooking.ts`'s WP4.4 side
+ * effect, the WP4.9 import ceremony) that needs the identical `expectedIdentityLeaves` a second,
+ * independent `verifyLeafCommitment` call requires - there is no vet-attested record to check an
+ * imported claim against, unlike custodial-bind's real cross-check.
+ */
+export function identityLeafSelfCheckSubset(leaves: OpenedLeaf[]): OpenedLeaf[] {
+  return leaves.filter((leaf) => leaf.keyPath.startsWith("owner.identity."));
+}
+
 export interface ResolveTagRootAndIssuerInput {
   dogTagIdDec?: string;
   /** When absent, derived from `dogTagIdDec` via `@dogtag/standard`'s `dogTagIdField` (no chain
@@ -212,7 +224,7 @@ export async function verifyTagDataAgainstRoot(
   let dataVerified = false;
   let verifiedAttributes: VerifiedPetAttributes | undefined;
   if (dataVerificationAttempted && issuerValid) {
-    const identitySubset = input.leaves!.filter((leaf) => leaf.keyPath.startsWith("owner.identity."));
+    const identitySubset = identityLeafSelfCheckSubset(input.leaves!);
     dataVerified = verifyLeafCommitment({
       root: input.root,
       leaves: input.leaves!,

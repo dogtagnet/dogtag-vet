@@ -1,4 +1,5 @@
 import type {Address, Hex} from "viem";
+import type {OpenedLeaf} from "@dogtag/standard";
 import {clientAlreadyHasWallet} from "@/lib/booking/clientMatch";
 import {buildMobileBookingDomain, canonicalPayloadJson, toWireMessage, type MobileBookingMessage} from "@/lib/booking/mobileEip712";
 import {computeReceiptHash, type ReceiptRecord} from "@/lib/registration/receipt";
@@ -21,6 +22,13 @@ export interface PostBookingStore {
   addOwnerToPet(petId: string, clientId: string): Promise<void>;
   addPetToClient(clientId: string, petId: string): Promise<void>;
   createExternalPet(input: CreateExternalPetInput): Promise<{petId: string}>;
+  /** WP4.9 G3 closure: the tier-4 import's opened leaves are now KEPT, not dropped -
+   * `lib/tags/artifact.ts`'s `createTagArtifact` under the hood, `source: "imported"`. Throws (never
+   * returns a refusal silently) on anything but `{ok: true}`, so `runSideEffects`'s ordinary
+   * await-and-propagate style catches a refusal the exact same way it catches every other failure
+   * in this sequence - `applyPostBookingSideEffects`'s outer trap is what turns it into a flagged,
+   * non-throwing `postBookingIncomplete` for the caller. */
+  createImportedArtifact(input: CreateImportedArtifactInput): Promise<void>;
   /** Links the just-created appointment to the imported/reused pet - `petIds` plus the
    * display-name rebuild in one write. */
   linkAppointmentPet(appointmentId: string, petId: string, petName: string): Promise<void>;
@@ -47,6 +55,17 @@ export interface CreateExternalPetInput {
   };
 }
 
+export interface CreateImportedArtifactInput {
+  petId: string;
+  dogTagIdDec?: string;
+  dogTagIdField: string;
+  root: string;
+  issuerClone: string;
+  leaves: OpenedLeaf[];
+  reservedLeafHashes: string[];
+  now: number;
+}
+
 export interface PostBookingWalletInput {
   /** The verified (lowercased) signer - `verifyMobileBookingWalletClaim`'s own output, never the
    * raw wire address. */
@@ -69,6 +88,13 @@ export interface PostBookingInput {
   /** The wire's own (unverified) display-name hint - `mobile.pet.name`. */
   wirePetName?: string;
   wireDogTagIdDec?: string;
+  /** WP4.9 G3 closure: the SAME opened leaves `resolveTagClaim` already verified against the
+   * on-chain root (`tagClaim.dataVerified`) - present only when the wire sent them, i.e. exactly
+   * when `tagClaim.tagResolution === "external" && tagClaim.dataVerified` could ever be true. Kept
+   * here (never re-derived) so the imported TagArtifact's leaves are byte-identical to what was
+   * actually verified, not a second, independently-parsed copy. */
+  tagLeaves?: OpenedLeaf[];
+  tagReservedLeafHashes?: string[];
   /** Present only when a wallet claim VERIFIED (Q2) - absent means no attach is attempted. */
   wallet?: PostBookingWalletInput;
   /** Server "now", unix seconds - receipt.recoveredAt and the entry's registeredAt. */
@@ -115,6 +141,26 @@ async function runSideEffects(store: PostBookingStore, input: PostBookingInput):
       linkedPetName = importedName;
       await store.addPetToClient(input.client.clientId, importedPetId);
     }
+
+    // WP4.9 G3 closure: keep the leaves this tier already verified, on BOTH paths above (a brand
+    // new import and a repeat booking reusing an already-imported pet) - `createImportedArtifact`
+    // is idempotent for an already-on-file (petId, root) pair, so calling it unconditionally here
+    // is safe and correctly handles the rare case of the SAME pet's tag having been reissued
+    // (a new root) at the foreign clinic between bookings.
+    if (!input.tagLeaves?.length || !input.tagReservedLeafHashes?.length) {
+      throw new Error("tagClaim.dataVerified is true but the wire's leaves/reservedLeafHashes are missing");
+    }
+    await store.createImportedArtifact({
+      petId: importedPetId,
+      dogTagIdDec: input.wireDogTagIdDec,
+      dogTagIdField: tagClaim.dogTagIdField,
+      root: tagClaim.root,
+      issuerClone: tagClaim.issuerClone,
+      leaves: input.tagLeaves,
+      reservedLeafHashes: input.tagReservedLeafHashes,
+      now: input.now,
+    });
+
     await store.linkAppointmentPet(input.appointmentId, importedPetId, linkedPetName);
     linkedPet = {petId: importedPetId, petName: linkedPetName};
   }

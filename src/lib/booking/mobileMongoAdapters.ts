@@ -7,6 +7,8 @@ import {readIsValidRoot, readProfileRoot, readRootIssuer} from "@/lib/chainRead"
 import {appendBookingWalletToClient} from "@/lib/booking/clientMatch";
 import type {MobileTagChainDeps, MobileTagLookupStore} from "@/lib/booking/mobileReconcile";
 import type {PostBookingStore} from "@/lib/booking/postBooking";
+import {createTagArtifact} from "@/lib/tags/artifact";
+import {identityLeafSelfCheckSubset} from "@/lib/tags/verifier";
 
 /** Mongoose-backed `MobileTagLookupStore` - the production adapter for `resolveTagClaim`'s
  * database reads, mirroring every other `mongo*Store`/`mongo*Deps` factory in this app
@@ -93,6 +95,32 @@ export const mongoPostBookingStore: PostBookingStore = {
 
   async linkAppointmentPet(appointmentId, petId, petName) {
     await Appointment.updateOne({appointmentId}, {$set: {petIds: [petId], petName}});
+  },
+
+  async createImportedArtifact(input) {
+    // No vet-attested identity record to check an imported claim against - the `owner.identity.*`
+    // subset is checked against ITSELF, the same self-check `lib/tags/verifier.ts`'s
+    // `verifyTagDataAgainstRoot` already performed moments earlier with these same leaves (Q3 has
+    // already passed by the time this runs - `runSideEffects` only calls this when `dataVerified`).
+    // `createTagArtifact` is idempotent for a repeat (petId, root) pair, so this is safe to call on
+    // BOTH the "create a new external pet" and the "reuse an already-imported one" paths without a
+    // separate existence check here - a reused pet's already-on-file root simply no-ops.
+    const result = await createTagArtifact({
+      petId: input.petId,
+      dogTagIdDec: input.dogTagIdDec,
+      dogTagIdField: input.dogTagIdField,
+      root: input.root,
+      protocolVersion: "dogtag-v2/1",
+      leaves: input.leaves,
+      reservedLeafHashes: input.reservedLeafHashes,
+      expectedIdentityLeaves: identityLeafSelfCheckSubset(input.leaves),
+      source: "imported",
+      issuerClone: input.issuerClone,
+      now: input.now,
+    });
+    if (!result.ok) {
+      throw new Error(`createTagArtifact refused the imported artifact for pet ${input.petId}: ${result.reason}`);
+    }
   },
 
   appendBookingWallet: appendBookingWalletToClient,

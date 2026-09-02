@@ -22,7 +22,8 @@ const PROTOCOL_VERIFIERS: Record<string, (input: VerifyLeafCommitmentInput) => b
 
 export interface CreateTagArtifactInput {
   petId: string;
-  dogTagIdDec: string;
+  /** Optional - see `TagArtifactDoc.dogTagIdDec`'s own doc comment. */
+  dogTagIdDec?: string;
   /** Decimal-string convention throughout this app - see TagArtifact.ts's own doc comment. */
   dogTagIdField: string;
   root: string;
@@ -67,6 +68,17 @@ function toArtifactLeaves(leaves: OpenedLeaf[]): TagArtifactLeaf[] {
  * `findOne` non-deterministically prefer either the old or the new row. The backfill script (item
  * 3c) is this window's actual safety net - safe to re-run, and idempotent exactly because it looks
  * for "a pet whose `dogTag.root` has no matching active artifact yet", which this crash state is.
+ *
+ * IDEMPOTENT on a repeated call for the SAME (petId, root): returns the already-stored row rather
+ * than attempting a second insert against the unique `root` index. This is load-bearing for more
+ * than one caller, not a defensive nicety - the WP4.4 booking side effect's own dedupe path
+ * (`findExternalPetByDogTagField`, reusing an already-imported external pet on a repeat booking
+ * with the same tag) and the backfill script's own "safe to re-run" requirement both depend on a
+ * second call for a tag already on file being a harmless no-op, never a thrown duplicate-key error.
+ * A root that already belongs to a DIFFERENT pet, however, is never silently accepted - two
+ * distinct pets computing the identical root should be cryptographically impossible, so that case
+ * still throws (a genuine invariant violation the caller's own try/catch surfaces as a failure,
+ * never swallowed here).
  */
 export async function createTagArtifact(input: CreateTagArtifactInput): Promise<CreateTagArtifactResult> {
   const verifier = PROTOCOL_VERIFIERS[input.protocolVersion];
@@ -80,13 +92,24 @@ export async function createTagArtifact(input: CreateTagArtifactInput): Promise<
   });
   if (!verified) return {ok: false, reason: "leaf_commitment_invalid"};
 
+  const normalizedRoot = input.root.toLowerCase();
+  const existing = await TagArtifact.findOne({root: normalizedRoot}).lean<TagArtifactDoc>();
+  if (existing) {
+    if (existing.petId !== input.petId) {
+      throw new Error(
+        `TagArtifact root ${normalizedRoot} already belongs to pet ${existing.petId}; refusing to also attach it to ${input.petId}`,
+      );
+    }
+    return {ok: true, artifact: existing};
+  }
+
   await supersedeActiveArtifactsForPet(input.petId, input.root);
 
   const created = await TagArtifact.create({
     petId: input.petId,
     dogTagIdDec: input.dogTagIdDec,
     dogTagIdField: input.dogTagIdField,
-    root: input.root.toLowerCase(),
+    root: normalizedRoot,
     protocolVersion: input.protocolVersion,
     schemaId: input.schemaId,
     leaves: toArtifactLeaves(input.leaves),

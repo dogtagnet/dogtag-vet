@@ -314,6 +314,8 @@ export async function POST(request: Request) {
     fallbackPetName: petName,
     wirePetName: mobile?.pet?.name,
     wireDogTagIdDec: mobile?.pet?.dogTagIdDec,
+    tagLeaves: mobile?.pet?.leaves,
+    tagReservedLeafHashes: mobile?.pet?.reservedLeafHashes,
     wallet:
       walletVerifiedAddress && bookingHash && mobile?.wallet
         ? {

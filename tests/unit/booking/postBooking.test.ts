@@ -1,4 +1,5 @@
 import {describe, expect, it, vi} from "vitest";
+import {TypeTag, type OpenedLeaf} from "@dogtag/standard";
 import {applyPostBookingSideEffects, type PostBookingInput, type PostBookingStore} from "@/lib/booking/postBooking";
 import {buildMobileBookingDomain, canonicalPayloadJson, toWireMessage} from "@/lib/booking/mobileEip712";
 import {computeReceiptHash} from "@/lib/registration/receipt";
@@ -11,6 +12,12 @@ const A_ROOT = `0x${"11".repeat(32)}`;
 const BOOKING_HASH = `0x${"ab".repeat(32)}` as const;
 const WALLET = "0x1234567890abcdef1234567890abcdef12345678";
 
+// `createImportedArtifact` is mocked in this file (its real behavior - verifyLeafCommitment,
+// idempotence - is covered by tests/unit/models/tagArtifact.integration.test.ts against a real
+// TagArtifact write path), so these leaves need only be NON-EMPTY, never cryptographically genuine.
+const TAG_LEAVES: OpenedLeaf[] = [{keyPath: "credentialSubject.species", saltHex: `0x${"aa".repeat(16)}`, tag: TypeTag.String, value: "dog"}];
+const TAG_RESERVED_LEAF_HASHES = [`0x${"1".repeat(64)}`, `0x${"2".repeat(64)}`, `0x${"3".repeat(64)}`];
+
 function fakeStore(overrides: Partial<PostBookingStore> = {}): PostBookingStore {
   return {
     findPetName: vi.fn().mockResolvedValue(null),
@@ -20,6 +27,7 @@ function fakeStore(overrides: Partial<PostBookingStore> = {}): PostBookingStore 
     linkAppointmentPet: vi.fn().mockResolvedValue(undefined),
     appendBookingWallet: vi.fn().mockResolvedValue(true),
     flagPostBookingIncomplete: vi.fn().mockResolvedValue(undefined),
+    createImportedArtifact: vi.fn().mockResolvedValue(undefined),
     ...overrides,
   };
 }
@@ -61,7 +69,10 @@ function walletInput(): PostBookingInput["wallet"] {
 describe("applyPostBookingSideEffects - Q3 external import", () => {
   it("imports a fresh provisional pet from the verified attributes and links the appointment to it", async () => {
     const store = fakeStore();
-    const outcome = await applyPostBookingSideEffects(store, baseInput({tagClaim: verifiedExternalClaim, wireDogTagIdDec: "42"}));
+    const outcome = await applyPostBookingSideEffects(
+      store,
+      baseInput({tagClaim: verifiedExternalClaim, wireDogTagIdDec: "42", tagLeaves: TAG_LEAVES, tagReservedLeafHashes: TAG_RESERVED_LEAF_HASHES}),
+    );
 
     expect(store.createExternalPet).toHaveBeenCalledWith({
       name: "Buddy",
@@ -73,6 +84,17 @@ describe("applyPostBookingSideEffects - Q3 external import", () => {
       dogTag: {dogTagIdDec: "42", dogTagIdField: "12345", root: A_ROOT, cloneAddress: FOREIGN_CLONE},
     });
     expect(store.addPetToClient).toHaveBeenCalledWith("client-1", "pet-new");
+    // WP4.9 G3 closure: the verified leaves are KEPT, not dropped.
+    expect(store.createImportedArtifact).toHaveBeenCalledWith({
+      petId: "pet-new",
+      dogTagIdDec: "42",
+      dogTagIdField: "12345",
+      root: A_ROOT,
+      issuerClone: FOREIGN_CLONE,
+      leaves: TAG_LEAVES,
+      reservedLeafHashes: TAG_RESERVED_LEAF_HASHES,
+      now: 1_700_000_000,
+    });
     expect(store.linkAppointmentPet).toHaveBeenCalledWith("appt-1", "pet-new", "Buddy");
     expect(outcome).toEqual({completed: true, linkedPet: {petId: "pet-new", petName: "Buddy"}});
   });
@@ -80,22 +102,31 @@ describe("applyPostBookingSideEffects - Q3 external import", () => {
   it("falls back to the wire name hint, then 'Pet', when the verified attributes carry no name", async () => {
     const store = fakeStore();
     const claim: TagClaimResult = {...verifiedExternalClaim, verifiedAttributes: {species: "dog"}};
-    await applyPostBookingSideEffects(store, baseInput({tagClaim: claim, wirePetName: "Rexy"}));
+    await applyPostBookingSideEffects(
+      store,
+      baseInput({tagClaim: claim, wirePetName: "Rexy", tagLeaves: TAG_LEAVES, tagReservedLeafHashes: TAG_RESERVED_LEAF_HASHES}),
+    );
     expect(store.createExternalPet).toHaveBeenCalledWith(expect.objectContaining({name: "Rexy"}));
 
     const store2 = fakeStore();
-    await applyPostBookingSideEffects(store2, baseInput({tagClaim: claim}));
+    await applyPostBookingSideEffects(store2, baseInput({tagClaim: claim, tagLeaves: TAG_LEAVES, tagReservedLeafHashes: TAG_RESERVED_LEAF_HASHES}));
     expect(store2.createExternalPet).toHaveBeenCalledWith(expect.objectContaining({name: "Pet"}));
   });
 
   it("reuses an already-imported external pet (no create) and rebuilds petName from ITS record (review finding 3)", async () => {
     const store = fakeStore({findPetName: vi.fn().mockResolvedValue("Buddy On File")});
     const claim: TagClaimResult = {...verifiedExternalClaim, existingExternalPetId: "pet-existing"};
-    const outcome = await applyPostBookingSideEffects(store, baseInput({tagClaim: claim}));
+    const outcome = await applyPostBookingSideEffects(
+      store,
+      baseInput({tagClaim: claim, tagLeaves: TAG_LEAVES, tagReservedLeafHashes: TAG_RESERVED_LEAF_HASHES}),
+    );
 
     expect(store.createExternalPet).not.toHaveBeenCalled();
     expect(store.addOwnerToPet).toHaveBeenCalledWith("pet-existing", "client-1");
     expect(store.addPetToClient).toHaveBeenCalledWith("client-1", "pet-existing");
+    // The reuse path ALSO keeps the leaves (createImportedArtifact is idempotent for a pet/root
+    // already on file - see lib/tags/artifact.ts - so calling it here is always safe).
+    expect(store.createImportedArtifact).toHaveBeenCalledWith(expect.objectContaining({petId: "pet-existing"}));
     expect(store.linkAppointmentPet).toHaveBeenCalledWith("appt-1", "pet-existing", "Buddy On File");
     expect(outcome).toEqual({completed: true, linkedPet: {petId: "pet-existing", petName: "Buddy On File"}});
   });
@@ -103,8 +134,22 @@ describe("applyPostBookingSideEffects - Q3 external import", () => {
   it("falls back to the appointment's own petName when the reused pet's record has vanished or has a blank name", async () => {
     const store = fakeStore({findPetName: vi.fn().mockResolvedValue(null)});
     const claim: TagClaimResult = {...verifiedExternalClaim, existingExternalPetId: "pet-existing"};
-    await applyPostBookingSideEffects(store, baseInput({tagClaim: claim, fallbackPetName: "Fallback"}));
+    await applyPostBookingSideEffects(
+      store,
+      baseInput({tagClaim: claim, fallbackPetName: "Fallback", tagLeaves: TAG_LEAVES, tagReservedLeafHashes: TAG_RESERVED_LEAF_HASHES}),
+    );
     expect(store.linkAppointmentPet).toHaveBeenCalledWith("appt-1", "pet-existing", "Fallback");
+  });
+
+  it("WP4.9: dataVerified true but the wire's leaves/reservedLeafHashes are missing - flags incomplete rather than importing without custody (defensive; resolveTagClaim's own gate means this should not occur in practice)", async () => {
+    const store = fakeStore();
+    const outcome = await applyPostBookingSideEffects(store, baseInput({tagClaim: verifiedExternalClaim}));
+    expect(outcome).toEqual({completed: false});
+    expect(store.flagPostBookingIncomplete).toHaveBeenCalledWith("appt-1");
+    expect(store.createImportedArtifact).not.toHaveBeenCalled();
+    // The pet WAS created (that step ran before the guard) but never linked to the appointment -
+    // the "first failure aborts the remaining side effects" contract applies here too.
+    expect(store.linkAppointmentPet).not.toHaveBeenCalled();
   });
 
   it("imports nothing for any claim that is not external+dataVerified", async () => {
@@ -185,9 +230,26 @@ describe("applyPostBookingSideEffects - review finding 4's failure trap", () => 
 
   it("never throws when the appointment-link write fails after the pet import", async () => {
     const store = fakeStore({linkAppointmentPet: vi.fn().mockRejectedValue(new Error("transient mongo failure"))});
-    const outcome = await applyPostBookingSideEffects(store, baseInput({tagClaim: verifiedExternalClaim}));
+    const outcome = await applyPostBookingSideEffects(
+      store,
+      baseInput({tagClaim: verifiedExternalClaim, tagLeaves: TAG_LEAVES, tagReservedLeafHashes: TAG_RESERVED_LEAF_HASHES}),
+    );
     expect(outcome).toEqual({completed: false});
     expect(store.flagPostBookingIncomplete).toHaveBeenCalledWith("appt-1");
+    // Confirms this test actually exercises the NAMED failure point (linkAppointmentPet) and not
+    // some earlier guard - the artifact write must have already happened by the time it fails.
+    expect(store.createImportedArtifact).toHaveBeenCalled();
+  });
+
+  it("never throws when the imported-artifact write fails: flags the appointment and reports completed:false", async () => {
+    const store = fakeStore({createImportedArtifact: vi.fn().mockRejectedValue(new Error("createTagArtifact refused"))});
+    const outcome = await applyPostBookingSideEffects(
+      store,
+      baseInput({tagClaim: verifiedExternalClaim, tagLeaves: TAG_LEAVES, tagReservedLeafHashes: TAG_RESERVED_LEAF_HASHES}),
+    );
+    expect(outcome).toEqual({completed: false});
+    expect(store.flagPostBookingIncomplete).toHaveBeenCalledWith("appt-1");
+    expect(store.linkAppointmentPet).not.toHaveBeenCalled();
   });
 
   it("still resolves completed:false when even the review-flag write fails - the 201 response contract wins", async () => {
