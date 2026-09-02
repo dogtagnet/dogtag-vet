@@ -20,6 +20,13 @@ export interface MintSessionRow {
   status: MintSessionStatus;
   root?: string;
   errorStage?: MintErrorStage;
+  /** WP4.9: the pet this session is FOR (`MintSessionDoc.petId`, always set at session creation -
+   * `api/tags/issue/start/route.ts` either reuses an existing pet or creates one before the session
+   * itself exists). Optional here (not on `MintSessionDoc`) only so every hand-rolled
+   * `MintSessionRow` fixture already in this repo's tests keeps compiling unmodified; the
+   * custodial-bind route's own issued-artifact side effect (`lib/tags/issuedArtifactSideEffect.ts`)
+   * treats a missing value as a defensive, should-never-happen error, not a silent skip. */
+  petId?: string;
 }
 
 export interface MintTokenRow {

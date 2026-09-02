@@ -17,6 +17,7 @@ export function toSessionRow(doc: MintSessionDoc): MintSessionRow {
     status: doc.status,
     root: doc.root,
     errorStage: doc.errorStage,
+    petId: doc.petId,
   };
 }
 

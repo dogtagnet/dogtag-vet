@@ -4,6 +4,9 @@ import {mongoMintStore} from "@/lib/mint/mongoStore";
 import {isDogTagIdUnset} from "@/lib/mint/chainChecks";
 import {custodialBindRequestSchema} from "@/lib/schemas/mintSession";
 import {enforceRateLimit, errorBody, jsonWithHeaders, readJsonBody} from "@/lib/publicApi";
+import {applyIssuedArtifactSideEffect, mongoIssuedArtifactStore} from "@/lib/tags/issuedArtifactSideEffect";
+import {getClinicSettings} from "@/lib/models/ClinicSettings";
+import type {OpenedLeaf} from "@dogtag/standard";
 
 /**
  * `POST /profiles/issue/custodial-bind` - `postCustodialBind` in `vet-public-api.yaml`. See
@@ -90,6 +93,25 @@ export async function POST(request: Request) {
   }
 
   const {session} = result;
+
+  // WP4.9 plan 2.1/2.1's write path: the issued_here TagArtifact, created AFTER the session bind
+  // above has already landed (session.root is set) - never before it, and never allowed to turn a
+  // successful bind into a failed response. See issuedArtifactSideEffect.ts's own doc comment for
+  // the full "mirrors postBooking's contract" rationale.
+  const settings = await getClinicSettings();
+  await applyIssuedArtifactSideEffect(mongoIssuedArtifactStore, {
+    sessionId: session.sessionId,
+    petId: session.petId,
+    dogTagIdDec: session.dogTagIdDec,
+    dogTagIdField: session.dogTagIdFieldDec,
+    root: session.root!,
+    leaves: parsed.data.leaves,
+    reservedLeafHashes: parsed.data.reservedLeafHashes,
+    identityLeaves: session.identityLeaves as OpenedLeaf[],
+    issuerClone: settings.cloneAddress,
+    now,
+  });
+
   return jsonWithHeaders(
     {
       dogTagId: session.dogTagIdDec,

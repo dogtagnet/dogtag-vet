@@ -74,6 +74,13 @@ export interface MintSessionDoc {
    * threshold and could flip a transaction that has been in flight for mere seconds. */
   issuingAt?: Date;
   resolvedAt?: Date;
+  /** WP4.9: set when the custodial-bind terminal write's TagArtifact side effect
+   * (`lib/tags/issuedArtifactSideEffect.ts`) fails - the same "flag, never throw" contract
+   * `Appointment.bookingIdentity.postBookingIncomplete` uses for WP4.4's post-booking side effects.
+   * The bind itself already succeeded (this session is `ready`/`bound` regardless); this only
+   * marks that the custody record for it may be missing and worth a backfill/manual look. Absent
+   * (never `false`) on every session whose artifact write succeeded or was never attempted. */
+  artifactError?: boolean;
 }
 
 const identityLeafSchema = new Schema<IdentityLeaf>(
@@ -138,6 +145,7 @@ const mintSessionSchema = new Schema<MintSessionDoc>(
     firstResolvedAt: Date,
     issuingAt: Date,
     resolvedAt: Date,
+    artifactError: Boolean,
   },
   {timestamps: {createdAt: true, updatedAt: false}},
 );
