@@ -58,13 +58,18 @@ async function main(): Promise<void> {
       console.log(`MISMATCH  pet=${detail.petId} root=${detail.root} - ${detail.reason}`);
     } else if (detail.outcome === "inserted") {
       console.log(`${dryRunFlag ? "WOULD INSERT" : "INSERTED "} pet=${detail.petId} root=${detail.root}`);
+    } else if (detail.outcome === "reactivated") {
+      // WP4.9V FIX ROUND 1 (D1) - a row for this exact (pet, root) already existed but was
+      // inactive (the crash-window repair state) - promoted back to active rather than inserted.
+      console.log(`${dryRunFlag ? "WOULD REACTIVATE" : "REACTIVATED "} pet=${detail.petId} root=${detail.root}`);
     } else {
       console.log(`already covered  pet=${detail.petId} root=${detail.root}`);
     }
   }
 
   console.log(`\n${dryRunFlag ? "DRY RUN " : ""}Summary: ${report.scanned} pet(s) scanned, ${report.alreadyCovered} already covered, ` +
-    `${report.inserted} ${dryRunFlag ? "would be inserted" : "inserted"}, ${report.mismatches.length} mismatch(es).`);
+    `${report.inserted} ${dryRunFlag ? "would be inserted" : "inserted"}, ` +
+    `${report.reactivated} ${dryRunFlag ? "would be reactivated" : "reactivated"}, ${report.mismatches.length} mismatch(es).`);
 
   if (report.mismatches.length > 0) {
     console.log("\nMismatches are NEVER auto-fixed. Each one above names the pet/root and the reason - investigate by hand before deciding what, if anything, to do about it.");

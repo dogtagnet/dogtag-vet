@@ -64,6 +64,14 @@ export interface BackfillStore {
    * session on file carries it at all (a pre-this-app-existing import, a hand-edited Pet record, or
    * genuine data loss). */
   findBoundMintSessionByRoot(root: string): Promise<BackfillMintSession | null>;
+  /**
+   * WP4.9V FIX ROUND 1 (D2/D1) - the row for this EXACT (lowercased) root, if a `TagArtifact`
+   * document already exists for it AT ALL, active or not - `null` when none does. This is what
+   * lets DRY-RUN mode predict `inserted` vs `reactivated` vs a cross-pet mismatch WITHOUT writing
+   * anything, using the same read the write path's `createTagArtifact` performs internally, rather
+   * than a second, separately-maintained guess at what it would find.
+   */
+  findArtifactByRoot(root: string): Promise<{petId: string; active: boolean} | null>;
   createArtifact(input: CreateTagArtifactInput): Promise<CreateTagArtifactResult>;
 }
 
@@ -76,6 +84,13 @@ export interface BackfillMismatch {
 export type BackfillOutcome =
   | {petId: string; root: string; outcome: "already_covered"}
   | {petId: string; root: string; outcome: "inserted"}
+  /** WP4.9V FIX ROUND 1 (D1) - a `TagArtifact` row for this exact (petId, root) already existed
+   * but was `active: false` (the crash-window repair state `createTagArtifact`'s own doc comment
+   * describes) - it was promoted back to `active` rather than inserted fresh. Distinct from
+   * `inserted` so an operator reading the report can tell "this pet had zero rows for its current
+   * root" apart from "this pet had a stale inactive row for its current root", even though both
+   * leave the pet correctly covered. */
+  | {petId: string; root: string; outcome: "reactivated"}
   | {petId: string; root: string; outcome: "mismatch"; reason: string};
 
 export interface BackfillReport {
@@ -85,25 +100,34 @@ export interface BackfillReport {
   scanned: number;
   alreadyCovered: number;
   inserted: number;
+  /** WP4.9V FIX ROUND 1 (D1) - see `BackfillOutcome`'s own `"reactivated"` doc comment. */
+  reactivated: number;
   mismatches: BackfillMismatch[];
   /** One entry per scanned pet, in scan order - what `scripts/backfillTagArtifacts.ts` prints. */
   details: BackfillOutcome[];
 }
 
 export interface BackfillOptions {
-  /** Default `false`. When `true`, every read still happens (including `findActiveArtifactRoot`
-   * and `findBoundMintSessionByRoot`) but `store.createArtifact` (the only write in this whole
-   * migration) is never called - verification runs via the exact same dispatch
-   * (`verifyForProtocolVersion`, `lib/tags/artifact.ts`) `createTagArtifact` itself uses, so a
-   * dry-run "would insert"/"would mismatch" prediction is byte-for-byte what a real run would have
-   * decided, never a second, separately-maintained approximation of that logic. */
+  /**
+   * Default `false`. When `true`, every read still happens (including `findActiveArtifactRoot`,
+   * `findArtifactByRoot`, and `findBoundMintSessionByRoot`) but `store.createArtifact` (the only
+   * write in this whole migration) is never called.
+   *
+   * WP4.9V FIX ROUND 1 (D2): verification runs via the exact same dispatch
+   * (`verifyForProtocolVersion`, `lib/tags/artifact.ts`) `createTagArtifact` itself uses, AND every
+   * PRECONDITION `createTagArtifact` itself checks before ever reaching that dispatch (a missing
+   * `dogTag.cloneAddress`, a root already claimed by a different pet) is now also checked here,
+   * identically, in BOTH modes, before either mode's own fork - so a dry-run prediction is exactly
+   * what a real run would have decided, for the SAME reason, never a second, separately-maintained
+   * approximation of that logic that can drift out of sync with it.
+   */
   dryRun?: boolean;
 }
 
 export async function backfillTagArtifacts(store: BackfillStore, now: number, options: BackfillOptions = {}): Promise<BackfillReport> {
   const dryRun = options.dryRun ?? false;
   const pets = await store.listPetsWithRoot();
-  const report: BackfillReport = {dryRun, scanned: 0, alreadyCovered: 0, inserted: 0, mismatches: [], details: []};
+  const report: BackfillReport = {dryRun, scanned: 0, alreadyCovered: 0, inserted: 0, reactivated: 0, mismatches: [], details: []};
 
   for (const pet of pets) {
     report.scanned++;
@@ -113,6 +137,24 @@ export async function backfillTagArtifacts(store: BackfillStore, now: number, op
     if (activeRoot === normalizedRoot) {
       report.alreadyCovered++;
       report.details.push({petId: pet.petId, root: pet.root, outcome: "already_covered"});
+      continue;
+    }
+
+    // WP4.9V FIX ROUND 1 (D2) - preconditions shared identically by BOTH dry-run and write, so a
+    // dry run's prediction and a real run's outcome are actually identical for these two failure
+    // modes, not just for the leaf-commitment dispatch. Checked in both modes, before either
+    // mode's own fork below.
+    if (!pet.cloneAddress) {
+      const reason = "pet has no dogTag.cloneAddress on file - the artifact's issuerClone cannot be determined";
+      report.mismatches.push({petId: pet.petId, root: pet.root, reason});
+      report.details.push({petId: pet.petId, root: pet.root, outcome: "mismatch", reason});
+      continue;
+    }
+    const existingArtifact = await store.findArtifactByRoot(normalizedRoot);
+    if (existingArtifact && existingArtifact.petId !== pet.petId) {
+      const reason = `this root is already recorded under a different pet (${existingArtifact.petId}) - refusing to also attach it to ${pet.petId}`;
+      report.mismatches.push({petId: pet.petId, root: pet.root, reason});
+      report.details.push({petId: pet.petId, root: pet.root, outcome: "mismatch", reason});
       continue;
     }
 
@@ -142,8 +184,16 @@ export async function backfillTagArtifacts(store: BackfillStore, now: number, op
         report.details.push({petId: pet.petId, root: pet.root, outcome: "mismatch", reason});
         continue;
       }
-      report.inserted++;
-      report.details.push({petId: pet.petId, root: pet.root, outcome: "inserted"});
+      // WP4.9V FIX ROUND 1 (D1) - the SAME existing-row read the precondition check above already
+      // did tells us whether the write path would insert fresh or reactivate a stale inactive row,
+      // without needing a second, separate lookup.
+      if (existingArtifact && !existingArtifact.active) {
+        report.reactivated++;
+        report.details.push({petId: pet.petId, root: pet.root, outcome: "reactivated"});
+      } else {
+        report.inserted++;
+        report.details.push({petId: pet.petId, root: pet.root, outcome: "inserted"});
+      }
       continue;
     }
 
@@ -159,7 +209,7 @@ export async function backfillTagArtifacts(store: BackfillStore, now: number, op
         reservedLeafHashes,
         expectedIdentityLeaves,
         source: pet.external ? "imported" : "issued_here",
-        issuerClone: pet.cloneAddress ?? "",
+        issuerClone: pet.cloneAddress,
         now,
       });
     } catch (err) {
@@ -176,8 +226,13 @@ export async function backfillTagArtifacts(store: BackfillStore, now: number, op
       continue;
     }
 
-    report.inserted++;
-    report.details.push({petId: pet.petId, root: pet.root, outcome: "inserted"});
+    if (result.reactivated) {
+      report.reactivated++;
+      report.details.push({petId: pet.petId, root: pet.root, outcome: "reactivated"});
+    } else {
+      report.inserted++;
+      report.details.push({petId: pet.petId, root: pet.root, outcome: "inserted"});
+    }
   }
 
   return report;

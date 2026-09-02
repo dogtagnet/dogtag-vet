@@ -38,7 +38,7 @@ function fakeStore(overrides: Partial<IssuedArtifactSideEffectStore> = {}): Issu
   const flagged: string[] = [];
   return {
     flagged,
-    createTagArtifact: vi.fn().mockResolvedValue({ok: true, artifact: {} as never}),
+    createTagArtifact: vi.fn().mockResolvedValue({ok: true, artifact: {} as never, reactivated: false}),
     async flagArtifactError(sessionId) {
       flagged.push(sessionId);
     },

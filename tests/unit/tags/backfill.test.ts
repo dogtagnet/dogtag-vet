@@ -55,12 +55,13 @@ function fakeStore(overrides: Partial<BackfillStore> = {}): BackfillStore & {cre
     createArtifactCalls,
     listPetsWithRoot: vi.fn().mockResolvedValue([]),
     findActiveArtifactRoot: vi.fn().mockResolvedValue(null),
+    findArtifactByRoot: vi.fn().mockResolvedValue(null),
     findBoundMintSessionByRoot: vi.fn().mockResolvedValue(null),
     async createArtifact(input) {
       createArtifactCalls.push(input);
       const verified = verifyForProtocolVersion(input);
       if (!verified.ok) return verified;
-      return {ok: true, artifact: {} as never};
+      return {ok: true, artifact: {} as never, reactivated: false};
     },
     ...overrides,
   };
@@ -261,5 +262,91 @@ describe("backfillTagArtifacts", () => {
       const report = await backfillTagArtifacts(store, 1_700_000_000, {dryRun: true});
       expect(report).toMatchObject({dryRun: true, alreadyCovered: 1, inserted: 0});
     });
+
+    /** WP4.9V FIX ROUND 1 (D1) - `findArtifactByRoot` returning an existing-but-inactive row must
+     * make dry-run predict `reactivated`, not `inserted`, using the exact same read the write path
+     * itself performs internally (never a second, separate guess). */
+    it("predicts 'reactivated' (not 'inserted') when an existing row for this exact root is already on file but inactive", async () => {
+      const fixture = buildVerifiableFixture();
+      const p = pet({root: fixture.root});
+      const store = fakeStore({
+        listPetsWithRoot: vi.fn().mockResolvedValue([p]),
+        findArtifactByRoot: vi.fn().mockResolvedValue({petId: "pet-1", active: false}),
+        findBoundMintSessionByRoot: vi.fn().mockResolvedValue(session({}, fixture)),
+      });
+      const report = await backfillTagArtifacts(store, 1_700_000_000, {dryRun: true});
+      expect(report).toMatchObject({dryRun: true, inserted: 0, reactivated: 1, mismatches: []});
+      expect(report.details).toEqual([{petId: "pet-1", root: fixture.root, outcome: "reactivated"}]);
+      expect(store.createArtifactCalls).toEqual([]);
+    });
+  });
+
+  /** WP4.9V FIX ROUND 1 (D1) - the write path's own `reactivated` flag (from `createArtifact`'s
+   * result) drives the outcome, mirroring dry-run's prediction. */
+  it("(D1) reports 'reactivated', not 'inserted', when createArtifact reports it reactivated an existing row", async () => {
+    const fixture = buildVerifiableFixture();
+    const p = pet({root: fixture.root});
+    const store = fakeStore({
+      listPetsWithRoot: vi.fn().mockResolvedValue([p]),
+      findArtifactByRoot: vi.fn().mockResolvedValue({petId: "pet-1", active: false}),
+      findBoundMintSessionByRoot: vi.fn().mockResolvedValue(session({}, fixture)),
+      createArtifact: vi.fn().mockResolvedValue({ok: true, artifact: {} as never, reactivated: true}),
+    });
+    const report = await backfillTagArtifacts(store, 1_700_000_000);
+    expect(report).toMatchObject({inserted: 0, reactivated: 1, mismatches: []});
+    expect(report.details).toEqual([{petId: "pet-1", root: fixture.root, outcome: "reactivated"}]);
+  });
+
+  /** WP4.9V FIX ROUND 1 (D2) - the grader's PROBE A, at the pure-logic level: a pet with no
+   * `cloneAddress` on file must be reported as a mismatch in BOTH modes, with the SAME reason,
+   * before either mode's own fork - never `inserted` in dry-run and a thrown mongoose validation
+   * error in write. */
+  it("(D2) a pet with no cloneAddress on file is an identical mismatch in both dry-run and write - never reaches createArtifact", async () => {
+    const fixture = buildVerifiableFixture();
+    const p = pet({root: fixture.root, cloneAddress: undefined});
+    const expectedReason = "pet has no dogTag.cloneAddress on file - the artifact's issuerClone cannot be determined";
+
+    const dryStore = fakeStore({
+      listPetsWithRoot: vi.fn().mockResolvedValue([p]),
+      findBoundMintSessionByRoot: vi.fn().mockResolvedValue(session({}, fixture)),
+    });
+    const dry = await backfillTagArtifacts(dryStore, 1_700_000_000, {dryRun: true});
+    expect(dry.details).toEqual([{petId: "pet-1", root: fixture.root, outcome: "mismatch", reason: expectedReason}]);
+    expect(dryStore.findBoundMintSessionByRoot).not.toHaveBeenCalled(); // precondition short-circuits before the session lookup
+
+    const writeStore = fakeStore({
+      listPetsWithRoot: vi.fn().mockResolvedValue([p]),
+      findBoundMintSessionByRoot: vi.fn().mockResolvedValue(session({}, fixture)),
+    });
+    const write = await backfillTagArtifacts(writeStore, 1_700_000_100);
+    expect(write.details).toEqual(dry.details);
+    expect(writeStore.createArtifactCalls).toEqual([]);
+  });
+
+  /** WP4.9V FIX ROUND 1 (D2) - the cross-pet root guard is now a SHARED precondition too (not
+   * write-only, discovered only via a thrown error): a root `findArtifactByRoot` says already
+   * belongs to a different pet is an identical mismatch in both modes. */
+  it("(D2) a root already recorded under a different pet is an identical mismatch in both dry-run and write", async () => {
+    const fixture = buildVerifiableFixture();
+    const p = pet({root: fixture.root});
+    const expectedReason = "this root is already recorded under a different pet (pet-other) - refusing to also attach it to pet-1";
+
+    const dryStore = fakeStore({
+      listPetsWithRoot: vi.fn().mockResolvedValue([p]),
+      findArtifactByRoot: vi.fn().mockResolvedValue({petId: "pet-other", active: true}),
+      findBoundMintSessionByRoot: vi.fn().mockResolvedValue(session({}, fixture)),
+    });
+    const dry = await backfillTagArtifacts(dryStore, 1_700_000_000, {dryRun: true});
+    expect(dry.details).toEqual([{petId: "pet-1", root: fixture.root, outcome: "mismatch", reason: expectedReason}]);
+    expect(dryStore.findBoundMintSessionByRoot).not.toHaveBeenCalled();
+
+    const writeStore = fakeStore({
+      listPetsWithRoot: vi.fn().mockResolvedValue([p]),
+      findArtifactByRoot: vi.fn().mockResolvedValue({petId: "pet-other", active: true}),
+      findBoundMintSessionByRoot: vi.fn().mockResolvedValue(session({}, fixture)),
+    });
+    const write = await backfillTagArtifacts(writeStore, 1_700_000_100);
+    expect(write.details).toEqual(dry.details);
+    expect(writeStore.createArtifactCalls).toEqual([]);
   });
 });

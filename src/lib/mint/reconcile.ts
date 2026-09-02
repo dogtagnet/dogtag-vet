@@ -2,6 +2,7 @@ import "server-only";
 import {MintSession} from "@/lib/models/MintSession";
 import {Pet} from "@/lib/models/Pet";
 import {readIsValidRoot, readProfileRoot, readTxReceiptStatus} from "@/lib/chainRead";
+import {activateAnchoredArtifact} from "@/lib/tags/artifact";
 
 /** Surfaced verbatim in the wizard's "ready" banner and persisted as the session's own
  * `lastIssueError` - see `MintSessionDoc.lastIssueError`'s doc comment. */
@@ -145,6 +146,15 @@ export async function reconcileAnchoredSession(
  * chain but no local Pet record carries it, typically after a DB restore). One implementation
  * means every caller seals a tag onto a pet in EXACTLY the same shape - never a second, slightly
  * different write path a future reader has to notice and reconcile by hand.
+ *
+ * WP4.9V FIX ROUND 1 (D3): this is also, for that exact reason, the ONE place a `TagArtifact` is
+ * ever promoted to `active` - see `activateAnchoredArtifact`'s own doc comment. `Pet.dogTag.root`
+ * is written first: if the process dies between the two writes below, the pet is left with its new
+ * root recorded but no matching ACTIVE artifact yet (never the reverse - an active artifact for a
+ * root the pet record does not yet claim), which is the same fail-closed shape
+ * `createTagArtifact`'s own doc comment already prefers, and which the export route's own
+ * `artifact.root === pet.dogTag.root` guard (`export-tag-data/route.ts`) and the backfill runbook
+ * both already handle.
  */
 export async function linkPetDogTag(petId: string, tag: LinkedDogTag): Promise<void> {
   await Pet.updateOne(
@@ -161,6 +171,7 @@ export async function linkPetDogTag(petId: string, tag: LinkedDogTag): Promise<v
       },
     },
   );
+  await activateAnchoredArtifact(petId, tag.root);
 }
 
 /** Mongoose + real-chain `ReconcileDeps` - the production adapter shared by every call site. */

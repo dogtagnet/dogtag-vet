@@ -12,8 +12,16 @@ import {
   type TypedScalar,
 } from "@dogtag/standard";
 import {startEphemeralMongod, stopEphemeralMongod, type EphemeralMongod} from "../helpers/ephemeralMongod";
-import {createTagArtifact, findActiveTagArtifact, supersedeActiveArtifactsForPet, type CreateTagArtifactInput} from "@/lib/tags/artifact";
+import {
+  activateAnchoredArtifact,
+  createTagArtifact,
+  findActiveTagArtifact,
+  supersedeActiveArtifactsForPet,
+  type CreateTagArtifactInput,
+} from "@/lib/tags/artifact";
+import {linkPetDogTag} from "@/lib/mint/reconcile";
 import {TagArtifact} from "@/lib/models/TagArtifact";
+import {Pet} from "@/lib/models/Pet";
 
 /**
  * WP4.9 item 2 - the TagArtifact write-helper invariant, against a REAL ephemeral mongod (needed
@@ -46,7 +54,7 @@ afterAll(async () => {
 });
 
 afterEach(async () => {
-  await TagArtifact.deleteMany({});
+  await Promise.all([TagArtifact.deleteMany({}), Pet.deleteMany({})]);
 });
 
 const ISSUER_CLONE = "0x5BD5048125F223100A2753A740F34D044AB493B"; // deliberately mixed-case
@@ -186,11 +194,178 @@ describe("createTagArtifact - the invariant (accept/refuse)", () => {
     const first = await createTagArtifact(input);
     expect(first.ok).toBe(true);
     if (!first.ok) throw new Error("unreachable");
+    expect(first.reactivated).toBe(false);
 
     const second = await createTagArtifact(input);
     expect(second).toEqual(first);
     expect(await TagArtifact.countDocuments({})).toBe(1);
     expect(await TagArtifact.countDocuments({active: true})).toBe(1);
+  });
+
+  /**
+   * WP4.9V FIX ROUND 1 (D1) - the grader's PROBE B, at the unit level: a repeat `createTagArtifact`
+   * call against a row for the SAME (petId, root) that is currently `active: false` (the crash
+   * window this function's own doc comment describes) must REPAIR it, not silently return it
+   * unchanged. Before this fix, `existing` was returned verbatim regardless of `active`, so the
+   * pet stayed at zero active artifacts forever and every repeat call looked like success.
+   *
+   * BITE PROOF: reverting the `if (!existing.active)` branch (back to unconditionally returning
+   * `existing`) turns this test red - `reactivated` would be absent/false, `active` would stay
+   * `false`, and `findActiveTagArtifact` would keep returning `null`.
+   */
+  it("(D1) reactivates an existing INACTIVE row for the same (petId, root) rather than treating it as a no-op", async () => {
+    const input = baseInput();
+    const first = await createTagArtifact(input);
+    expect(first.ok).toBe(true);
+    if (!first.ok) throw new Error("unreachable");
+
+    // Simulate the crash-window state directly: this row got superseded (by some OTHER root that
+    // never actually landed) without ever being cleaned up.
+    await TagArtifact.updateOne({root: first.artifact.root}, {$set: {active: false, supersededByRoot: `0x${"cc".repeat(32)}`}});
+    expect(await findActiveTagArtifact("pet-1")).toBeNull();
+
+    const repeat = await createTagArtifact(input);
+    expect(repeat.ok).toBe(true);
+    if (!repeat.ok) throw new Error("unreachable");
+    expect(repeat.reactivated).toBe(true);
+    expect(repeat.artifact.active).toBe(true);
+    expect(repeat.artifact.supersededByRoot).toBeUndefined();
+
+    expect(await TagArtifact.countDocuments({})).toBe(1); // repaired in place, never a duplicate
+    const active = await findActiveTagArtifact("pet-1");
+    expect(active?.root).toBe(first.artifact.root);
+  });
+});
+
+describe("activateAnchoredArtifact (D3 - anchor-at-confirm custody promotion)", () => {
+  it("promotes an inactive issued_here artifact to active and supersedes the pet's prior active row", async () => {
+    const first = await createTagArtifact(baseInput());
+    expect(first.ok).toBe(true);
+    if (!first.ok) throw new Error("unreachable");
+
+    // Mirrors the custodial-bind side effect: created but NOT activated yet.
+    const {leaves, reservedLeafHashes, root} = buildVerifiableFixture("Rex II");
+    const second = await createTagArtifact(baseInput({leaves, reservedLeafHashes, root, activate: false}));
+    expect(second.ok).toBe(true);
+    if (!second.ok) throw new Error("unreachable");
+    expect(second.artifact.active).toBe(false);
+    // Creating with `activate: false` must NOT have superseded the first artifact either.
+    expect((await findActiveTagArtifact("pet-1"))?.root).toBe(first.artifact.root);
+
+    const outcome = await activateAnchoredArtifact("pet-1", second.artifact.root);
+    expect(outcome).toEqual({activated: true});
+
+    const active = await findActiveTagArtifact("pet-1");
+    expect(active?.root).toBe(second.artifact.root);
+    const supersededFirst = await TagArtifact.findOne({root: first.artifact.root}).lean();
+    expect(supersededFirst?.active).toBe(false);
+    expect(supersededFirst?.supersededByRoot).toBe(second.artifact.root);
+  });
+
+  it("is a defensive no-op (never throws) when no artifact exists yet for this (petId, root)", async () => {
+    await expect(activateAnchoredArtifact("nobody", "0xdead")).resolves.toEqual({activated: false});
+    expect(await TagArtifact.countDocuments({})).toBe(0);
+  });
+
+  it("is idempotent when the named artifact is already active (no re-supersede)", async () => {
+    const first = await createTagArtifact(baseInput());
+    expect(first.ok).toBe(true);
+    if (!first.ok) throw new Error("unreachable");
+
+    const outcome = await activateAnchoredArtifact("pet-1", first.artifact.root);
+    expect(outcome).toEqual({activated: false});
+    const stillActive = await TagArtifact.findOne({root: first.artifact.root}).lean();
+    expect(stillActive?.active).toBe(true);
+  });
+
+  /**
+   * WP4.9V FIX ROUND 1 (D3) - the grader's PROBE C, made permanent. Reproduces the exact sequence
+   * the grade named: a reissue whose custodial-bind lands (creates the new artifact) BEFORE
+   * `issueTag` is ever sent on chain (`lib/mint/flow.ts`'s `custodialBind` only checks the slot is
+   * still UNSET, never that THIS root is anchored) - and then the `issueTag` transaction reverts
+   * (or the reissue is simply abandoned) so the terminal confirm write NEVER runs for the new root.
+   *
+   * Before this fix, custodial-bind superseded the OLD artifact and activated the NEW one
+   * immediately, so the pet's "active" artifact ended up on R2 - a root that was never anchored -
+   * while `Pet.dogTag.root` still (correctly) said R1. `findActiveTagArtifact` and
+   * `Pet.dogTag.root` disagreeing is exactly the state the export ceremony must never disclose.
+   *
+   * BITE PROOF: this test is RED against the pre-fix code shape (custodial-bind calling
+   * `createTagArtifact` with its old unconditional-supersede behavior, i.e. without `activate:
+   * false`, and confirm never calling `activateAnchoredArtifact` at all) - `active?.root` would
+   * equal R2, not R1, and the disclosure check would be `true`.
+   */
+  it("(PROBE C) a reissue whose custodial-bind lands but whose confirm never runs leaves the pet's ACTIVE artifact on the ANCHORED root", async () => {
+    const first = buildVerifiableFixture("Rex");
+    const second = buildVerifiableFixture("Rexy"); // the reissue's new tree - a different root
+
+    // State after the ORIGINAL issuance confirmed: pet.dogTag.root = R1, artifact R1 active.
+    await Pet.create({
+      petId: "pet-reissue",
+      name: "Probe Pet",
+      ownerClientIds: [],
+      dogTag: {dogTagIdDec: DOG_TAG_ID_DEC, dogTagIdField: DOG_TAG_ID_FIELD, root: first.root, status: "active", cloneAddress: ISSUER_CLONE},
+      searchKey: "probe pet",
+    });
+    const a = await createTagArtifact({
+      petId: "pet-reissue",
+      dogTagIdDec: DOG_TAG_ID_DEC,
+      dogTagIdField: DOG_TAG_ID_FIELD,
+      root: first.root,
+      protocolVersion: "dogtag-v2/1",
+      leaves: first.leaves,
+      reservedLeafHashes: first.reservedLeafHashes,
+      expectedIdentityLeaves: [],
+      source: "issued_here",
+      issuerClone: ISSUER_CLONE,
+      now: 1_699_000_000,
+    });
+    expect(a.ok).toBe(true);
+
+    // The reissue's custodial-bind terminal write - `activate: false`, exactly like
+    // `issuedArtifactSideEffect.ts`'s `mongoIssuedArtifactStore` now calls it.
+    const b = await createTagArtifact({
+      petId: "pet-reissue",
+      dogTagIdDec: DOG_TAG_ID_DEC,
+      dogTagIdField: DOG_TAG_ID_FIELD,
+      root: second.root,
+      protocolVersion: "dogtag-v2/1",
+      leaves: second.leaves,
+      reservedLeafHashes: second.reservedLeafHashes,
+      expectedIdentityLeaves: [],
+      source: "issued_here",
+      issuerClone: ISSUER_CLONE,
+      now: 1_700_000_000,
+      activate: false,
+    });
+    expect(b.ok).toBe(true);
+    if (!b.ok) throw new Error("unreachable");
+    expect(b.artifact.active).toBe(false);
+
+    // ... and then the issueTag transaction REVERTS (e2e/mint-issue-revert.spec.ts's own scenario):
+    // `reconcileAnchoredSession`'s reverted branch calls `markSessionRevertedReady` and returns
+    // WITHOUT ever calling `linkPetDogTag` - so `activateAnchoredArtifact` never runs for R2.
+    const active = await findActiveTagArtifact("pet-reissue");
+    const pet = await Pet.findOne({petId: "pet-reissue"}).lean();
+    expect(active?.root).toBe(first.root.toLowerCase()); // still R1 - never promoted to the un-anchored R2
+    expect(pet?.dogTag?.root?.toLowerCase()).toBe(first.root.toLowerCase());
+    expect(active?.root !== pet?.dogTag?.root?.toLowerCase()).toBe(false); // export would NOT disclose an un-anchored root
+
+    // If the SAME reissue is instead retried to success, the terminal confirm write
+    // (`linkPetDogTag`) promotes R2 exactly then - proving the other half of the fix, not just the
+    // "revert never promotes" half.
+    await linkPetDogTag("pet-reissue", {
+      dogTagIdDec: DOG_TAG_ID_DEC,
+      dogTagIdField: DOG_TAG_ID_FIELD,
+      root: second.root,
+      cloneAddress: ISSUER_CLONE,
+    });
+    const activeAfterConfirm = await findActiveTagArtifact("pet-reissue");
+    const petAfterConfirm = await Pet.findOne({petId: "pet-reissue"}).lean();
+    expect(activeAfterConfirm?.root).toBe(second.root.toLowerCase());
+    expect(petAfterConfirm?.dogTag?.root?.toLowerCase()).toBe(second.root.toLowerCase());
+    const supersededFirst = await TagArtifact.findOne({root: first.root.toLowerCase()}).lean();
+    expect(supersededFirst?.active).toBe(false);
   });
 });
 

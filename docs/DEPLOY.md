@@ -113,6 +113,8 @@ Every tag this app issues or imports FROM THIS POINT ON writes its own `TagArtif
 
 A deployment that already had tags issued or imported BEFORE this version, however, has pets with a `dogTag.root` but no `TagArtifact` row yet - the backfill script closes that gap by finding each such pet's own `MintSession` (the one that actually bound that exact root), independently re-verifying it, and inserting the missing artifact.
 It is idempotent (safe to run more than once - a pet already covered is skipped, never re-inserted or overwritten) and it never modifies or deletes anything outside the new `TagArtifact` collection.
+It can also REACTIVATE: a pet whose current root already has a `TagArtifact` row, but one that is currently `active: false` (the rare crash-window state `lib/tags/artifact.ts`'s own doc comment describes - a prior write that died between superseding the old row and creating/activating the new one), is repaired by promoting that existing row back to `active` rather than inserting a duplicate.
+The report prints this distinctly as `REACTIVATED`/`WOULD REACTIVATE`, never folded into `INSERTED` - both leave the pet correctly covered, but they started from different states and an operator reading the report should be able to tell them apart.
 
 **It REPORTS, and never auto-fixes, a session whose stored data no longer recomputes its own claimed root** (data corruption, a hand-edited document, or genuine tampering).
 A mismatch is not fixable by re-running the script - it needs a human to look at the named pet and MintSession and decide what actually happened before doing anything about it.
@@ -121,14 +123,15 @@ A mismatch is not fixable by re-running the script - it needs a human to look at
 ```
 MONGODB_URI="<this deployment's own connection string>" pnpm backfill-tag-artifacts -- --dry-run
 ```
-Read the printed report. `WOULD INSERT` lines are exactly what a real run would create; `MISMATCH` lines are exactly what a real run would still refuse to touch, printed with the specific reason (this is the same dispatch/verification `createTagArtifact` uses at every live write path, not a separate approximation of it - a dry run's prediction and a real run's outcome are always identical for the same database state).
+Read the printed report. `WOULD INSERT`/`WOULD REACTIVATE` lines are exactly what a real run would create/repair; `MISMATCH` lines are exactly what a real run would still refuse to touch, printed with the specific reason.
+A dry run runs the identical verification dispatch (`createTagArtifact`'s own `verifyForProtocolVersion`) and the identical preconditions a real run checks (a missing `dogTag.cloneAddress`, a root already claimed by a different pet) before either mode's own fork - so its per-pet verdict is the verdict a real run reaches for the same database state; only the write itself is skipped.
 A summary line at the end gives the total counts; the process exits `1` if any mismatch was found (so this is safe to run from a script/cron and check via exit code), `0` otherwise.
 
 **Only once the dry-run's report looks right, run it for real:**
 ```
 MONGODB_URI="<this deployment's own connection string>" pnpm backfill-tag-artifacts -- --write
 ```
-This performs the writes the dry-run predicted (and none of the ones it reported as mismatches) and prints the identical report shape with `INSERTED` in place of `WOULD INSERT`.
+This performs the writes the dry-run predicted (and none of the ones it reported as mismatches) and prints the identical report shape with `INSERTED`/`REACTIVATED` in place of `WOULD INSERT`/`WOULD REACTIVATE`.
 Running `--write` again afterward (accidentally, or deliberately to catch any tags issued/imported since the first run) is safe - already-covered pets are skipped and mismatches are reported the exact same way every time, never silently "fixed" by a later run.
 
 **This script is never run against a live deployment's database by an automated build/fix session** - only by you (or whoever operates that deployment), by hand, after reading its dry-run report.

@@ -207,4 +207,122 @@ describe("backfillTagArtifacts against a real ephemeral mongod", () => {
     const report = await backfillTagArtifacts(mongoBackfillStore, 1_700_000_000);
     expect(report.scanned).toBe(0);
   });
+
+  /**
+   * WP4.9V FIX ROUND 1, D2 - the grader's PROBE A, made permanent. `docs/DEPLOY.md` used to claim a
+   * dry run's prediction and a real run's outcome "are always identical for the same database
+   * state" - FALSIFIED for exactly this state (a legacy pet with `dogTag.root` but no
+   * `dogTag.cloneAddress`, the population this migration exists for): the dry-run branch predicted
+   * `inserted` while the write branch threw `TagArtifact validation failed: issuerClone: Path
+   * \`issuerClone\` is required.` (from `issuerClone: pet.cloneAddress ?? ""`), a real, silent
+   * MISMATCH-shaped bug the runbook told an operator could never happen.
+   *
+   * BITE PROOF: reverting `backfill.ts`'s explicit `!pet.cloneAddress` precondition (restoring
+   * `issuerClone: pet.cloneAddress ?? ""` on the write path) turns this test red - `dry.details`
+   * and `write.details` stop being byte-identical, and `write` reports a mongoose validation
+   * message as its mismatch reason instead of the honest "no dogTag.cloneAddress on file" one.
+   */
+  it("PROBE A (D2): a legacy pet with dogTag.root but NO dogTag.cloneAddress - dry and write agree, byte-identical, and nothing is written", async () => {
+    const fixture = buildVerifiableFixture();
+    await Pet.create({
+      petId: "pet-noclone",
+      name: "Probe Pet",
+      ownerClientIds: [],
+      // Deliberately NO cloneAddress - optional on Pet.dogTag (src/lib/models/Pet.ts).
+      dogTag: {dogTagIdDec: DOG_TAG_ID_DEC, dogTagIdField: DOG_TAG_ID_FIELD, root: fixture.root, status: "active"},
+      searchKey: "probe pet",
+    });
+    await MintSession.create({
+      dogTagIdDec: DOG_TAG_ID_DEC,
+      dogTagIdField: DOG_TAG_ID_FIELD,
+      identityLeaves: [],
+      petId: "pet-noclone",
+      petName: "Probe Pet",
+      profile: {weightHistory: []},
+      status: "bound",
+      root: fixture.root,
+      boundLeaves: fixture.leaves,
+      reservedLeafHashes: fixture.reservedLeafHashes,
+      protocolVersion: "dogtag-v2/1",
+      tokenExp: 9_999_999_999,
+    });
+
+    const dry = await backfillTagArtifacts(mongoBackfillStore, 1_700_000_000, {dryRun: true});
+    const write = await backfillTagArtifacts(mongoBackfillStore, 1_700_000_100);
+
+    const expectedReason = "pet has no dogTag.cloneAddress on file - the artifact's issuerClone cannot be determined";
+    expect(dry.details).toEqual([{petId: "pet-noclone", root: fixture.root, outcome: "mismatch", reason: expectedReason}]);
+    expect(write.details).toEqual(dry.details); // the load-bearing D2 assertion: byte-identical, not just "both mismatches"
+    expect(await TagArtifact.countDocuments({})).toBe(0);
+  });
+
+  /**
+   * WP4.9V FIX ROUND 1, D1 - the grader's PROBE B, made permanent. `lib/tags/artifact.ts`'s own doc
+   * comment claimed the backfill script is "this window's actual safety net" for the crash state
+   * where a pet is left with zero active artifacts - FALSIFIED: `createTagArtifact`'s idempotence
+   * check matched on `root` alone, ignoring `active`, so a repeat call against this exact state
+   * returned the existing (inactive) row as `{ok: true}` without ever writing anything, and the
+   * report said `inserted` on every single run, forever, never converging.
+   *
+   * BITE PROOF: reverting the `existing.active` check in `createTagArtifact` (back to
+   * unconditionally returning `existing`) turns this test red - `write`/`rerun` stop reporting
+   * `reactivated`/`already_covered`, and `active artifacts after` stays `0` forever.
+   */
+  it("PROBE B (D1): the documented crash window (supersede landed, create/activate did not) - the backfill REACTIVATES it and converges", async () => {
+    const fixture = buildVerifiableFixture();
+    await Pet.create({
+      petId: "pet-window",
+      name: "Probe Pet",
+      ownerClientIds: [],
+      dogTag: {dogTagIdDec: DOG_TAG_ID_DEC, dogTagIdField: DOG_TAG_ID_FIELD, root: fixture.root, status: "active", cloneAddress: CLONE},
+      searchKey: "probe pet",
+    });
+    await MintSession.create({
+      dogTagIdDec: DOG_TAG_ID_DEC,
+      dogTagIdField: DOG_TAG_ID_FIELD,
+      identityLeaves: [],
+      petId: "pet-window",
+      petName: "Probe Pet",
+      profile: {weightHistory: []},
+      status: "bound",
+      root: fixture.root,
+      boundLeaves: fixture.leaves,
+      reservedLeafHashes: fixture.reservedLeafHashes,
+      protocolVersion: "dogtag-v2/1",
+      tokenExp: 9_999_999_999,
+    });
+    // The exact state `createTagArtifact`'s own doc comment names: a row for this pet's OWN
+    // current root exists, but was already flipped inactive (as if some earlier write superseded
+    // it and then crashed before creating/activating the replacement) - zero active artifacts.
+    await TagArtifact.create({
+      petId: "pet-window",
+      dogTagIdDec: DOG_TAG_ID_DEC,
+      dogTagIdField: DOG_TAG_ID_FIELD,
+      root: fixture.root.toLowerCase(),
+      protocolVersion: "dogtag-v2/1",
+      leaves: fixture.leaves,
+      reservedLeafHashes: fixture.reservedLeafHashes,
+      source: "issued_here",
+      issuerClone: CLONE.toLowerCase(),
+      verifiedAt: 1_699_000_000,
+      active: false,
+      supersededByRoot: `0x${"ee".repeat(32)}`,
+    });
+    expect(await TagArtifact.countDocuments({petId: "pet-window", active: true})).toBe(0);
+
+    const dry = await backfillTagArtifacts(mongoBackfillStore, 1_700_000_000, {dryRun: true});
+    expect(dry.details).toEqual([{petId: "pet-window", root: fixture.root, outcome: "reactivated"}]);
+
+    const write = await backfillTagArtifacts(mongoBackfillStore, 1_700_000_100);
+    expect(write.details).toEqual([{petId: "pet-window", root: fixture.root, outcome: "reactivated"}]);
+    expect(await TagArtifact.countDocuments({petId: "pet-window", active: true})).toBe(1);
+    expect(await TagArtifact.countDocuments({})).toBe(1); // repaired in place - never a duplicate row
+    const repaired = await TagArtifact.findOne({petId: "pet-window"}).lean();
+    expect(repaired?.active).toBe(true);
+    expect(repaired?.supersededByRoot).toBeUndefined();
+
+    const rerun = await backfillTagArtifacts(mongoBackfillStore, 1_700_000_200);
+    expect(rerun.details).toEqual([{petId: "pet-window", root: fixture.root, outcome: "already_covered"}]);
+    expect(await TagArtifact.countDocuments({})).toBe(1);
+  });
 });

@@ -36,6 +36,15 @@ export const mongoIssuedArtifactStore: IssuedArtifactSideEffectStore = {
       protocolVersion: "dogtag-v2/1",
       schemaId: DOG_PROFILE_SCHEMA_ID,
       source: "issued_here",
+      // WP4.9V FIX ROUND 1 (D3): NOT activated here. Custodial-bind runs strictly BEFORE the
+      // on-chain `issueTag` (`lib/mint/flow.ts`'s `custodialBind` only checks the slot is still
+      // UNSET on chain, never that THIS root is anchored) - promoting this artifact to `active`
+      // right now, and superseding the pet's real anchored tag in the same stroke, would let a
+      // reissue whose `issueTag` later reverts or is abandoned leave the pet's "active" custody
+      // record on a root that was never anchored, disclosable by the export ceremony. The terminal
+      // confirm write (`lib/mint/reconcile.ts::linkPetDogTag`, via `activateAnchoredArtifact`) is
+      // the ONLY place this artifact is ever promoted - see `createTagArtifact`'s own doc comment.
+      activate: false,
     }),
   async flagArtifactError(sessionId) {
     await MintSession.updateOne({sessionId}, {$set: {artifactError: true}});

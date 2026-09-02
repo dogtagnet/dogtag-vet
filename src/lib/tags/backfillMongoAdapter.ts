@@ -1,6 +1,7 @@
 import "server-only";
 import {Pet, type PetDoc} from "@/lib/models/Pet";
 import {MintSession, type MintSessionDoc} from "@/lib/models/MintSession";
+import {TagArtifact, type TagArtifactDoc} from "@/lib/models/TagArtifact";
 import {createTagArtifact, findActiveTagArtifact} from "@/lib/tags/artifact";
 import type {BackfillMintSession, BackfillPet, BackfillStore} from "@/lib/tags/backfill";
 
@@ -25,6 +26,11 @@ export const mongoBackfillStore: BackfillStore = {
   async findActiveArtifactRoot(petId) {
     const active = await findActiveTagArtifact(petId);
     return active ? active.root : null;
+  },
+
+  async findArtifactByRoot(root) {
+    const doc = await TagArtifact.findOne({root}).lean<Pick<TagArtifactDoc, "petId" | "active">>();
+    return doc ? {petId: doc.petId, active: doc.active} : null;
   },
 
   async findBoundMintSessionByRoot(root): Promise<BackfillMintSession | null> {

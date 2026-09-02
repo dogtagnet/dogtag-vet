@@ -38,6 +38,17 @@ export async function POST(request: Request, {params}: {params: Promise<{id: str
     return badRequest("This pet has no tag data on file yet - issue or import a tag first.");
   }
 
+  // WP4.9V FIX ROUND 1 (D3), belt-and-suspenders: `lib/mint/reconcile.ts::linkPetDogTag` is now the
+  // only place an `issued_here` artifact is ever promoted to `active`, exactly when the chain
+  // confirms `pet.dogTag.root` - so this mismatch should never actually happen. It is checked
+  // anyway, explicitly, rather than trusted implicitly: a pet whose "active" artifact's root
+  // diverges from its own anchored `dogTag.root` (a mid-reissue window, a stale relink, any future
+  // write path that forgets this invariant) must refuse rather than hand an owner's phone data for
+  // a root that is not what is actually on chain for this pet.
+  if (artifact.root !== pet.dogTag?.root?.toLowerCase()) {
+    return badRequest("This pet's tag data is mid-reissue and not yet anchored on chain - try again once the reissue completes or is retried.");
+  }
+
   const now = Math.floor(Date.now() / 1000);
   const token = generateHexToken();
   const exp = now + EXPORT_TTL_SECS;
