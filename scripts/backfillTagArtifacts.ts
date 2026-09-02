@@ -6,10 +6,13 @@
  * REPORTS (never auto-fixes) any session whose stored data no longer recomputes.
  *
  * CRITICAL: this script is written and tested against SCRATCHPAD/ephemeral databases only - see
- * tests/unit/models/backfill.integration.test.ts (a real, disposable ephemeral mongod) and
- * docs/DEPLOY.md's "TagArtifact backfill" runbook. Running it against a live deployment's database
- * is a deliberate, documented operator step (docs/DEPLOY.md), never something this repo's own
- * builder/fixer session executes - see plans/orchestration/wp4.9V-progress.md's own header.
+ * tests/unit/models/backfill.integration.test.ts (a real, disposable ephemeral mongod). Running it
+ * against a live deployment's database is a deliberate operator step taken by hand, after reading
+ * its --dry-run report, never something this repo's own builder/fixer session executes - see
+ * plans/orchestration/wp4.9V-progress.md's own header. (This backfill has already been run once,
+ * for real, against the live UAT database - see plans/orchestration/ORCHESTRATION.md's status log
+ * for that entry; a NEW deployment or a deployment that never issued/imported tags before adopting
+ * this schema needs no action at all.)
  *
  * Usage (MONGODB_URI required, exactly like `pnpm seed`):
  *   tsx scripts/backfillTagArtifacts.ts --dry-run   # report only - zero writes. Run this FIRST.

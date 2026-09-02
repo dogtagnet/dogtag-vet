@@ -236,8 +236,9 @@ export async function findActiveTagArtifact(petId: string): Promise<TagArtifactD
  * callers already treats its own write as complete regardless of this side effect's outcome -
  * throwing past `linkPetDogTag` would turn a genuine on-chain confirmation into a failed response,
  * exactly the failure mode `applyIssuedArtifactSideEffect`'s own "never throw" contract exists to
- * avoid one layer up. The backfill runbook (docs/DEPLOY.md) is the documented repair path for a pet
- * this leaves without a matching active artifact.
+ * avoid one layer up. The backfill script's REACTIVATE repair (`scripts/backfillTagArtifacts.ts`,
+ * run manually with `--write`) is the documented repair path for a pet this leaves without a
+ * matching active artifact.
  *
  * Also a no-op (never re-supersedes) when the named artifact is ALREADY `active` - idempotent for
  * the worker boot recovery re-confirming an already-`bound` session, or a retried confirm call.

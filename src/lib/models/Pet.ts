@@ -65,7 +65,7 @@ export interface DogTagInfo {
    * recomputed (there is no trigger that would do so), so the pet page must present it as
    * "at import time", never as a current-state claim - a stale copy of this banner asserted as
    * present-tense would be exactly the kind of untruthful signal this app's own MAJOR-2 lesson
-   * (docs/DEPLOY.md's backfill runbook doc comment) warns against repeating. Cleared implicitly
+   * (`models/Availability.ts`'s own doc comment) warns against repeating. Cleared implicitly
    * only when `dogTag` itself is replaced wholesale (a fresh import or a new issuance overwrites
    * the entire `dogTag` subdocument, this field included). Absent when the last import had no
    * conflicts, or when this tag was never imported at all. */

@@ -87,56 +87,6 @@ Any appointment that already exists with no practitioner assigned becomes "Unass
 If two or more of those legacy appointments land at the EXACT same instant (only possible if the Whole-clinic window's own capacity was ever set above 1), assigning any one of them will correctly refuse with a conflict for as long as any of the others at that same instant is still unassigned - D3 treats every unassigned appointment as blocking, including against each other, so the system will never silently pick a winner between two appointments competing for one practitioner's single slot. This is not a bug and not a sign the migration is stuck, and note that adding another bookable practitioner does NOT clear it - each unassigned appointment blocks every practitioner, including a newly added one, so both remain unassignable while both are live. Resolve it the way the software actually allows: cancel all but one of the overlapping appointments (an appointment's time cannot be edited after creation - there is no reschedule action, and a cancellation cannot be undone), then assign the remaining one normally. If a cancelled one still needs to happen, re-create it from the calendar with a practitioner chosen at creation time, which is a staff booking and so is allowed to sit alongside the existing one.
 Switching back to Whole clinic at any time is equally safe and immediate - it simply stops consulting per-practitioner rules/exceptions and per-practitioner appointment assignment, reverting to the exact clinic-wide computation this app used before this feature existed; no data is lost either direction, so the switch can be rehearsed on a live deployment during a quiet period before committing to it.
 
-**One-time database migration required before the first per-practitioner date exception on an existing deployment:** a database created before this feature shipped still carries an old unique index that allows only one date exception per calendar date, clinic-wide.
-Giving two different practitioners their own exception on the same date (routine once practitioners have independent schedules - two vets taking different days off that happen to coincide) fails with a database error until you run a one-time migration against that deployment's own database.
-
-**Run this check FIRST, against that deployment's own database - it only reads, it never changes anything:**
-```
-db.availabilityexceptions.getIndexes().filter(i => i.name === "date_1")
-```
-`date_1` exists on EVERY deployment, including a brand-new one that has never needed this migration - this app's schema also declares a plain, non-unique index on `date` for lookup performance, and Mongo names that index `date_1` automatically, the exact same name the OLD legacy unique index used.
-The presence of `date_1` by itself tells you nothing; only the **`unique` field in the printed result** does.
-A `date_1` with `unique: true` is the legacy index this migration exists for.
-A `date_1` with `unique` false or absent means this deployment already has the correct (non-unique) index and needs no action at all - do not run the drop command below "just to be safe" in this case, see the warning two paragraphs down.
-
-Only when the check above prints `unique: true`, migrate by running this once: `db.availabilityexceptions.dropIndex("date_1")`.
-Afterward, confirm two things: `date_1_staffId_1` is present (the compound index that actually enforces per-practitioner uniqueness, and was already there before you ran anything) and, after this app's next restart, that `date_1` has come back on its own as a plain non-unique index (mongoose recreates it automatically on boot - no manual `createIndex` needed).
-
-**Never run `dropIndex("date_1")` just to check what happens, and never run it a second time "to be sure."** On a database whose `date_1` is already the correct non-unique index - every brand-new deployment, and any deployment that already migrated - the command does not error or no-op: it succeeds and silently removes a real, wanted index, which mongoose will only recreate on the next process restart. Always run the read-only check above first, and only drop when it shows `unique: true`.
-
-One more thing you may see and can ignore: a pre-migration boot logs a `MongoServerError: An existing index has the same name as the requested index` (`IndexOptionsConflict`) for `date_1`, because mongoose is trying (and failing) to create its own non-unique `date_1` alongside the legacy unique one already occupying that name. This is expected log noise until the migration runs - the compound `date_1_staffId_1` index still gets created successfully regardless, so per-practitioner uniqueness is already correctly enforced even before you run the migration above; the migration only unblocks two DIFFERENT practitioners sharing one calendar date.
-
-### TagArtifact backfill (existing deployments only)
-
-WP4.9 adds a `TagArtifact` collection - the verify-at-write custody record for a pet's profile-tree leaves (root, opened leaves, reserved-leaf hashes), keyed to the pet and its root rather than archaeology over mint sessions.
-Every tag this app issues or imports FROM THIS POINT ON writes its own `TagArtifact` automatically (the custodial-bind terminal write, the mobile-booking tier-4 import, and the export/import ceremonies below all create one as part of the same request) - **no action is needed for a fresh deployment, or for any tag issued/imported after upgrading to this version.**
-
-A deployment that already had tags issued or imported BEFORE this version, however, has pets with a `dogTag.root` but no `TagArtifact` row yet - the backfill script closes that gap by finding each such pet's own `MintSession` (the one that actually bound that exact root), independently re-verifying it, and inserting the missing artifact.
-It is idempotent (safe to run more than once - a pet already covered is skipped, never re-inserted or overwritten) and it never modifies or deletes anything outside the new `TagArtifact` collection.
-It can also REACTIVATE: a pet whose current root already has a `TagArtifact` row, but one that is currently `active: false` (the rare crash-window state `lib/tags/artifact.ts`'s own doc comment describes - a prior write that died between superseding the old row and creating/activating the new one), is repaired by promoting that existing row back to `active` rather than inserting a duplicate.
-The report prints this distinctly as `REACTIVATED`/`WOULD REACTIVATE`, never folded into `INSERTED` - both leave the pet correctly covered, but they started from different states and an operator reading the report should be able to tell them apart.
-
-**It REPORTS, and never auto-fixes, a session whose stored data no longer recomputes its own claimed root** (data corruption, a hand-edited document, or genuine tampering).
-A mismatch is not fixable by re-running the script - it needs a human to look at the named pet and MintSession and decide what actually happened before doing anything about it.
-
-**Run the dry-run FIRST, against that deployment's own database - it only reads, it never writes anything:**
-```
-MONGODB_URI="<this deployment's own connection string>" pnpm backfill-tag-artifacts -- --dry-run
-```
-Read the printed report. `WOULD INSERT`/`WOULD REACTIVATE` lines are exactly what a real run would create/repair; `MISMATCH` lines are exactly what a real run would still refuse to touch, printed with the specific reason.
-A dry run runs the identical verification dispatch (`createTagArtifact`'s own `verifyForProtocolVersion`) and the identical preconditions a real run checks (a missing `dogTag.cloneAddress`, a root already claimed by a different pet) before either mode's own fork - so its per-pet verdict is the verdict a real run reaches for the same database state; only the write itself is skipped.
-A summary line at the end gives the total counts; the process exits `1` if any mismatch was found (so this is safe to run from a script/cron and check via exit code), `0` otherwise.
-
-**Only once the dry-run's report looks right, run it for real:**
-```
-MONGODB_URI="<this deployment's own connection string>" pnpm backfill-tag-artifacts -- --write
-```
-This performs the writes the dry-run predicted (and none of the ones it reported as mismatches) and prints the identical report shape with `INSERTED`/`REACTIVATED` in place of `WOULD INSERT`/`WOULD REACTIVATE`.
-Running `--write` again afterward (accidentally, or deliberately to catch any tags issued/imported since the first run) is safe - already-covered pets are skipped and mismatches are reported the exact same way every time, never silently "fixed" by a later run.
-
-**This script is never run against a live deployment's database by an automated build/fix session** - only by you (or whoever operates that deployment), by hand, after reading its dry-run report.
-There is no default MONGODB_URI baked into the script or its `pnpm backfill-tag-artifacts` alias - you must supply the connection string explicitly every time, which is a deliberate guard against ever running it against the wrong database by muscle memory alone.
-
 ## Kubernetes (Helm)
 
 `helm/dogtag-vet/` deploys the web app and the worker as two Deployments; it does not manage MongoDB - see "Managed Mongo" below.

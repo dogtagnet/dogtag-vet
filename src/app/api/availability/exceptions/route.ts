@@ -48,10 +48,10 @@ export async function POST(request: Request) {
   } catch (err) {
     // The compound (date, staffId) unique index normally makes this filter/update pair race-safe
     // (see `models/Availability.ts`'s doc comment) - but a database that has not yet run the
-    // documented one-time migration (`dropIndex("date_1")`) still carries the OLD single-field
-    // unique index on `date` alone, which can reject this exact upsert (E11000) even though the
-    // filter/update logic above is correct. Surface that as a specific, actionable message rather
-    // than a bare 500.
+    // one-time migration described there (`dropIndex("date_1")`, only when its `unique` flag is
+    // true) still carries the OLD single-field unique index on `date` alone, which can reject this
+    // exact upsert (E11000) even though the filter/update logic above is correct. Surface that as a
+    // specific, actionable message rather than a bare 500.
     if (err && typeof err === "object" && "code" in err && (err as {code?: number}).code === 11000) {
       return badRequest(
         staffId

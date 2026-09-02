@@ -77,10 +77,13 @@ export interface AvailabilityWindow {
  * `dropIndex("date_1")` therefore does NOT throw "index not found" on a fresh or already-migrated
  * database - it succeeds and removes the correct, wanted non-unique index (mongoose recreates it on
  * the next boot, but do not rely on that as a reason to run it speculatively). The presence of
- * `date_1` is never the signal; only its `unique` field is. See `docs/DEPLOY.md`'s "One-time
- * database migration" section for the non-mutating `getIndexes()` check that actually discriminates
- * a legacy (unique) `date_1` from this schema's own (non-unique) one, and for why running the drop
- * "just to check" on a non-legacy database is actively harmful, not merely a no-op.
+ * `date_1` is never the signal; only its `unique` field is - check with the non-mutating
+ * `db.availabilityexceptions.getIndexes().filter(i => i.name === "date_1")` and only drop when the
+ * result's `unique` field reads `true`; running the drop "just to check" on a non-legacy database is
+ * actively harmful, not merely a no-op. (The live UAT database has already had this migration
+ * applied - Kenneth ran it directly - so this note now matters only to some OTHER deployment still
+ * carrying a pre-WP4.7 database.) `tests/unit/models/wp47BackCompat.integration.test.ts` pins this
+ * discriminator permanently.
  */
 export interface AvailabilityExceptionDoc {
   exceptionId: string;

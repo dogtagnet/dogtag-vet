@@ -220,13 +220,16 @@ describe("requireVetSession / requireOwnerSession - role x disabled matrix, re-r
 
 describe("AvailabilityException date_1 index - WP4.7A FIX ROUND 1 (MAJOR-2)", () => {
   /**
-   * The grade round 1 defect: `docs/DEPLOY.md` claimed `dropIndex("date_1")` throws "index not
-   * found" on a fresh or already-migrated database, and that this is the all-clear signal telling
-   * an operator the migration is unnecessary. Both claims are false - `date: {..., index: true}`
-   * (this model, above) creates a plain index literally named `date_1` on EVERY deployment, so the
-   * command always succeeds. This is the assertion whose absence let that wrong claim ship.
+   * The grade round 1 defect: `docs/DEPLOY.md` used to claim `dropIndex("date_1")` throws "index
+   * not found" on a fresh or already-migrated database, and that this is the all-clear signal
+   * telling an operator the migration is unnecessary. Both claims were false - `date: {...,
+   * index: true}` (this model, above) creates a plain index literally named `date_1` on EVERY
+   * deployment, so the command always succeeds. This is the assertion whose absence let that wrong
+   * claim ship. (The runbook prose itself was later deleted from `docs/DEPLOY.md` once the live
+   * database had actually run the migration - see `models/Availability.ts`'s doc comment for where
+   * the discriminator now lives; this test still pins the underlying Mongo behavior permanently.)
    */
-  it("a fresh database's date_1 index is present but NON-unique - the actual DEPLOY.md discriminator", async () => {
+  it("a fresh database's date_1 index is present but NON-unique - the actual discriminator", async () => {
     const indexes = (await AvailabilityException.collection.indexes()) as Array<{name?: string; unique?: boolean}>;
     const dateIndex = indexes.find((i) => i.name === "date_1");
     expect(dateIndex).toBeDefined();
@@ -248,9 +251,9 @@ describe("AvailabilityException date_1 index - WP4.7A FIX ROUND 1 (MAJOR-2)", ()
         AvailabilityException.create({date: "2027-03-01", closed: true, staffId: "vet-b"}),
       ).rejects.toMatchObject({code: 11000});
 
-      // The documented migration - dropping the legacy unique date_1 - is what actually resolves
-      // it, matching the corrected DEPLOY.md discriminator (only ever run the drop when unique:
-      // true was observed).
+      // The migration described in `models/Availability.ts`'s doc comment - dropping the legacy
+      // unique date_1 - is what actually resolves it (only ever run the drop when unique: true
+      // was observed).
       await AvailabilityException.collection.dropIndex("date_1");
       await AvailabilityException.create({date: "2027-03-02", closed: true, staffId: "vet-c"});
       await expect(

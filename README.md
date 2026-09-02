@@ -73,7 +73,7 @@ A previously-empty field on the target pet is filled from the verified data; a f
 Both ceremonies' tokens are one-shot, burned on every outcome (success or refusal) - there is no retry endpoint for either, the same "generate a fresh one" convention this app's other ceremonies (mint, wallet registration) already use.
 
 **Existing-deployment backfill.**
-A clinic that adopted this schema after already having issued or imported tags needs a one-time pass to give its historical pets a `TagArtifact` row - see `docs/DEPLOY.md`'s "TagArtifact backfill" section for the runbook, which is deliberately never automated.
+A clinic that adopted this schema after already having issued or imported tags needs a one-time pass to give its historical pets a `TagArtifact` row - the backfill script (`scripts/backfillTagArtifacts.ts`, aliased as `pnpm backfill-tag-artifacts`) exists for exactly this and documents its own `--dry-run`/`--write` usage in its header comment; a fresh deployment needs no action, since every tag issued or imported from this schema onward already creates its own `TagArtifact` automatically.
 
 ## Design decisions
 

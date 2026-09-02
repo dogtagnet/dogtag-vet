@@ -153,8 +153,8 @@ export async function reconcileAnchoredSession(
  * root recorded but no matching ACTIVE artifact yet (never the reverse - an active artifact for a
  * root the pet record does not yet claim), which is the same fail-closed shape
  * `createTagArtifact`'s own doc comment already prefers, and which the export route's own
- * `artifact.root === pet.dogTag.root` guard (`export-tag-data/route.ts`) and the backfill runbook
- * both already handle.
+ * `artifact.root === pet.dogTag.root` guard (`export-tag-data/route.ts`) and the backfill script's
+ * REACTIVATE repair (`scripts/backfillTagArtifacts.ts`) both already handle.
  *
  * WP4.9V FIX ROUND 2 (N1): the artifact promotion below is wrapped in try/catch, mirroring
  * `applyIssuedArtifactSideEffect`'s own "never throw" contract exactly - the `Pet.updateOne` above
@@ -162,8 +162,9 @@ export async function reconcileAnchoredSession(
  * transient failure promoting the `TagArtifact` row must never turn that genuine confirmation into a
  * thrown error back through `reconcileAnchoredSession`'s callers (the confirm route, the retry route,
  * the worker's boot recovery, and WP4.4 tier-3's relink action all call this function unwrapped). A
- * failure here is only ever logged: the backfill runbook (docs/DEPLOY.md) is the documented repair
- * path for the pet this leaves without a matching active artifact.
+ * failure here is only ever logged: the backfill script's REACTIVATE repair
+ * (`scripts/backfillTagArtifacts.ts`, run manually with `--write`) is the documented repair path for
+ * the pet this leaves without a matching active artifact.
  */
 export async function linkPetDogTag(petId: string, tag: LinkedDogTag): Promise<void> {
   await Pet.updateOne(
@@ -184,8 +185,8 @@ export async function linkPetDogTag(petId: string, tag: LinkedDogTag): Promise<v
     await activateAnchoredArtifact(petId, tag.root);
   } catch (err) {
     // Never turn a genuine on-chain confirmation into a failed response - the pet is already linked
-    // above; a missing promotion is the fail-closed shape docs/DEPLOY.md's backfill runbook repairs
-    // (it now reactivates, per FIX ROUND 1 D1).
+    // above; a missing promotion is the fail-closed shape the backfill script's REACTIVATE repair
+    // fixes (it now reactivates, per FIX ROUND 1 D1) - see scripts/backfillTagArtifacts.ts.
     console.error(`could not promote the anchored TagArtifact for pet ${petId} root ${tag.root}:`, err);
   }
 }
