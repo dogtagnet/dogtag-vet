@@ -21,8 +21,9 @@ export const authConfig = {
       const isLoggedIn = Boolean(auth?.user);
       const {pathname} = request.nextUrl;
       // Everything is staff-only (behind sign-in) except the marketing/auth surface and the
-      // protocol-mandated public routes (mint/verify resolve, booking, payment status, receipts -
-      // specs/vet-public-api.yaml) - those never carry staff credentials by design.
+      // protocol-mandated public routes (mint/verify resolve, booking, payment status, receipts,
+      // WP4.9 tag-data export/import ceremonies - specs/vet-public-api.yaml) - those never carry
+      // staff credentials by design.
       //
       // `/design` (the dev-only component gallery) is deliberately NOT in this list, even though
       // it also 404s outside development via its own `NODE_ENV === "production"` check
@@ -35,6 +36,8 @@ export const authConfig = {
         "/p/",
         "/x/",
         "/w/",
+        "/e/",
+        "/i/",
         "/v1/",
         "/r/",
         "/pay/",

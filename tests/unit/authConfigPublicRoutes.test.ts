@@ -6,7 +6,9 @@ import {authConfig} from "@/auth.config";
  * staff sign-in. `GET /w/:token` and `POST /w/:token/complete` are the owner-facing wallet-
  * registration public routes (plans/wp4.2-client-wallet-registration.md) and must never require a
  * staff session - forgetting to add `/w/` here would make every mobile scan redirect to sign-in
- * instead of 200ing (or 404/410ing) for an unauthenticated caller.
+ * instead of 200ing (or 404/410ing) for an unauthenticated caller. `/e/:token` (export) and
+ * `/i/:token`(+`/complete`) (import) are the same shape for plans/wp4.9-tag-data-custody.md's
+ * ceremonies - see the dedicated tests below.
  */
 function isAuthorized(pathname: string): boolean {
   const request = {nextUrl: new URL(`https://vet.example.com${pathname}`)} as Parameters<
@@ -39,6 +41,25 @@ describe("auth.config's public-route allowlist", () => {
     // Guards against a future `/webhooks` or similar landing inside the SAME "/w/" prefix check by
     // accident - `/w/` (with trailing slash) only ever matches an actual token path.
     expect(isAuthorized("/webhooks/something")).toBe(false);
+  });
+
+  it("allows the WP4.9 export ceremony's public fetch route with no session", () => {
+    expect(isAuthorized("/e/0123456789abcdef0123456789abcdef")).toBe(true);
+  });
+
+  it("allows the WP4.9 import ceremony's public resolve and complete routes with no session", () => {
+    expect(isAuthorized("/i/0123456789abcdef0123456789abcdef")).toBe(true);
+    expect(isAuthorized("/i/0123456789abcdef0123456789abcdef/complete")).toBe(true);
+  });
+
+  it("does not accidentally make an unrelated /e- or /i-prefixed path public via a loose match", () => {
+    expect(isAuthorized("/emergency/something")).toBe(false);
+    expect(isAuthorized("/invoices/something")).toBe(false);
+  });
+
+  it("still requires a session for the staff export/import session-creation API routes", () => {
+    expect(isAuthorized("/api/pets/some-pet-id/export-tag-data")).toBe(false);
+    expect(isAuthorized("/api/tags/import-sessions")).toBe(false);
   });
 
   it("still allows the pre-existing public routes (regression guard against this edit breaking the array)", () => {
