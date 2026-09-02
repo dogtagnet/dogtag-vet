@@ -75,6 +75,22 @@ Both ceremonies' tokens are one-shot, burned on every outcome (success or refusa
 **Existing-deployment backfill.**
 A clinic that adopted this schema after already having issued or imported tags needs a one-time pass to give its historical pets a `TagArtifact` row - the backfill script (`scripts/backfillTagArtifacts.ts`, aliased as `pnpm backfill-tag-artifacts`) exists for exactly this and documents its own `--dry-run`/`--write` usage in its header comment; a fresh deployment needs no action, since every tag issued or imported from this schema onward already creates its own `TagArtifact` automatically.
 
+## Vet wallet self-registration and whitelist status
+
+Kenneth's ask (K2): a vet or owner should be able to register their own wallet address themselves, not only have an owner assign it for them, and every issuance surface should tell them plainly whether that address can actually issue on chain - never a guess, never a false "whitelisted".
+
+**Self-service (`/settings`'s "My issuance wallet" card, any vet/owner session).**
+`PATCH /api/settings/staff/me/wallet` (`src/app/api/settings/staff/me/wallet/route.ts`) lets a vet or owner set or clear THEIR OWN `Staff.walletAddress` - `requireVetSession` supplies the target `staffId` from the session itself, so the request body can only ever be `{walletAddress: string | null}` and can never touch another row or the caller's own role.
+The card's "Use connected wallet" button fills the field from the same wagmi connected account the issuance wizard and `OperatorsSection` already use.
+A manual field plus Save/Clear cover the rest.
+The owner-assigns-it path (`StaffSection`'s "Practitioner profiles") is unchanged - an owner can still set or clear any vet's wallet, including their own.
+
+**Whitelist status, everywhere it matters.**
+`src/lib/issuanceOperatorStatus.ts`'s `resolveOperatorStatus` is the ONE server-side answer to "can this wallet actually issue right now" - `whitelisted`, `not-whitelisted` (the chain was asked and said no), `no-address` (nothing recorded to check), `not-configured` (this clinic's clone isn't set up yet), or `unreadable` (the chain read itself failed or timed out).
+The same helper, same short (5s) cache, backs three surfaces so they can never disagree: the "My issuance wallet" card's status badge, a persistent (non-dismissible) warning banner on `/tags` and `/tags/issue` that also flags when the browser's CURRENTLY CONNECTED wallet differs from the recorded one, and `OperatorsSection`'s existing live status column (which gained one small additive "could not verify" state for an unreadable chain read - its "Active"/"Inactive" states and Add/Remove flow are unchanged).
+`no-address` deliberately never claims "you cannot issue" - the chain only cares about whichever wallet is actually connected at issuance time, never this app's own record of one - that stronger claim is reserved for `not-whitelisted`, where the chain was actually asked and answered.
+See `docs/DEPLOY.md`'s "Vet role, issuance operators, and per-practitioner scheduling" section for the operational procedure an owner follows to grant a vet's recorded wallet operator status on a real chain.
+
 ## Design decisions
 
 ### Invoice PDF library: pdfkit

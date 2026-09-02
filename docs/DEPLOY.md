@@ -71,6 +71,7 @@ The two are unrelated; a staff member's wallet being an issuance operator does n
 1. Invite the staff member from Settings ("Invite by email"), choosing role Vet (or Owner, which already carries this ability).
    A plain Staff role can never issue tags or records, on any chain - `/tags` and `/tags/issue` redirect them, and the three issuance API routes reject them with a 403, regardless of any on-chain whitelist state.
 2. Record that staff member's own wallet address on their row in the staff roster (the "Wallet address" field) - this is the address that will actually submit their `issueTag`/`issueRecord` transactions from their own browser session once whitelisted, not the relayer wallet from setup.
+   The vet does not need you for this step at all: once invited, they can record (or clear) their own wallet themselves from their own "My issuance wallet" card on Settings, including a "Use connected wallet" button that fills it from their own connected browser wallet - see the README's own section on this. Either path writes to the identical field; use whichever is more convenient for a given vet.
 3. In the new "Issuance operators" panel further down the Settings page, find that staff member's row and click "Add operator".
    This submits a real `addOperator(address)` transaction against this clinic's `VetIssuer` clone, signed by YOUR connected wallet (the owner's), not theirs - granting an operator does not require the vet to be present or to sign anything themselves.
 4. Wait for the transaction to confirm; the row's status flips from Inactive to Active once the panel's `operators(address)` read reflects it.
@@ -78,6 +79,8 @@ The two are unrelated; a staff member's wallet being an issuance operator does n
 5. "Remove operator" on the same row submits `removeOperator(address)` the same way and revokes the on-chain grant immediately - do this whenever a vet leaves or should no longer issue, not just when demoting their app-side role, since the app-side role change alone does not touch the chain, and the app's own pages will keep letting a Vet in even after this revoke until you also change their role.
 
 Both buttons use the exact same signed-write path (`legacyTxWithGas`, your connected wallet) as issuing a tag, so the same "Operator wallet gas" note above applies to whatever wallet you have connected while granting or revoking - it needs a small native PLASMA balance to pay gas for that one transaction.
+
+The vet does not need to ask you whether step 4 has landed: their own "My issuance wallet" card on Settings, and a warning banner on `/tags`/`/tags/issue` whenever it does not yet say Whitelisted, both read the identical on-chain check this panel does, so they see the same Active/Whitelisted transition themselves within a few seconds of your transaction confirming, with no extra step from you.
 
 **Switching scheduling mode from Whole clinic to Per practitioner on a live deployment:**
 
