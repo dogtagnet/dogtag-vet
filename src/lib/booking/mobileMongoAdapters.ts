@@ -9,6 +9,7 @@ import type {MobileTagChainDeps, MobileTagLookupStore} from "@/lib/booking/mobil
 import type {PostBookingStore} from "@/lib/booking/postBooking";
 import {createTagArtifact} from "@/lib/tags/artifact";
 import {identityLeafSelfCheckSubset} from "@/lib/tags/verifier";
+import {DOG_PROFILE_SCHEMA_ID} from "@/lib/tags/schemaIds";
 
 /** Mongoose-backed `MobileTagLookupStore` - the production adapter for `resolveTagClaim`'s
  * database reads, mirroring every other `mongo*Store`/`mongo*Deps` factory in this app
@@ -111,6 +112,11 @@ export const mongoPostBookingStore: PostBookingStore = {
       dogTagIdField: input.dogTagIdField,
       root: input.root,
       protocolVersion: "dogtag-v2/1",
+      // WP4.10V item 2: this mobile-booking claim always carries the FULL leaf set for the one
+      // record type this app has ever custodied (schemaIds.ts) - the EIP-712 booking wire format
+      // has no schemaId field of its own to thread through, unlike the WP4.9 import ceremony's
+      // artifact-export payload, so this is a hardcoded stamp exactly like custodial-bind's.
+      schemaId: DOG_PROFILE_SCHEMA_ID,
       leaves: input.leaves,
       reservedLeafHashes: input.reservedLeafHashes,
       expectedIdentityLeaves: identityLeafSelfCheckSubset(input.leaves),

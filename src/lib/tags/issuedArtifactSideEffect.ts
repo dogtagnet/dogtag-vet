@@ -1,16 +1,7 @@
 import type {OpenedLeaf} from "@dogtag/standard";
 import {createTagArtifact, type CreateTagArtifactResult} from "@/lib/tags/artifact";
+import {DOG_PROFILE_SCHEMA_ID} from "@/lib/tags/schemaIds";
 import {MintSession} from "@/lib/models/MintSession";
-
-/** The record type dogtag-vet's mint flow issues today - `MintProfile` (species/breedVbo/
- * breedLabel/sex/neuterStatus/dateOfBirth/weightHistory) structurally corresponds to exactly this
- * one record type in the schema registry (dogtag-protocol/specs/schemas/dogtag.dog-profile.v1.
- * schema.json's `$id`). Hardcoded rather than dispatched: this app has no OTHER record-issuing path
- * through custodial-bind (a vaccination/service-attestation record, if this app ever issues one,
- * would be a separate root/tree via a separate flow, not this one) - see wp4.9V-progress.md's LOG
- * for the full reasoning and the honest limit this implies (no live registry validation happens
- * here; this is a pointer, not a fetched-and-checked schema). */
-const DOG_PROFILE_SCHEMA_ID = "https://dogtag.io/schemas/dog-profile/v1";
 
 export interface IssuedArtifactSideEffectStore {
   createTagArtifact(input: {

@@ -3,7 +3,7 @@ import {Pet, type PetDoc} from "@/lib/models/Pet";
 import {MintSession, type MintSessionDoc} from "@/lib/models/MintSession";
 import {TagArtifact, type TagArtifactDoc} from "@/lib/models/TagArtifact";
 import {createTagArtifact, findActiveTagArtifact} from "@/lib/tags/artifact";
-import type {BackfillMintSession, BackfillPet, BackfillStore} from "@/lib/tags/backfill";
+import type {BackfillMintSession, BackfillPet, BackfillStore, SchemaIdRepairRow, SchemaIdRepairStore} from "@/lib/tags/backfill";
 
 /** Mongoose-backed `BackfillStore` - the production adapter `scripts/backfillTagArtifacts.ts` runs
  * for real. `connectToDatabase()` is assumed already called by the script, same convention as every
@@ -47,4 +47,25 @@ export const mongoBackfillStore: BackfillStore = {
   },
 
   createArtifact: createTagArtifact,
+};
+
+/** Mongoose-backed `SchemaIdRepairStore` - the production adapter for `backfill.ts`'s
+ * `repairMissingSchemaIds`. `{schemaId: {$exists: false}}` matches exactly what a `TagArtifact.
+ * create()` call with `schemaId: undefined` actually persists (mongoose omits the path entirely
+ * when neither a value nor a schema `default` applies - `schemaId` has no `default` - so an unset
+ * field is genuinely ABSENT, never a stored `null`). */
+export const mongoSchemaIdRepairStore: SchemaIdRepairStore = {
+  async listArtifactsMissingSchemaId(): Promise<SchemaIdRepairRow[]> {
+    const rows = await TagArtifact.find({schemaId: {$exists: false}}).lean<Pick<TagArtifactDoc, "artifactId" | "petId" | "root">[]>();
+    return rows.map((r) => ({artifactId: r.artifactId, petId: r.petId, root: r.root}));
+  },
+
+  async stampSchemaId(artifactId, schemaId): Promise<boolean> {
+    // Re-checks "still unset" at write time (never a blind $set) - see this store's own doc
+    // comment on `backfill.ts`'s SchemaIdRepairStore for why this is what keeps a concurrent
+    // repair run, or an ordinary write landing on the same row in the interim, from clobbering a
+    // value someone else legitimately set between the list read and this write.
+    const result = await TagArtifact.updateOne({artifactId, schemaId: {$exists: false}}, {$set: {schemaId}});
+    return result.modifiedCount > 0;
+  },
 };

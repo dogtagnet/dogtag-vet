@@ -12,6 +12,7 @@ import {
 } from "@dogtag/standard";
 import {backfillTagArtifacts, type BackfillMintSession, type BackfillPet, type BackfillStore} from "@/lib/tags/backfill";
 import {verifyForProtocolVersion, type CreateTagArtifactResult} from "@/lib/tags/artifact";
+import {DOG_PROFILE_SCHEMA_ID} from "@/lib/tags/schemaIds";
 
 /**
  * WP4.9 checklist item 3c + item 7 - the backfill migration's own pure logic, against an
@@ -114,6 +115,9 @@ describe("backfillTagArtifacts", () => {
         dogTagIdField: DOG_TAG_ID_FIELD,
         root: fixture.root,
         protocolVersion: "dogtag-v2/1",
+        // WP4.10V item 2: the backfill's fresh-insert path now stamps the same schemaId a fresh
+        // custodial-bind/booking-tier-4 write already gets - see schemaIds.ts's own doc comment.
+        schemaId: DOG_PROFILE_SCHEMA_ID,
         leaves: fixture.leaves,
         reservedLeafHashes: fixture.reservedLeafHashes,
         expectedIdentityLeaves: [],

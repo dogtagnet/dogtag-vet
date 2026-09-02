@@ -1,6 +1,7 @@
 import type {OpenedLeaf} from "@dogtag/standard";
 import {identityLeafSelfCheckSubset} from "@/lib/tags/verifier";
 import {verifyForProtocolVersion, type CreateTagArtifactInput, type CreateTagArtifactResult} from "@/lib/tags/artifact";
+import {DOG_PROFILE_SCHEMA_ID} from "@/lib/tags/schemaIds";
 
 /**
  * The backfill migration (plan section 2.1, checklist item 3c) - closes G2 for every pet that was
@@ -173,10 +174,12 @@ export async function backfillTagArtifacts(store: BackfillStore, now: number, op
     if (dryRun) {
       const verified = verifyForProtocolVersion({
         protocolVersion: session.protocolVersion,
+        dogTagIdField: pet.dogTagIdField ?? session.dogTagIdField,
         root: pet.root,
         leaves,
         reservedLeafHashes,
         expectedIdentityLeaves,
+        issuerClone: pet.cloneAddress,
       });
       if (!verified.ok) {
         const reason = `this session's stored root/leaves no longer recompute (${verified.reason})`;
@@ -205,6 +208,11 @@ export async function backfillTagArtifacts(store: BackfillStore, now: number, op
         dogTagIdField: pet.dogTagIdField ?? session.dogTagIdField,
         root: pet.root,
         protocolVersion: session.protocolVersion,
+        // WP4.10V item 2: the ONE record type this app has ever custodied, issued_here or
+        // imported alike (see schemaIds.ts's own doc comment) - a backfilled row gets the same
+        // stamp a fresh custodial-bind/booking-tier-4 write gets today, never left unset just
+        // because its MintSession predates schemaId stamping.
+        schemaId: DOG_PROFILE_SCHEMA_ID,
         leaves,
         reservedLeafHashes,
         expectedIdentityLeaves,
@@ -232,6 +240,83 @@ export async function backfillTagArtifacts(store: BackfillStore, now: number, op
     } else {
       report.inserted++;
       report.details.push({petId: pet.petId, root: pet.root, outcome: "inserted"});
+    }
+  }
+
+  return report;
+}
+
+/**
+ * The schemaId repair path (WP4.10V item 2, closing the finding logged in ORCHESTRATION.md: a
+ * live artifact backfilled before this stamping existed has `schemaId` genuinely unset, and the
+ * export ceremony was serving `schemaId: null`). Separate from `backfillTagArtifacts` above - that
+ * migration's job is "give a pet its first TagArtifact row"; this one's job is "an EXISTING row,
+ * however it got here, is missing a field a later wave started stamping at write time." Every row
+ * this app has ever custodied structurally corresponds to the same one record type (`schemaIds.ts`'s
+ * own doc comment), so the repair is unconditional: any row with no `schemaId` at all gets the same
+ * `DOG_PROFILE_SCHEMA_ID` value a fresh custodial-bind/booking-tier-4/backfill write already gets.
+ *
+ * IDEMPOTENT by construction: `store.listArtifactsMissingSchemaId` only ever returns rows where the
+ * field is genuinely absent, so a second run finds nothing left to do. The mongo adapter's own write
+ * additionally re-checks "still unset" at write time (never a blind `$set`), so this is also safe to
+ * run concurrently with itself or with an ordinary write that happens to land on the same row
+ * between the read and the write - whichever happens first wins, and the loser's `stampSchemaId`
+ * call reports `applied: false` rather than silently overwriting a value someone else just set.
+ *
+ * CRITICAL: per this repo's own live-DB rule (this file's own header), this repair is tested only
+ * against a disposable ephemeral mongod (`tests/unit/models/backfill.integration.test.ts`) - running
+ * it against a live deployment is a deliberate operator step, never one this repo's builder/fixer
+ * session executes.
+ */
+export interface SchemaIdRepairRow {
+  artifactId: string;
+  petId: string;
+  root: string;
+}
+
+export interface SchemaIdRepairStore {
+  /** Every row whose `schemaId` is genuinely absent - never one that merely holds a DIFFERENT
+   * value, which this repair leaves untouched rather than overwriting. */
+  listArtifactsMissingSchemaId(): Promise<SchemaIdRepairRow[]>;
+  /** `true` if this call actually set `schemaId` (it was still unset at write time); `false` if a
+   * concurrent write already gave the row a value in the interim - see this section's own doc
+   * comment on why that is never overwritten. */
+  stampSchemaId(artifactId: string, schemaId: string): Promise<boolean>;
+}
+
+export interface SchemaIdRepairReport {
+  dryRun: boolean;
+  scanned: number;
+  stamped: number;
+  /** A read-then-write race only (see `stampSchemaId`'s own doc comment) - the read already filters
+   * to rows missing `schemaId`, so this is 0 in the overwhelmingly common single-writer case. */
+  raced: number;
+  details: (SchemaIdRepairRow & {outcome: "stamped" | "would_stamp" | "raced"})[];
+}
+
+export async function repairMissingSchemaIds(
+  store: SchemaIdRepairStore,
+  schemaId: string,
+  options: BackfillOptions = {},
+): Promise<SchemaIdRepairReport> {
+  const dryRun = options.dryRun ?? false;
+  const rows = await store.listArtifactsMissingSchemaId();
+  const report: SchemaIdRepairReport = {dryRun, scanned: 0, stamped: 0, raced: 0, details: []};
+
+  for (const row of rows) {
+    report.scanned++;
+    if (dryRun) {
+      report.stamped++;
+      report.details.push({...row, outcome: "would_stamp"});
+      continue;
+    }
+    const applied = await store.stampSchemaId(row.artifactId, schemaId);
+    if (applied) {
+      report.stamped++;
+      report.details.push({...row, outcome: "stamped"});
+    } else {
+      report.raced++;
+      report.details.push({...row, outcome: "raced"});
     }
   }
 

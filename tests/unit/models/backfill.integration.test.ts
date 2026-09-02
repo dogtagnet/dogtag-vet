@@ -12,8 +12,9 @@ import {
   type TypedScalar,
 } from "@dogtag/standard";
 import {startEphemeralMongod, stopEphemeralMongod, type EphemeralMongod} from "../helpers/ephemeralMongod";
-import {backfillTagArtifacts} from "@/lib/tags/backfill";
-import {mongoBackfillStore} from "@/lib/tags/backfillMongoAdapter";
+import {backfillTagArtifacts, repairMissingSchemaIds} from "@/lib/tags/backfill";
+import {mongoBackfillStore, mongoSchemaIdRepairStore} from "@/lib/tags/backfillMongoAdapter";
+import {DOG_PROFILE_SCHEMA_ID} from "@/lib/tags/schemaIds";
 import {Pet} from "@/lib/models/Pet";
 import {MintSession} from "@/lib/models/MintSession";
 import {TagArtifact} from "@/lib/models/TagArtifact";
@@ -324,5 +325,68 @@ describe("backfillTagArtifacts against a real ephemeral mongod", () => {
     const rerun = await backfillTagArtifacts(mongoBackfillStore, 1_700_000_200);
     expect(rerun.details).toEqual([{petId: "pet-window", root: fixture.root, outcome: "already_covered"}]);
     expect(await TagArtifact.countDocuments({})).toBe(1);
+  });
+});
+
+describe("repairMissingSchemaIds (WP4.10V item 2's second, independent migration)", () => {
+  async function insertLegacyArtifact(petId: string, opts: {schemaId?: string} = {}): Promise<{artifactId: string; root: string}> {
+    const {leaves, reservedLeafHashes, root} = buildVerifiableFixture(petId);
+    const created = await TagArtifact.create({
+      petId,
+      dogTagIdDec: DOG_TAG_ID_DEC,
+      dogTagIdField: DOG_TAG_ID_FIELD,
+      root,
+      protocolVersion: "dogtag-v2/1",
+      schemaId: opts.schemaId, // undefined -> genuinely absent (schemaId has no schema default)
+      leaves,
+      reservedLeafHashes,
+      source: "issued_here",
+      issuerClone: "0x5bd5048125f223100a2753a740f34d044ab493b",
+      verifiedAt: 1_700_000_000,
+      active: true,
+    });
+    return {artifactId: created.artifactId, root: created.root};
+  }
+
+  it("dry run reports every row missing schemaId, writes nothing", async () => {
+    const legacy = await insertLegacyArtifact("pet-repair-a");
+    const dry = await repairMissingSchemaIds(mongoSchemaIdRepairStore, DOG_PROFILE_SCHEMA_ID, {dryRun: true});
+    expect(dry).toMatchObject({dryRun: true, scanned: 1, stamped: 1, raced: 0});
+    expect(dry.details).toEqual([{artifactId: legacy.artifactId, petId: "pet-repair-a", root: legacy.root, outcome: "would_stamp"}]);
+
+    const stillMissing = await TagArtifact.findOne({artifactId: legacy.artifactId}).lean();
+    expect(stillMissing?.schemaId).toBeUndefined();
+  });
+
+  it("write mode stamps every row missing schemaId with the one record type this app has ever custodied", async () => {
+    const a = await insertLegacyArtifact("pet-repair-b1");
+    const b = await insertLegacyArtifact("pet-repair-b2");
+    // A row that already has SOME schemaId (even a hypothetical different one) is never touched -
+    // this repair only ever fills a genuinely absent value.
+    const c = await insertLegacyArtifact("pet-repair-b3", {schemaId: "https://dogtag.io/schemas/some-other-type/v1"});
+
+    const report = await repairMissingSchemaIds(mongoSchemaIdRepairStore, DOG_PROFILE_SCHEMA_ID, {dryRun: false});
+    expect(report).toMatchObject({dryRun: false, scanned: 2, stamped: 2, raced: 0});
+
+    expect((await TagArtifact.findOne({artifactId: a.artifactId}).lean())?.schemaId).toBe(DOG_PROFILE_SCHEMA_ID);
+    expect((await TagArtifact.findOne({artifactId: b.artifactId}).lean())?.schemaId).toBe(DOG_PROFILE_SCHEMA_ID);
+    // Untouched - proves the repair never overwrites an existing (even different) value.
+    expect((await TagArtifact.findOne({artifactId: c.artifactId}).lean())?.schemaId).toBe("https://dogtag.io/schemas/some-other-type/v1");
+  });
+
+  it("idempotent: a second run over the same collection finds nothing left to do", async () => {
+    await insertLegacyArtifact("pet-repair-c1");
+    await insertLegacyArtifact("pet-repair-c2");
+
+    const first = await repairMissingSchemaIds(mongoSchemaIdRepairStore, DOG_PROFILE_SCHEMA_ID, {dryRun: false});
+    expect(first.stamped).toBe(2);
+
+    const second = await repairMissingSchemaIds(mongoSchemaIdRepairStore, DOG_PROFILE_SCHEMA_ID, {dryRun: false});
+    expect(second).toMatchObject({scanned: 0, stamped: 0, raced: 0, details: []});
+  });
+
+  it("a collection with nothing missing schemaId reports a clean empty run", async () => {
+    const report = await repairMissingSchemaIds(mongoSchemaIdRepairStore, DOG_PROFILE_SCHEMA_ID, {dryRun: false});
+    expect(report).toEqual({dryRun: false, scanned: 0, stamped: 0, raced: 0, details: []});
   });
 });

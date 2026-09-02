@@ -8,6 +8,7 @@ import {
   toHex32,
   TypeTag,
   verifyLeafCommitment,
+  verifyRedactedArtifact,
   type OpenedLeaf,
   type TypedScalar,
 } from "@dogtag/standard";
@@ -22,6 +23,8 @@ import {
 import {linkPetDogTag} from "@/lib/mint/reconcile";
 import {TagArtifact} from "@/lib/models/TagArtifact";
 import {Pet} from "@/lib/models/Pet";
+import {mongoPostBookingStore} from "@/lib/booking/mobileMongoAdapters";
+import {DOG_PROFILE_SCHEMA_ID} from "@/lib/tags/schemaIds";
 
 /**
  * WP4.9 item 2 - the TagArtifact write-helper invariant, against a REAL ephemeral mongod (needed
@@ -512,5 +515,122 @@ describe("findActiveTagArtifact", () => {
 
     const active = await findActiveTagArtifact("pet-1");
     expect(active?.root).toBe(second.artifact.root);
+  });
+});
+
+describe("WP4.10V item 2 - verifyRedactedArtifact generalization + obfuscatedLeafHashes + schemaId", () => {
+  it("a full artifact (obfuscatedLeafHashes omitted) verifies and stores identically to before this wave - byte-equivalence proof", async () => {
+    // The exact same fixture verifyLeafCommitment (the PRE-WP4.10V dispatch target) accepts,
+    // proving createTagArtifact's new verifyRedactedArtifact-based dispatch agrees on the
+    // degenerate (zero-obfuscated) case every caller before this wave exercised exclusively.
+    const {leaves, reservedLeafHashes, root} = buildVerifiableFixture();
+    expect(verifyLeafCommitment({root, leaves, reservedLeafHashes, expectedIdentityLeaves: []})).toBe(true);
+
+    const result = await createTagArtifact(baseInput({leaves, reservedLeafHashes, root}));
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("unreachable");
+    // obfuscatedLeafHashes was never supplied - persisted as [] by the schema default, never left
+    // genuinely absent for a FRESH write (only a pre-this-wave legacy row lacks the key at all).
+    expect(result.artifact.obfuscatedLeafHashes).toEqual([]);
+
+    const tampered = leaves.map((l) => (l.keyPath === "credentialSubject.name" ? {...l, value: "Someone Else"} : l));
+    expect(verifyLeafCommitment({root, leaves: tampered, reservedLeafHashes, expectedIdentityLeaves: []})).toBe(false);
+    const rejected = await createTagArtifact(baseInput({leaves: tampered, reservedLeafHashes, root}));
+    expect(rejected).toEqual({ok: false, reason: "leaf_commitment_invalid"});
+  });
+
+  it("a masked-import-shaped input (non-empty obfuscatedLeafHashes) verifies and persists partial custody", async () => {
+    const fixture = buildVerifiableFixture();
+    // Move "credentialSubject.species" out of the opening and into obfuscatedLeafHashes - the
+    // exact operation specs/leaf-commitment.md section 15 defines: same root, fewer openings.
+    const maskedKeyPath = "credentialSubject.species";
+    const maskedLeaf = fixture.leaves.find((l) => l.keyPath === maskedKeyPath)!;
+    const maskedHash = toHex32(hashLeaf(maskedLeaf.keyPath, hexToBytes(maskedLeaf.saltHex), {tag: maskedLeaf.tag, value: maskedLeaf.value} as TypedScalar));
+    const disclosedLeaves = fixture.leaves.filter((l) => l.keyPath !== maskedKeyPath);
+
+    // The root is UNCHANGED by masking (buildMerkle folds the same multiset either way) - this
+    // artifact's root is still fixture.root, never recomputed.
+    const result = await createTagArtifact(
+      baseInput({leaves: disclosedLeaves, obfuscatedLeafHashes: [maskedHash], reservedLeafHashes: fixture.reservedLeafHashes, root: fixture.root}),
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("unreachable");
+    expect(result.artifact.leaves.map((l) => l.keyPath)).toEqual(["credentialSubject.name"]);
+    expect(result.artifact.obfuscatedLeafHashes).toEqual([maskedHash]);
+    expect(result.artifact.root).toBe(fixture.root.toLowerCase());
+
+    // Round-trips through a real read (.lean()) unchanged.
+    const stored = await TagArtifact.findOne({root: fixture.root.toLowerCase()}).lean();
+    expect(stored?.obfuscatedLeafHashes).toEqual([maskedHash]);
+  });
+
+  it("a legacy row with NO obfuscatedLeafHashes key at all (written before this field existed) reads back with the key genuinely absent, not []", async () => {
+    // Bypasses Mongoose entirely (the native driver's collection, not TagArtifact.create) - a
+    // schema `default` only ever applies at document construction time, never to a document that
+    // was already sitting in the collection before the field existed. This is the exact shape the
+    // live UAT database's own K4-backfilled artifact has (ORCHESTRATION.md's own finding).
+    const {leaves, reservedLeafHashes, root} = buildVerifiableFixture("Legacy");
+    await TagArtifact.collection.insertOne({
+      artifactId: "legacy-artifact-1",
+      petId: "pet-legacy",
+      dogTagIdDec: DOG_TAG_ID_DEC,
+      dogTagIdField: DOG_TAG_ID_FIELD,
+      root: root.toLowerCase(),
+      protocolVersion: "dogtag-v2/1",
+      // schemaId ALSO genuinely absent - the same legacy shape.
+      leaves,
+      reservedLeafHashes,
+      source: "issued_here",
+      issuerClone: ISSUER_CLONE.toLowerCase(),
+      verifiedAt: 1_700_000_000,
+      active: true,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      // deliberately NO obfuscatedLeafHashes key.
+    });
+
+    const readBack = await findActiveTagArtifact("pet-legacy");
+    expect(readBack).not.toBeNull();
+    expect(readBack?.obfuscatedLeafHashes).toBeUndefined();
+    expect(readBack?.schemaId).toBeUndefined();
+
+    // The normalization every reader is expected to apply (`?? []`) makes this legacy row verify
+    // exactly like a fresh full artifact would - the failure mode this optional typing exists to
+    // force every call site to handle, proven fixed rather than merely asserted possible.
+    expect(
+      verifyRedactedArtifact({
+        protocolVersion: readBack!.protocolVersion,
+        dogTagIdField: readBack!.dogTagIdField,
+        root: readBack!.root,
+        disclosed: readBack!.leaves,
+        obfuscatedLeafHashes: readBack!.obfuscatedLeafHashes ?? [],
+        reservedLeafHashes: readBack!.reservedLeafHashes,
+        issuerClone: readBack!.issuerClone,
+      }),
+    ).toBe(true);
+  });
+
+  it("custodial-bind (issuedArtifactSideEffect via createTagArtifact) already stamps schemaId - unaffected by this wave", async () => {
+    const result = await createTagArtifact(baseInput());
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("unreachable");
+    expect(result.artifact.schemaId).toBe("https://dogtag.io/schemas/dog-profile/v1");
+  });
+
+  it("WP4.4 booking tier-4 import (mongoPostBookingStore.createImportedArtifact) now stamps schemaId too", async () => {
+    const {leaves, reservedLeafHashes, root} = buildVerifiableFixture("Imported Pet");
+    await mongoPostBookingStore.createImportedArtifact({
+      petId: "pet-imported-tier4",
+      dogTagIdDec: DOG_TAG_ID_DEC,
+      dogTagIdField: DOG_TAG_ID_FIELD,
+      root,
+      issuerClone: ISSUER_CLONE,
+      leaves,
+      reservedLeafHashes,
+      now: 1_700_000_000,
+    });
+    const stored = await TagArtifact.findOne({petId: "pet-imported-tier4"}).lean();
+    expect(stored?.schemaId).toBe(DOG_PROFILE_SCHEMA_ID);
+    expect(stored?.source).toBe("imported");
   });
 });

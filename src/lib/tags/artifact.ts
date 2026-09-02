@@ -1,13 +1,24 @@
 import "server-only";
-import {verifyLeafCommitment, type OpenedLeaf, type VerifyLeafCommitmentInput} from "@dogtag/standard";
+import {verifyRedactedArtifact, type OpenedLeaf, type RedactedTagArtifact} from "@dogtag/standard";
 import {TagArtifact, type TagArtifactDoc, type TagArtifactLeaf, type TagArtifactSource} from "@/lib/models/TagArtifact";
 
 /**
- * The ONE write path onto `TagArtifact` (plan section 2.1's invariant): "no artifact row is ever
- * inserted without `verifyLeafCommitment` passing right there." Every caller - the custodial-bind
- * terminal write (issued_here), the WP4.4 booking tier-4 import side effect (imported), and the
- * WP4.9 import ceremony (imported) - goes through `createTagArtifact`, never `TagArtifact.create`
- * directly.
+ * The ONE write path onto `TagArtifact` (plan section 2.1's invariant, generalized by WP4.10V):
+ * "no artifact row is ever inserted without `verifyRedactedArtifact` passing right there." Every
+ * caller - the custodial-bind terminal write (issued_here), the WP4.4 booking tier-4 import side
+ * effect (imported), the WP4.9 import ceremony (imported, including a REDACTED artifact someone
+ * else exported), and the backfill migration - goes through `createTagArtifact`, never
+ * `TagArtifact.create` directly.
+ *
+ * WP4.10V: the verify-at-write step switched from `verifyLeafCommitment` to `verifyRedactedArtifact`
+ * - a strict generalization over the exact same primitives (see `redactedArtifact.ts`'s own file
+ * header in `@dogtag/standard`), so a full artifact (`obfuscatedLeafHashes: []`, the case every
+ * caller before this wave exercised) verifies IDENTICALLY either way, proven byte-for-byte on this
+ * app's own existing fixtures in `artifact.test.ts`'s equivalence suite. Only a caller that now
+ * supplies a non-empty `obfuscatedLeafHashes` (the WP4.9 import ceremony, receiving a masked share)
+ * exercises the new axis: some leaves are folded into `root` by hash alone, never opened, and the
+ * resulting row is honest PARTIAL custody - `leaves` holds only what THIS custodian was given the
+ * opening for.
  *
  * `PROTOCOL_VERIFIERS` is "the standard way to recompute the root from stored data, dispatched by
  * protocolVersion" (plan 2.1): today it has exactly one entry, because exactly one protocol version
@@ -16,8 +27,37 @@ import {TagArtifact, type TagArtifactDoc, type TagArtifactLeaf, type TagArtifact
  * verifier - this is what makes the dispatch a REAL gate rather than decoration: a future `v3`
  * artifact needs a new entry here before this function will ever store one.
  */
-const PROTOCOL_VERIFIERS: Record<string, (input: VerifyLeafCommitmentInput) => boolean> = {
-  "dogtag-v2/1": verifyLeafCommitment,
+export interface VerifyForProtocolVersionInput {
+  protocolVersion: string;
+  /** Decimal-string convention throughout this app - see TagArtifact.ts's own doc comment. Not
+   * itself read by `verifyRedactedArtifact` (an on-chain-binding field, never a leaf - specs/
+   * leaf-commitment.md section 15) but part of the wire shape the primitive's TYPE expects, and a
+   * real value every one of THIS app's call sites already has on hand. */
+  dogTagIdField: string;
+  root: string;
+  leaves: OpenedLeaf[];
+  /** Default `[]` (a full, unredacted artifact) when omitted. */
+  obfuscatedLeafHashes?: string[];
+  reservedLeafHashes: string[];
+  expectedIdentityLeaves: OpenedLeaf[];
+  /** Not read by `verifyRedactedArtifact` either (see `dogTagIdField` above) - carried for the same
+   * "every call site already has a real value, never a placeholder" reason. */
+  issuerClone: string;
+}
+
+const PROTOCOL_VERIFIERS: Record<string, (input: VerifyForProtocolVersionInput) => boolean> = {
+  "dogtag-v2/1": (input) => {
+    const artifact: RedactedTagArtifact = {
+      protocolVersion: input.protocolVersion,
+      dogTagIdField: input.dogTagIdField,
+      root: input.root,
+      disclosed: input.leaves,
+      obfuscatedLeafHashes: input.obfuscatedLeafHashes ?? [],
+      reservedLeafHashes: input.reservedLeafHashes,
+      issuerClone: input.issuerClone,
+    };
+    return verifyRedactedArtifact(artifact, {expectedIdentityLeaves: input.expectedIdentityLeaves});
+  },
 };
 
 export interface CreateTagArtifactInput {
@@ -30,13 +70,19 @@ export interface CreateTagArtifactInput {
   protocolVersion: string;
   schemaId?: string;
   leaves: OpenedLeaf[];
+  /** Default `[]` - see `TagArtifactDoc.obfuscatedLeafHashes`'s own doc comment. Non-empty only for
+   * a row created from a REDACTED artifact (the WP4.9 import ceremony receiving a masked share). */
+  obfuscatedLeafHashes?: string[];
   reservedLeafHashes: string[];
-  /** The `owner.identity.*` cross-check `verifyLeafCommitment` requires. For `issued_here`, this is
-   * the vet's own attested identity leaves (`MintSessionRow.identityLeaves`) - a REAL cross-check.
-   * For `imported` (both the WP4.4 booking path and the WP4.9 import ceremony), there is no
-   * vet-attested record to check against, so callers pass the disclosed `owner.identity.*` subset
-   * of `leaves` itself - the same deliberate self-check no-op `lib/tags/verifier.ts`'s
-   * `verifyTagDataAgainstRoot` already documents, kept consistent here. */
+  /** The `owner.identity.*` cross-check `verifyRedactedArtifact`'s optional `expectedIdentityLeaves`
+   * performs when supplied - this app always supplies it, matching `verifyLeafCommitment`'s own
+   * mandatory version of the same check (see `redactedArtifact.ts`'s "strict generalization of the
+   * bind-time leaf-commitment check" section). For `issued_here`, this is the vet's own attested
+   * identity leaves (`MintSessionRow.identityLeaves`) - a REAL cross-check. For `imported` (the
+   * WP4.4 booking path, the WP4.9 import ceremony, masked or not), there is no vet-attested record
+   * to check against, so callers pass the disclosed `owner.identity.*` subset of `leaves` itself -
+   * the same deliberate self-check no-op `lib/tags/verifier.ts`'s `verifyTagDataAgainstRoot` already
+   * documents, kept consistent here. */
   expectedIdentityLeaves: OpenedLeaf[];
   source: TagArtifactSource;
   issuerClone: string;
@@ -80,7 +126,7 @@ export type VerifyForProtocolVersionResult = {ok: true} | {ok: false; reason: "l
  * report exactly what `createTagArtifact` would decide WITHOUT writing anything - a real, byte-for-
  * byte-identical prediction rather than a second, separately-maintained copy of this dispatch.
  */
-export function verifyForProtocolVersion(input: VerifyLeafCommitmentInput & {protocolVersion: string}): VerifyForProtocolVersionResult {
+export function verifyForProtocolVersion(input: VerifyForProtocolVersionInput): VerifyForProtocolVersionResult {
   const verifier = PROTOCOL_VERIFIERS[input.protocolVersion];
   if (!verifier) return {ok: false, reason: "unsupported_protocol_version"};
   return verifier(input) ? {ok: true} : {ok: false, reason: "leaf_commitment_invalid"};
@@ -139,10 +185,13 @@ export function verifyForProtocolVersion(input: VerifyLeafCommitmentInput & {pro
 export async function createTagArtifact(input: CreateTagArtifactInput): Promise<CreateTagArtifactResult> {
   const verified = verifyForProtocolVersion({
     protocolVersion: input.protocolVersion,
+    dogTagIdField: input.dogTagIdField,
     root: input.root,
     leaves: input.leaves,
+    obfuscatedLeafHashes: input.obfuscatedLeafHashes,
     reservedLeafHashes: input.reservedLeafHashes,
     expectedIdentityLeaves: input.expectedIdentityLeaves,
+    issuerClone: input.issuerClone,
   });
   if (!verified.ok) return verified;
 
@@ -189,6 +238,7 @@ export async function createTagArtifact(input: CreateTagArtifactInput): Promise<
     protocolVersion: input.protocolVersion,
     schemaId: input.schemaId,
     leaves: toArtifactLeaves(input.leaves),
+    obfuscatedLeafHashes: input.obfuscatedLeafHashes ?? [],
     reservedLeafHashes: input.reservedLeafHashes,
     source: input.source,
     issuerClone: input.issuerClone.toLowerCase(),

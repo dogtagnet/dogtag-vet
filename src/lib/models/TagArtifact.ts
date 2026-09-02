@@ -49,8 +49,32 @@ export interface TagArtifactDoc {
   schemaId?: string;
   /** STRICT typed leaves - every element shaped exactly like `OpenedLeaf` (`@dogtag/standard`),
    * never a schema-less blob. This is the "standard way to recompute the root from stored data":
-   * `verifyLeafCommitment({root, leaves, reservedLeafHashes, ...})`. */
+   * `verifyRedactedArtifact({root, disclosed: leaves, obfuscatedLeafHashes, reservedLeafHashes,
+   * ...})` (WP4.10V - a strict generalization of the prior `verifyLeafCommitment` call; see
+   * `lib/tags/artifact.ts`'s own doc comment). For most rows this is the FULL attribute-leaf set
+   * (a full, unredacted artifact); for a row created from an imported REDACTED artifact
+   * (`obfuscatedLeafHashes` non-empty), this is only the DISCLOSED subset - "partial custody" by
+   * design, never padded or guessed at. */
   leaves: TagArtifactLeaf[];
+  /**
+   * Hex32 hashes of attribute leaves this row's custodian was never given the OPENING for (WP4.10V,
+   * `specs/leaf-commitment.md` section 15) - always `[]` for an `issued_here` row or an ordinary
+   * (unmasked) `imported` one; non-empty only when this row was created from a REDACTED artifact
+   * someone else exported (an owner's masked share, or another clinic's masked export). The root
+   * still recomputes over `reservedLeafHashes + obfuscatedLeafHashes + leaves` exactly as
+   * `verifyRedactedArtifact` requires - masking never changes which hashes fold into `root`, only
+   * which ones this row happens to hold the opening for.
+   *
+   * OPTIONAL in this TypeScript type, not just schema-defaulted: `.lean()` reads (used everywhere
+   * in this codebase, never a hydrated Mongoose document) do NOT apply a schema `default` - a row
+   * written before this field existed reads back with the key genuinely ABSENT, not `[]`. Every
+   * reader normalizes with `?? []` at its own boundary (never assumes presence) so a legacy row
+   * behaves exactly like a fresh one with nothing obfuscated, rather than throwing inside
+   * `verifyRedactedArtifact`'s `.every(isHex32)` on `undefined` (caught by its own try/catch, but
+   * silently returned as `false` - a legacy artifact failing to export is the failure mode this
+   * optional typing exists to force every call site to handle explicitly).
+   */
+  obfuscatedLeafHashes?: string[];
   reservedLeafHashes: string[];
   source: TagArtifactSource;
   issuerClone: string;
@@ -87,6 +111,7 @@ const tagArtifactSchema = new Schema<TagArtifactDoc>(
     protocolVersion: {type: String, required: true},
     schemaId: String,
     leaves: {type: [tagArtifactLeafSchema], required: true, default: []},
+    obfuscatedLeafHashes: {type: [String], required: true, default: []},
     reservedLeafHashes: {type: [String], required: true, default: []},
     source: {type: String, enum: ["issued_here", "imported"], required: true},
     issuerClone: {type: String, required: true},
