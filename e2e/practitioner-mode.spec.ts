@@ -46,6 +46,25 @@ async function mongo(): Promise<MongoClient> {
   return client;
 }
 
+/**
+ * WP4.10V fix round 1 (P4): ensures (not merely assumes) one practitioner's weekly hours exist for
+ * every day of the week, the same shape flow 3's own test seeds via this exact route. Idempotent by
+ * inspection first (`GET /api/availability/rules` before writing anything) rather than by relying on
+ * the route itself to dedupe - `POST /api/availability/rules` always inserts, so calling it
+ * unconditionally on every run would leave 7 duplicate rows behind on a whole-file run where flow 3
+ * already seeded the same vet. Per-practitioner rules always carry `staffId` (`src/lib/models/
+ * Availability.ts`); the clinic-wide rows `scripts/seed.ts` creates never do, so they can never
+ * false-positive this check.
+ */
+async function ensurePractitionerHours(page: Page, staffId: string, startMinute: number, endMinute: number): Promise<void> {
+  const existing = (await (await page.request.get("/api/availability/rules")).json()) as {staffId?: string}[];
+  if (existing.some((r) => r.staffId === staffId)) return;
+  for (let dayOfWeek = 0; dayOfWeek < 7; dayOfWeek++) {
+    const res = await page.request.post("/api/availability/rules", {data: {dayOfWeek, startMinute, endMinute, capacity: 1, staffId}});
+    expect(res.ok()).toBe(true);
+  }
+}
+
 test.describe.serial("flow 1+2: role gating, wallet, and the D4 operator panel", () => {
   test("owner invites a vet, who then sees Tags; a fresh uninvited email does not", async ({page}) => {
     // Bootstrap: owner@example.com is the FIRST staff row this deployment ever creates (every
@@ -302,12 +321,31 @@ test.describe.serial("flow 4: staff calendar - week filter, day columns, unassig
       const vetA = {staffId: vetADoc!.staffId as string, email: VET_EMAIL};
       const vetB = {staffId: vetBDoc!.staffId as string, email: VET_B_EMAIL};
 
+      // WP4.10V fix round 1 (P4): this test's own comment above claims independence from flow 3,
+      // but until now that was only true for the staffs rows - vetA/vetB's WEEKLY AVAILABILITY
+      // RULES (only flow 3 actually created them) were still a silent dependency. Without them,
+      // reassignPractitioner (lifecycle.ts) finds vetB has zero rules and rejects the assignment
+      // below as outside-hours - exactly the failure this test only ever showed in a solo/filtered
+      // run. Ensures (not merely assumes) both vets' hours exist, matching flow 3's own values so
+      // a whole-file run's rules stay identical either way this test seeds them or flow 3 already
+      // did.
+      await ensurePractitionerHours(page, vetA.staffId, 9 * 60, 12 * 60);
+      await ensurePractitionerHours(page, vetB.staffId, 13 * 60, 17 * 60);
+      const rulesAfterSeed = (await (await page.request.get("/api/availability/rules")).json()) as {staffId?: string}[];
+      // Guards a filter that silently never matches (e.g. a staffId typo) - without this, the seed
+      // above would appear to succeed while leaving 0 rules for a vet, and the SAME outside-hours
+      // failure this fix addresses would resurface with no obvious cause.
+      expect(rulesAfterSeed.filter((r) => r.staffId === vetA.staffId).length).toBe(7);
+      expect(rulesAfterSeed.filter((r) => r.staffId === vetB.staffId).length).toBe(7);
+
       await client.db().collection("bookingsettings").updateMany({}, {$set: {schedulingMode: "practitioner"}});
       const bookingSettings = await client.db().collection("bookingsettings").findOne({});
       const timezone = (bookingSettings?.timezone as string | undefined) ?? "America/New_York";
       // A few days out, same margin flow 3 uses - and, critically, a REAL clinic-local wall time
       // inside each vet's actual hours (vetA 09:00-12:00, vetB 13:00-17:00, both set for every
-      // dayOfWeek in flow 3), computed with the app's OWN timezone helper rather than raw "now":
+      // dayOfWeek, by flow 3 if it already ran this suite invocation or by this test's own
+      // ensurePractitionerHours call above if not), computed with the app's OWN timezone helper
+      // rather than raw "now":
       // an arbitrary real-world "now" can land at any hour of the day, and reassignPractitioner
       // (lifecycle.ts) validates the TARGET practitioner's own hours cover the appointment - found
       // empirically, the first version of this test seeded appointments at raw "now" and the
@@ -386,10 +424,15 @@ test.describe.serial("flow 4: staff calendar - week filter, day columns, unassig
       await practitionerSelect.selectOption(vetB.staffId);
       // The snackbar ("Practitioner updated") auto-dismisses after 4s (Snackbar.tsx) - waiting for
       // the PATCH itself is the reliable signal, not racing a transient toast.
-      await Promise.all([
+      const [assignResponse] = await Promise.all([
         page.waitForResponse((res) => /\/api\/appointments\/[^/]+$/.test(res.url()) && res.request().method() === "PATCH"),
         page.getByRole("button", {name: "Save practitioner"}).click(),
       ]);
+      // WP4.10V fix round 1 (P4): waitForResponse only matches URL+method, never status - a
+      // rejected PATCH (e.g. outside_hours, before this fix's rule-seeding above) used to be
+      // silently treated as success here, with the real failure only surfacing two lines below at
+      // the banner assertion. Fail AT the actual point of failure, not two lines downstream of it.
+      expect(assignResponse.ok(), `PATCH ${assignResponse.url()} failed: ${assignResponse.status()} ${await assignResponse.text()}`).toBe(true);
 
       await page.goto(`/calendar?view=day&date=${targetDate}`);
       await expect(page.getByText("Unassigned appointments need a practitioner")).not.toBeVisible();
