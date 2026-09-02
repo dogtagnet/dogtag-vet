@@ -309,13 +309,17 @@ paths:
       summary: Fetch a pet's exported tag data (one-time; consumes the token)
       description: |-
         The owner's app scans the vet's export QR (`https://<vet>/e/<32hex>`,
-        plans/wp4.9-tag-data-custody.md section 2.2) and calls this to fetch a verbatim copy of
-        the pet's currently-active `TagArtifact`: every opened profile-tree leaf plus the 3
-        reserved owner-control leaf hashes, exactly as vet-attested (or previously imported)
-        for this pet. Selective export is explicitly out of scope - a partial leaf set cannot
-        recompute `root`, so this always discloses the FULL leaf set, including `owner.*`/
-        `owner.identity.*` - the ceremony is deliberately in-person, one-time, and short-lived
-        (600s) rather than filtered.
+        plans/wp4.9-tag-data-custody.md section 2.2, generalized by plans/wp4.10-masked-export.md
+        section 2) and calls this to fetch the pet's currently-active `TagArtifact`, as a
+        `RedactedTagArtifact` (`specs/schemas/dogtag.redacted-tag-artifact.v1.schema.json`): every
+        DISCLOSED profile-tree leaf opening, plus a hash for every leaf staff chose to mask (or
+        that this artifact already only held a hash for - partial custody from an earlier masked
+        import), plus the 3 reserved owner-control leaf hashes. An export with no mask - the
+        pre-WP4.10V default, and still the common case - is this format's degenerate case:
+        `obfuscatedLeafHashes` empty, `disclosed` holding every attribute leaf. The server never
+        trusts a stored hash for a newly-masked leaf: it recomputes it fresh from the opening,
+        and self-checks the WHOLE payload (`verifyRedactedArtifact`) before ever serving it - the
+        ceremony is deliberately in-person and short-lived (600s) either way.
 
         **ONE-TIME**: unlike every other resolve route in this spec, THIS single `GET` both
         resolves AND atomically consumes the token - there is no separate `/complete` step,
@@ -1114,13 +1118,21 @@ components:
 
     ArtifactExportResponse:
       type: object
-      required: [protocolVersion, dogTagIdField, root, leaves, reservedLeafHashes, issuerClone, chainId, petName, clinicName]
+      required: [protocolVersion, dogTagIdField, root, disclosed, obfuscatedLeafHashes, reservedLeafHashes, issuerClone, chainId, petName, clinicName]
       description: |-
-        A verbatim copy of the pet's currently-active `TagArtifact` (plans/wp4.9-tag-data-custody.md
-        section 2.1) plus display context. `leaves`/`reservedLeafHashes` recompute `root` via the
-        SAME `verifyLeafCommitment` check every write path in this deployment already ran before
-        ever storing them - the owner's app SHOULD independently re-verify this on device rather
-        than trusting the transport, exactly as it would for any other disclosed leaf set.
+        The pet's currently-active `TagArtifact`, as a `RedactedTagArtifact` (WP4.10V,
+        plans/wp4.10-masked-export.md section 2 - the crypto-bearing fields `protocolVersion`
+        through `issuerClone` below match `specs/schemas/dogtag.redacted-tag-artifact.v1.schema.json`
+        exactly; `chainId`/`petName`/`clinicName` are display context that schema does not carry)
+        plus display context. `disclosed`/`obfuscatedLeafHashes`/`reservedLeafHashes` recompute
+        `root` via `verifyRedactedArtifact` - the SAME check this deployment already self-runs on
+        the payload before ever serving it (never trusting a stored hash without recomputing it) -
+        the owner's app SHOULD independently re-verify this on device rather than trusting the
+        transport regardless. An export with no mask picked - the pre-WP4.10V default, and still
+        the common case - is this format's degenerate case: `obfuscatedLeafHashes` empty,
+        `disclosed` holding every attribute leaf, byte-identical to what this endpoint always
+        returned before this field existed (renamed from `leaves`, which had no live consumer -
+        the phone-side scan screen for this ceremony has never been built).
       properties:
         protocolVersion:
           type: string
@@ -1135,9 +1147,14 @@ components:
           type: string
           description: The canonical on-chain dogTagId as a decimal uint256 string - `dogTagIdField(dogTagIdDec)` from `packages/dogtag-standard-ts`.
         root: {$ref: '#/components/schemas/Hex32'}
-        leaves:
+        disclosed:
           type: array
+          description: Fully opened (unmasked) attribute leaves - every leaf this clinic holds an opening for AND staff did not choose to mask for this export.
           items: {$ref: '#/components/schemas/OpenedLeaf'}
+        obfuscatedLeafHashes:
+          type: array
+          description: Every attribute leaf named ONLY by its opaque hash - masked for this export, or already opaque on this artifact from an earlier masked import (partial custody, WP4.10V item 6). Empty for an ordinary, fully-disclosed export.
+          items: {$ref: '#/components/schemas/Hex32'}
         reservedLeafHashes:
           type: array
           minItems: 3

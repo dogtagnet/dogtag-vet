@@ -155,7 +155,11 @@ test.describe("export ceremony (plan 2.2)", () => {
     const body = await first.json();
     expect(body.protocolVersion).toBe("dogtag-v2/1");
     expect(body.dogTagIdDec).toBe("70001");
-    expect(body.leaves).toEqual(fixture.leaves);
+    // WP4.10V item 3: renamed from `leaves` to `disclosed` - the response is now literally a
+    // RedactedTagArtifact (plans/wp4.10-masked-export.md section 2); a fully-disclosed export
+    // (no mask picked here) is that format's degenerate case, obfuscatedLeafHashes empty.
+    expect(body.disclosed).toEqual(fixture.leaves);
+    expect(body.obfuscatedLeafHashes).toEqual([]);
     expect(body.reservedLeafHashes).toEqual(fixture.reservedLeafHashes);
     expect(body.issuerClone).toBe(OUR_CLONE);
     expect(body.petName).toBe("Rex");

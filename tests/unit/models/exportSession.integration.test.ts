@@ -1,5 +1,6 @@
 import {afterAll, afterEach, beforeAll, describe, expect, it} from "vitest";
 import mongoose from "mongoose";
+import {buildMerkle, hashLeaf, hexToBytes, toHex32, TypeTag, type TypedScalar} from "@dogtag/standard";
 import {startEphemeralMongod, stopEphemeralMongod, type EphemeralMongod} from "../helpers/ephemeralMongod";
 import {resolveAndConsumeExport} from "@/lib/tags/exportFlow";
 import {mongoExportStore} from "@/lib/tags/exportMongoAdapter";
@@ -47,8 +48,25 @@ afterEach(async () => {
   ]);
 });
 
-const ROOT = `0x${"ab".repeat(32)}`;
 const NOW = 1_700_000_000;
+
+/** A genuine, hashLeaf/buildMerkle-verifiable fixture - WP4.10V item 3's self-check
+ * (`resolveAndConsumeExport` now runs `verifyRedactedArtifact` before serving) means a placeholder
+ * root/leaves pair (fine before this wave, since nothing here ever recomputed it) now makes every
+ * fetch fail as `internal_error`. Mirrors `tests/unit/tags/backfill.test.ts`'s own
+ * `buildVerifiableFixture` convention. */
+const LEAVES = [{keyPath: "credentialSubject.name", saltHex: `0x${"aa".repeat(16)}`, tag: TypeTag.String, value: "Rex"}];
+const RESERVED_LEAF_HASHES = [
+  toHex32(hashLeaf("owner.address", new Uint8Array(16).fill(1), {tag: TypeTag.Bytes, value: new Uint8Array([1])} as TypedScalar)),
+  toHex32(hashLeaf("owner.consentKey", new Uint8Array(16).fill(2), {tag: TypeTag.Bytes, value: new Uint8Array([2])} as TypedScalar)),
+  toHex32(hashLeaf("owner.secret", new Uint8Array(16).fill(3), {tag: TypeTag.Bytes, value: new Uint8Array([3])} as TypedScalar)),
+];
+const ROOT = toHex32(
+  buildMerkle([
+    ...RESERVED_LEAF_HASHES.map((h) => BigInt(h)),
+    ...LEAVES.map((l) => hashLeaf(l.keyPath, hexToBytes(l.saltHex), {tag: l.tag, value: l.value} as TypedScalar)),
+  ]).root,
+);
 
 async function seedActivePetAndArtifact(petId: string, options: {dogTagStatus?: "active" | "revoked"} = {}) {
   await Pet.create({
@@ -64,8 +82,8 @@ async function seedActivePetAndArtifact(petId: string, options: {dogTagStatus?: 
     dogTagIdField: "999999",
     root: ROOT,
     protocolVersion: "dogtag-v2/1",
-    leaves: [{keyPath: "credentialSubject.name", saltHex: "0x00", tag: 1, value: "Rex"}],
-    reservedLeafHashes: [`0x${"1".repeat(64)}`, `0x${"2".repeat(64)}`, `0x${"3".repeat(64)}`],
+    leaves: LEAVES,
+    reservedLeafHashes: RESERVED_LEAF_HASHES,
     source: "issued_here",
     issuerClone: CLONE,
     verifiedAt: NOW,
@@ -135,5 +153,62 @@ describe("mongoExportStore + resolveAndConsumeExport against a real ephemeral mo
     const session = await ArtifactExportSession.create({token: "f".repeat(32), petId: "pet-expired", root: ROOT, exp: NOW - 1});
     const result = await resolveAndConsumeExport(mongoExportStore, session.token, NOW);
     expect(result).toEqual({ok: false, code: "expired_or_reused"});
+  });
+
+  it("WP4.10V item 3: a session's real, persisted mask is threaded through by the production adapter end to end", async () => {
+    await seedActivePetAndArtifact("pet-masked");
+    const session = await ArtifactExportSession.create({
+      token: "g".repeat(32),
+      petId: "pet-masked",
+      root: ROOT,
+      exp: NOW + 600,
+      mask: ["credentialSubject.name"],
+    });
+
+    const result = await resolveAndConsumeExport(mongoExportStore, session.token, NOW);
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("unreachable");
+    expect(result.data.disclosed).toEqual([]);
+    expect(result.data.obfuscatedLeafHashes).toEqual([
+      toHex32(hashLeaf(LEAVES[0]!.keyPath, hexToBytes(LEAVES[0]!.saltHex), {tag: LEAVES[0]!.tag, value: LEAVES[0]!.value} as TypedScalar)),
+    ]);
+  });
+
+  it("a legacy artifact with NO obfuscatedLeafHashes key at all (the mongo adapter's own .lean() normalization) still exports successfully", async () => {
+    // Bypasses Mongoose entirely, same technique as tagArtifact.integration.test.ts's own legacy-row
+    // test - a schema default only ever applies at document construction, never to a document that
+    // was already sitting in the collection before the field existed.
+    await Pet.create({
+      petId: "pet-legacy-export",
+      name: "Legacy",
+      ownerClientIds: [],
+      dogTag: {dogTagIdDec: "42", dogTagIdField: "999999", root: ROOT, status: "active", cloneAddress: CLONE},
+      searchKey: "legacy",
+    });
+    await TagArtifact.collection.insertOne({
+      artifactId: "legacy-export-artifact",
+      petId: "pet-legacy-export",
+      dogTagIdDec: "42",
+      dogTagIdField: "999999",
+      root: ROOT,
+      protocolVersion: "dogtag-v2/1",
+      leaves: LEAVES,
+      reservedLeafHashes: RESERVED_LEAF_HASHES,
+      source: "issued_here",
+      issuerClone: CLONE,
+      verifiedAt: NOW,
+      active: true,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      // deliberately no obfuscatedLeafHashes key, no schemaId key.
+    });
+    const session = await ArtifactExportSession.create({token: "h".repeat(32), petId: "pet-legacy-export", root: ROOT, exp: NOW + 600});
+
+    const result = await resolveAndConsumeExport(mongoExportStore, session.token, NOW);
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("unreachable");
+    expect(result.data.obfuscatedLeafHashes).toEqual([]);
+    expect(result.data.disclosed).toEqual(LEAVES);
+    expect(result.data.schemaId).toBeUndefined();
   });
 });

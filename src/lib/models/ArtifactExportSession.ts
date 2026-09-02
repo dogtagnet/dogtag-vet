@@ -21,6 +21,16 @@ export interface ArtifactExportSessionDoc {
   petId: string;
   root: string; // lowercase - the TagArtifact active for petId at creation time
   exp: number; // unix seconds, createdAt + 600
+  /**
+   * WP4.10V item 3 - the keyPaths staff chose to mask, snapshotted at CREATION time exactly like
+   * `root` above (never re-chosen at scan time). Absent (or `[]`) means an ordinary, fully-disclosed
+   * export - the pre-WP4.10V default behavior. Validated against the active artifact's disclosed
+   * leaf keyPaths at creation time (`lib/tags/exportMask.ts`'s `validateExportMask`) - by the time
+   * `GET /e/:token` reads this back, it is already known-good, so `resolveAndConsumeExport` never
+   * re-validates it, only recomputes each masked leaf's hash from its (still fully-known-to-this-
+   * clinic) opening - never trusting a stored hash, exactly like every other check in this ceremony.
+   */
+  mask?: string[];
   /** Set atomically the instant this token is resolved - whether that resolution SUCCEEDED or was
    * refused (revoked/superseded) - never left open for a retry. See `resolveAndConsumeExport`'s own
    * doc comment for why a refusal still burns the token (mirrors `completeRegistration`'s
@@ -36,6 +46,7 @@ const artifactExportSessionSchema = new Schema<ArtifactExportSessionDoc>(
     petId: {type: String, required: true, index: true},
     root: {type: String, required: true},
     exp: {type: Number, required: true},
+    mask: [String],
     usedAt: Number,
   },
   {timestamps: {createdAt: true, updatedAt: false}},

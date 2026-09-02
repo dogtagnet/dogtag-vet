@@ -56,6 +56,14 @@ export async function GET(request: Request, {params}: {params: Promise<{token: s
           errorBody("superseded", "This tag's data has changed since this code was generated. Ask the clinic for a new code."),
           {status: 410, headers: rateLimit.headers},
         );
+      case "internal_error":
+        // WP4.10V item 3's self-check safety net (exportFlow.ts's own doc comment) already logged
+        // the specifics server-side - never leak them to the scanning phone. The token is already
+        // consumed at this point; there is no retry endpoint, matching every other refusal here.
+        return jsonWithHeaders(errorBody("internal_error", "Something went wrong preparing this tag's data. Ask the clinic for a new code."), {
+          status: 500,
+          headers: rateLimit.headers,
+        });
     }
   }
 

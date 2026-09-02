@@ -6,7 +6,7 @@ import {getClinicSettings} from "@/lib/models/ClinicSettings";
 import type {ExportedArtifactRow, ExportFlowStore, ExportSessionRow} from "@/lib/tags/exportFlow";
 
 function toExportSessionRow(doc: ArtifactExportSessionDoc): ExportSessionRow {
-  return {token: doc.token, petId: doc.petId, root: doc.root, exp: doc.exp, usedAt: doc.usedAt};
+  return {token: doc.token, petId: doc.petId, root: doc.root, exp: doc.exp, mask: doc.mask, usedAt: doc.usedAt};
 }
 
 function toExportedArtifactRow(doc: TagArtifactDoc): ExportedArtifactRow {
@@ -17,6 +17,11 @@ function toExportedArtifactRow(doc: TagArtifactDoc): ExportedArtifactRow {
     dogTagIdField: doc.dogTagIdField,
     root: doc.root,
     leaves: doc.leaves,
+    // WP4.10V item 2/3: `.lean()` never applies a schema default - a row written before this field
+    // existed reads back with the key genuinely absent (`TagArtifactDoc.obfuscatedLeafHashes`'s own
+    // doc comment). Normalized to `[]` right here, at this adapter's own boundary, so `exportFlow.ts`
+    // (and every reader downstream of it) never has to special-case `undefined` itself.
+    obfuscatedLeafHashes: doc.obfuscatedLeafHashes ?? [],
     reservedLeafHashes: doc.reservedLeafHashes,
     issuerClone: doc.issuerClone,
     active: doc.active,
