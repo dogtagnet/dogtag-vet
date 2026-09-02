@@ -312,7 +312,11 @@ test.describe("import ceremony (plan 2.3)", () => {
 
     await page.goto("/tags");
     const row = page.locator("tr", {hasText: "TagsPageSmoke"});
-    await expect(row).toBeVisible();
+    // WP4.9V FIX ROUND 1 (D4): `/tags` is compiled on demand by `next dev`, and this is the FIRST
+    // navigation to it anywhere in this file - when this spec runs in isolation (its own
+    // verification requirement), nothing has warmed this route yet. Same cold-compile reasoning as
+    // f6c7f3a's identical hardening of the export QR panel's own visibility check just above.
+    await expect(row).toBeVisible({timeout: 15_000});
 
     await page.getByRole("button", {name: "Import tag"}).click();
     await page.getByRole("button", {name: "Create new pet from verified data"}).click();
