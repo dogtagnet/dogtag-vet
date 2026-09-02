@@ -121,14 +121,51 @@ async function getCheckupService(page: Page): Promise<Service> {
   return service;
 }
 
-/** A future, presumably-open slot, `offsetDays` out - spread across tests so none share a slot. */
+/**
+ * A future, presumably-open slot, `offsetDays` out - spread across tests so none share a slot.
+ *
+ * WP4.10V fix round 1 (P5): "spread across tests" used to mean only "give every call site a
+ * different `offsetDays`", on the assumption that different offsets always land on different
+ * slots. They don't: this suite's seeded availability is Mon-Fri only, and this function's own
+ * 3-day search window returns the FIRST slot in it - so two offsets whose windows both start on a
+ * weekend can roll forward onto the exact same following Monday slot. Reproduced live on
+ * 2026-09-03 for offsets 23/24 ("review finding 6", this file's own `startAt`/`startAt2`): both
+ * `+23` (Sat) and `+24` (Sun) resolved to the identical Monday 09:00 slot
+ * (`startAt === startAt2 === 1790600400`), so the second booking re-signed the IDENTICAL
+ * `bookingHash` and the server's own replay guard correctly, if confusingly, rejected it with
+ * `wallet_claim_replayed` - nothing to do with load, timing, or ECDSA signing speed, and nothing
+ * that "assert the two are different" alone would fix, since that would just make the test fail
+ * loudly on the same aliasing dates instead of quietly. This is a DATE-DEPENDENT aliasing, not a
+ * per-run one - the fix has to hold no matter which weekday `now` falls on, not just today.
+ *
+ * Fixed here, once, for every caller in this file, by construction: track every `startAt` this
+ * test run has already handed out (module-scoped, one Node process per `playwright test`
+ * invocation - `playwright.config.ts` pins `workers: 1`/`fullyParallel: false`, so every test in
+ * this file shares the same module instance) and skip past it - first within the SAME response's
+ * own slot list (a 3-day window on a real clinic almost always returns more than one slot), and
+ * only widen the search window itself if an entire window turns out to be already claimed.
+ * Widening moves `from` forward rather than extending `to`, so the range queried per call never
+ * grows past the availability route's own `MAX_RANGE_DAYS` (31) - do not "simplify" this into one
+ * wide `[from, from + N*3days)` query, which would risk exceeding that cap for a large `offsetDays`.
+ */
+const usedSlotStarts = new Set<number>();
+
 async function openSlot(page: Page, service: Service, offsetDays: number): Promise<number> {
-  const from = new Date(Date.now() + offsetDays * 86_400_000);
-  const to = new Date(from.getTime() + 3 * 86_400_000);
-  const res = await page.request.get(`/v1/booking/availability?serviceId=${service.id}&from=${from.toISOString()}&to=${to.toISOString()}`);
-  const body = await res.json();
-  expect(body.slots.length).toBeGreaterThan(0);
-  return Math.floor(new Date(body.slots[0].startAt).getTime() / 1000);
+  for (let widen = 0; widen < 14; widen++) {
+    const from = new Date(Date.now() + (offsetDays + widen) * 86_400_000);
+    const to = new Date(from.getTime() + 3 * 86_400_000);
+    const res = await page.request.get(`/v1/booking/availability?serviceId=${service.id}&from=${from.toISOString()}&to=${to.toISOString()}`);
+    const body = await res.json();
+    expect(body.slots.length).toBeGreaterThan(0);
+    for (const slot of body.slots as {startAt: string}[]) {
+      const startAt = Math.floor(new Date(slot.startAt).getTime() / 1000);
+      if (!usedSlotStarts.has(startAt)) {
+        usedSlotStarts.add(startAt);
+        return startAt;
+      }
+    }
+  }
+  throw new Error(`openSlot(offsetDays=${offsetDays}): exhausted 14 widened windows without finding a slot distinct from ones already handed out this run`);
 }
 
 interface BookResult {
