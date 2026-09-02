@@ -25,6 +25,16 @@ export async function connectToDatabase(): Promise<typeof mongoose> {
       bufferCommands: false,
     });
   }
-  cache.conn = await cache.promise;
+  try {
+    cache.conn = await cache.promise;
+  } catch (err) {
+    // A rejected connect (e.g. the database was briefly down) must NOT stay cached: every later
+    // request would re-await the same rejected promise and fail instantly, bricking the server
+    // until a manual restart - exactly what happened during the 2026-09-02 Docker-disk-full
+    // outage. Clearing the slot makes the next request retry a fresh connect.
+    cache.promise = null;
+    cache.conn = null;
+    throw err;
+  }
   return cache.conn;
 }
