@@ -55,6 +55,20 @@ function toArtifactLeaves(leaves: OpenedLeaf[]): TagArtifactLeaf[] {
   return leaves.map((l) => ({keyPath: l.keyPath, saltHex: l.saltHex, tag: l.tag, value: l.value}));
 }
 
+export type VerifyForProtocolVersionResult = {ok: true} | {ok: false; reason: "leaf_commitment_invalid" | "unsupported_protocol_version"};
+
+/**
+ * The pure verify-only half of `createTagArtifact` - no I/O, dispatched by `protocolVersion` exactly
+ * like the write path. Exported so the backfill script's dry-run mode (`lib/tags/backfill.ts`) can
+ * report exactly what `createTagArtifact` would decide WITHOUT writing anything - a real, byte-for-
+ * byte-identical prediction rather than a second, separately-maintained copy of this dispatch.
+ */
+export function verifyForProtocolVersion(input: VerifyLeafCommitmentInput & {protocolVersion: string}): VerifyForProtocolVersionResult {
+  const verifier = PROTOCOL_VERIFIERS[input.protocolVersion];
+  if (!verifier) return {ok: false, reason: "unsupported_protocol_version"};
+  return verifier(input) ? {ok: true} : {ok: false, reason: "leaf_commitment_invalid"};
+}
+
 /**
  * Verify-then-insert, in that order, with NO write happening before verification passes (so a
  * refused insert never touches `supersedeActiveArtifactsForPet` either - a failed reissue leaves
@@ -81,16 +95,14 @@ function toArtifactLeaves(leaves: OpenedLeaf[]): TagArtifactLeaf[] {
  * never swallowed here).
  */
 export async function createTagArtifact(input: CreateTagArtifactInput): Promise<CreateTagArtifactResult> {
-  const verifier = PROTOCOL_VERIFIERS[input.protocolVersion];
-  if (!verifier) return {ok: false, reason: "unsupported_protocol_version"};
-
-  const verified = verifier({
+  const verified = verifyForProtocolVersion({
+    protocolVersion: input.protocolVersion,
     root: input.root,
     leaves: input.leaves,
     reservedLeafHashes: input.reservedLeafHashes,
     expectedIdentityLeaves: input.expectedIdentityLeaves,
   });
-  if (!verified) return {ok: false, reason: "leaf_commitment_invalid"};
+  if (!verified.ok) return verified;
 
   const normalizedRoot = input.root.toLowerCase();
   const existing = await TagArtifact.findOne({root: normalizedRoot}).lean<TagArtifactDoc>();

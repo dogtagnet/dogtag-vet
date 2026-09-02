@@ -19,6 +19,7 @@
     "test:e2e": "playwright test",
     "seed": "tsx --conditions=react-server scripts/seed.ts",
     "verify-receipt": "tsx scripts/verify-receipt.ts",
+    "backfill-tag-artifacts": "tsx --conditions=react-server scripts/backfillTagArtifacts.ts",
     "worker": "tsx --conditions=react-server src/worker/index.ts"
   },
   "dependencies": {

@@ -106,6 +106,34 @@ Afterward, confirm two things: `date_1_staffId_1` is present (the compound index
 
 One more thing you may see and can ignore: a pre-migration boot logs a `MongoServerError: An existing index has the same name as the requested index` (`IndexOptionsConflict`) for `date_1`, because mongoose is trying (and failing) to create its own non-unique `date_1` alongside the legacy unique one already occupying that name. This is expected log noise until the migration runs - the compound `date_1_staffId_1` index still gets created successfully regardless, so per-practitioner uniqueness is already correctly enforced even before you run the migration above; the migration only unblocks two DIFFERENT practitioners sharing one calendar date.
 
+### TagArtifact backfill (existing deployments only)
+
+WP4.9 adds a `TagArtifact` collection - the verify-at-write custody record for a pet's profile-tree leaves (root, opened leaves, reserved-leaf hashes), keyed to the pet and its root rather than archaeology over mint sessions.
+Every tag this app issues or imports FROM THIS POINT ON writes its own `TagArtifact` automatically (the custodial-bind terminal write, the mobile-booking tier-4 import, and the export/import ceremonies below all create one as part of the same request) - **no action is needed for a fresh deployment, or for any tag issued/imported after upgrading to this version.**
+
+A deployment that already had tags issued or imported BEFORE this version, however, has pets with a `dogTag.root` but no `TagArtifact` row yet - the backfill script closes that gap by finding each such pet's own `MintSession` (the one that actually bound that exact root), independently re-verifying it, and inserting the missing artifact.
+It is idempotent (safe to run more than once - a pet already covered is skipped, never re-inserted or overwritten) and it never modifies or deletes anything outside the new `TagArtifact` collection.
+
+**It REPORTS, and never auto-fixes, a session whose stored data no longer recomputes its own claimed root** (data corruption, a hand-edited document, or genuine tampering).
+A mismatch is not fixable by re-running the script - it needs a human to look at the named pet and MintSession and decide what actually happened before doing anything about it.
+
+**Run the dry-run FIRST, against that deployment's own database - it only reads, it never writes anything:**
+```
+MONGODB_URI="<this deployment's own connection string>" pnpm backfill-tag-artifacts -- --dry-run
+```
+Read the printed report. `WOULD INSERT` lines are exactly what a real run would create; `MISMATCH` lines are exactly what a real run would still refuse to touch, printed with the specific reason (this is the same dispatch/verification `createTagArtifact` uses at every live write path, not a separate approximation of it - a dry run's prediction and a real run's outcome are always identical for the same database state).
+A summary line at the end gives the total counts; the process exits `1` if any mismatch was found (so this is safe to run from a script/cron and check via exit code), `0` otherwise.
+
+**Only once the dry-run's report looks right, run it for real:**
+```
+MONGODB_URI="<this deployment's own connection string>" pnpm backfill-tag-artifacts -- --write
+```
+This performs the writes the dry-run predicted (and none of the ones it reported as mismatches) and prints the identical report shape with `INSERTED` in place of `WOULD INSERT`.
+Running `--write` again afterward (accidentally, or deliberately to catch any tags issued/imported since the first run) is safe - already-covered pets are skipped and mismatches are reported the exact same way every time, never silently "fixed" by a later run.
+
+**This script is never run against a live deployment's database by an automated build/fix session** - only by you (or whoever operates that deployment), by hand, after reading its dry-run report.
+There is no default MONGODB_URI baked into the script or its `pnpm backfill-tag-artifacts` alias - you must supply the connection string explicitly every time, which is a deliberate guard against ever running it against the wrong database by muscle memory alone.
+
 ## Kubernetes (Helm)
 
 `helm/dogtag-vet/` deploys the web app and the worker as two Deployments; it does not manage MongoDB - see "Managed Mongo" below.
