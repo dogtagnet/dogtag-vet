@@ -2,11 +2,11 @@ import {MongoClient} from "mongodb";
 import {expect, test, type Page} from "@playwright/test";
 import {E2E_MONGO_URI} from "./mongo-fixture";
 import {getLastSentTxHash, setRpcReceipt, setRpcScenario} from "./rpcStub";
-// Relative, not the "@/..." alias - no existing e2e file imports from src/, and this repo's own
-// rpcStub.ts already proves a relative import reaching OUTSIDE e2e/ (its own vendored ABI JSON
-// under ../protocol/) resolves fine under Playwright's loader; a bare "@/lib/format" alias would
-// be untested territory for no benefit. `truncateMiddle` itself is a pure two-line function (its
-// own file's only other import is `import type` - erased at compile time, nothing to resolve).
+// Relative, not the "@/..." alias - the established pattern for an e2e file reaching into src/
+// (`practitioner-mode.spec.ts` imports `../src/lib/booking/dst`; `runBootRecovery.ts` imports
+// `../src/lib/db`), so this needs no new loader behavior. Importing the real `truncateMiddle`
+// rather than re-deriving it keeps these assertions from drifting if the component's truncation
+// ever changes.
 import {truncateMiddle} from "../src/lib/format";
 
 /**
