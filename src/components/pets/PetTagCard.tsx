@@ -107,7 +107,7 @@ export function PetTagCard({
         <Banner tone="info" title="Some fields are masked by the owner">
           <p>
             {maskedFieldCount} attribute{maskedFieldCount === 1 ? "" : "s"} on this tag {maskedFieldCount === 1 ? "was" : "were"} masked when
-            the owner shared it - this clinic holds the field&apos;s cryptographic hash only, never its value, and cannot disclose or
+            the owner shared it - this clinic holds each field&apos;s cryptographic hash only, never its value, and cannot disclose or
             export what it does not have. The root still verifies exactly as if nothing were masked.
           </p>
         </Banner>

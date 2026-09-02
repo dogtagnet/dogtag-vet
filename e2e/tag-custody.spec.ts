@@ -409,6 +409,11 @@ test.describe("import ceremony (plan 2.3)", () => {
     await page.goto(`/pets/${targetPetId}`);
     await expect(page.getByText("Some fields are masked by the owner")).toBeVisible();
     await expect(page.getByText("1 attribute on this tag was masked")).toBeVisible();
+    // WP4.10V fix round 1 D6 bite proof: the noun after the count must stay grammatically
+    // count-aware ("each field's", not "the field's") - pinned here so a regression back to the
+    // singular-only phrasing goes red, even though this fixture's count of 1 alone would not
+    // otherwise distinguish the two.
+    await expect(page.getByText("this clinic holds each field's cryptographic hash only")).toBeVisible();
 
     const petRes = await page.request.get(`/api/pets/${targetPetId}`);
     const pet = await petRes.json();

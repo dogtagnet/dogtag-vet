@@ -177,8 +177,10 @@ export function MaskedExportPanel({petId, onClose}: {petId: string; onClose: () 
           <div>
             <h4 className="mb-1 text-section-title text-ink">Choose fields to mask</h4>
             <p className="text-caption text-ink-faint">
-              A masked field is never disclosed - only its cryptographic hash travels with the export. The root still recomputes and still
-              verifies; nothing about masking a field can be detected as tampering.
+              A masked field is never disclosed - only its cryptographic hash travels with the export. The root still recomputes and
+              verifies for any reader that implements verifyRedactedArtifact and honors obfuscatedLeafHashes; a reader that only
+              understands the older, leaves-only shape cannot rebuild the root from a masked export, so it will not verify one - it does
+              not silently accept a masked export as if it were complete.
             </p>
           </div>
 

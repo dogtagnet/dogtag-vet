@@ -1123,7 +1123,9 @@ components:
         The pet's currently-active `TagArtifact`, as a `RedactedTagArtifact` (WP4.10V,
         plans/wp4.10-masked-export.md section 2 - the crypto-bearing fields `protocolVersion`
         through `issuerClone` below match `specs/schemas/dogtag.redacted-tag-artifact.v1.schema.json`
-        exactly; `chainId`/`petName`/`clinicName` are display context that schema does not carry)
+        exactly, apart from the deprecated `leaves` alias described in the TRANSITION note below
+        (that registry schema has no `leaves` property at all - `disclosed` is its name for the
+        same data); `chainId`/`petName`/`clinicName` are display context that schema does not carry)
         plus display context. `disclosed`/`obfuscatedLeafHashes`/`reservedLeafHashes` recompute
         `root` via `verifyRedactedArtifact` - the SAME check this deployment already self-runs on
         the payload before ever serving it (never trusting a stored hash without recomputing it) -
