@@ -39,7 +39,12 @@ export function PetTagCard({petId, dogTag = {}, timeZone}: {petId: string; dogTa
           <StatusBadge tone="neutral" label="No tag issued" />
         </div>
         <p className="mb-4 text-body text-ink-muted">This pet has no DogTag on chain yet.</p>
-        <div className="flex flex-wrap items-center gap-4">
+        {/* WP4.9V FIX ROUND 1 (D6): `items-start`, not `items-center` - `ImportTagAction` replaces
+            itself with the full-height `ImportQrPanel` once open, and `items-center` would then
+            vertically centre this link against that panel's whole height instead of sitting level
+            with its first line. Matches `PhotoCropUpload.tsx`'s own `items-start` row, the
+            established idiom for this app's other reveal-bearing rows. */}
+        <div className="flex flex-wrap items-start gap-4">
           <Link href="/tags/issue" className="text-body font-medium text-link hover:underline">
             Issue a tag
           </Link>
@@ -124,7 +129,11 @@ export function PetTagCard({petId, dogTag = {}, timeZone}: {petId: string; dogTa
           </dd>
         </div>
       </dl>
-      <div className="mt-4 flex flex-wrap items-center gap-4">
+      {/* WP4.9V FIX ROUND 1 (D6): `items-start`, not `items-center` - see the no-tag branch's
+          identical comment above. `ShareTagDataAction`/`ImportTagAction` each replace themselves
+          with a full-height panel once open, so `items-center` was vertically centring this link
+          against the whole panel instead of sitting level with its first line. */}
+      <div className="mt-4 flex flex-wrap items-start gap-4">
         {!dogTag.external && (
           <Link href="/tags" className="text-body font-medium text-link hover:underline">
             Manage in Tags
