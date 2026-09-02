@@ -5,7 +5,9 @@ import {useRouter} from "next/navigation";
 import {useAccount, useConnect} from "wagmi";
 import {Button, Input} from "@/components/ui/controls";
 import {FormField, FormSection} from "@/components/ui/FormSection";
+import {StatusBadge} from "@/components/ui/StatusBadge";
 import {useSnackbar} from "@/components/ui/Snackbar";
+import {operatorStatusBadge, operatorStatusExplanation, type OperatorStatus} from "@/lib/staffRoleTone";
 import type {StaffDoc} from "@/lib/models/Staff";
 
 /**
@@ -16,11 +18,14 @@ import type {StaffDoc} from "@/lib/models/Staff";
  * always scoped to the signed-in staff member's OWN row via `PATCH /api/settings/staff/me/wallet`
  * - there is no staffId picker here because this card can only ever touch one row.
  *
- * The live on-chain whitelist badge (item 3) is added on top of this same card by a later commit
- * in this file - this component's own history is worth reading if a future diff looks like it
- * skipped straight to the badge.
+ * `status` (item 3, K2: "they can see that indeed the address is whitelisted... else show some
+ * warning") is resolved SERVER-SIDE by `settings/page.tsx` (`resolveOperatorStatus`) and passed
+ * down as a plain prop - unlike OperatorsSection's live client-side `useReadContract`, this card
+ * never shows a "Checking..." transient: the answer is already settled by the time this component
+ * mounts, and a save/clear's own `router.refresh()` (below) is what refreshes it afterward, the
+ * same idiom every other mutation on this page already uses.
  */
-export function MyWalletSection({initial}: {initial: StaffDoc}) {
+export function MyWalletSection({initial, status}: {initial: StaffDoc; status: OperatorStatus}) {
   const snackbar = useSnackbar();
   const router = useRouter();
   const {address: connectedAddress, isConnected} = useAccount();
@@ -65,6 +70,10 @@ export function MyWalletSection({initial}: {initial: StaffDoc}) {
       title="My issuance wallet"
       helperText="The wallet address you sign DogTag issuance transactions from. An owner can also set this for you in Practitioner profiles above."
     >
+      <div className="flex items-center gap-2">
+        <StatusBadge tone={operatorStatusBadge[status].tone} label={operatorStatusBadge[status].label} />
+      </div>
+      <p className="text-body text-ink-muted">{operatorStatusExplanation(status)}</p>
       <FormField
         label="Wallet address"
         htmlFor="my-wallet-address"

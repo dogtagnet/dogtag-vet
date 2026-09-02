@@ -11,7 +11,7 @@ import {useSnackbar} from "@/components/ui/Snackbar";
 import {vetIssuerAbi} from "@/lib/abi";
 import {roax} from "@/lib/chains";
 import {legacyTxWithGas} from "@/lib/chainWrite";
-import {isVetOrOwner, practitionerDisplayName} from "@/lib/staffRoleTone";
+import {isVetOrOwner, operatorStatusBadge, practitionerDisplayName} from "@/lib/staffRoleTone";
 import type {StaffDoc} from "@/lib/models/Staff";
 
 /**
@@ -92,6 +92,15 @@ function OperatorRow({staff, cloneAddress, canWrite, connectedAddress}: {staff: 
       <div className="flex shrink-0 items-center gap-2">
         {operatorStatus.isLoading ? (
           <StatusBadge tone="neutral" label="Checking..." />
+        ) : operatorStatus.isError ? (
+          // WP4.7C item 3(c) - the one gap this read had no representation for at all: an
+          // unreadable chain silently fell through to "Inactive" (a false negative - the design
+          // intent's "chain-unreadable is its own honest state" applies here too), never
+          // triggered by the e2e stub so never caught before. `operatorStatusBadge` is the SAME
+          // shared vocabulary the new "My issuance wallet" card/banner use, imported here for
+          // this one state only - "Active"/"Inactive" below are untouched, byte-identical to
+          // before this item (asserted verbatim by e2e/practitioner-mode.spec.ts).
+          <StatusBadge tone={operatorStatusBadge.unreadable.tone} label={operatorStatusBadge.unreadable.label} />
         ) : isActive ? (
           <StatusBadge tone="ok" label="Active" />
         ) : (

@@ -10,6 +10,7 @@ import {getClinicSettings} from "@/lib/models/ClinicSettings";
 import {listStaff} from "@/lib/models/Staff";
 import {listBookablePractitioners} from "@/lib/booking/queries";
 import {getServerEnv} from "@/lib/env";
+import {resolveOperatorStatus} from "@/lib/issuanceOperatorStatus";
 import {listRecentAbuse} from "@/lib/abuseLog";
 import {AbuseLogSection} from "@/app/(app)/settings/AbuseLogSection";
 import {BookingConfigSection} from "@/app/(app)/settings/BookingConfigSection";
@@ -42,6 +43,12 @@ export default async function SettingsPage() {
   // out from under it mid-session (this app only ever disables, never deletes - Staff.ts's own doc
   // comment - so this is a defensive absence check, not an expected path).
   const myStaff = staff.find((s) => s.staffId === session?.user?.staffId);
+  // WP4.7C item 3 - resolved AFTER the Promise.all above since it needs both `myStaff` and
+  // `settings.cloneAddress` from it; short-cached itself (`resolveOperatorStatus`'s own doc
+  // comment), so this is not a second slow chain round trip on every navigation.
+  const myOperatorStatus = isVetOrOwner(session?.user?.role)
+    ? await resolveOperatorStatus({walletAddress: myStaff?.walletAddress, cloneAddress: settings.cloneAddress})
+    : null;
 
   return (
     <>
@@ -90,7 +97,9 @@ export default async function SettingsPage() {
       <SettingsForm initial={settings} />
       <div className="mt-6 max-w-2xl space-y-6">
         <StaffSection initial={staff} isOwner={isOwner} currentStaffId={session?.user?.staffId} />
-        {isVetOrOwner(session?.user?.role) && myStaff && <MyWalletSection initial={myStaff} />}
+        {isVetOrOwner(session?.user?.role) && myStaff && myOperatorStatus && (
+          <MyWalletSection initial={myStaff} status={myOperatorStatus.status} />
+        )}
         <OperatorsSection staff={staff} cloneAddress={settings.cloneAddress} isOwner={isOwner} />
         <BookingConfigSection settings={bookingSettings} rules={rules} exceptions={exceptions} practitioners={practitioners} isOwner={isOwner} />
         <IcsFeedSection initialToken={settings.icsFeedToken} publicBaseUrl={env.PUBLIC_BASE_URL} />
