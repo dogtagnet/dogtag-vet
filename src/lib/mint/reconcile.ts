@@ -155,6 +155,15 @@ export async function reconcileAnchoredSession(
  * `createTagArtifact`'s own doc comment already prefers, and which the export route's own
  * `artifact.root === pet.dogTag.root` guard (`export-tag-data/route.ts`) and the backfill runbook
  * both already handle.
+ *
+ * WP4.9V FIX ROUND 2 (N1): the artifact promotion below is wrapped in try/catch, mirroring
+ * `applyIssuedArtifactSideEffect`'s own "never throw" contract exactly - the `Pet.updateOne` above
+ * has already durably confirmed the on-chain anchor onto the pet record by the time this runs, so a
+ * transient failure promoting the `TagArtifact` row must never turn that genuine confirmation into a
+ * thrown error back through `reconcileAnchoredSession`'s callers (the confirm route, the retry route,
+ * the worker's boot recovery, and WP4.4 tier-3's relink action all call this function unwrapped). A
+ * failure here is only ever logged: the backfill runbook (docs/DEPLOY.md) is the documented repair
+ * path for the pet this leaves without a matching active artifact.
  */
 export async function linkPetDogTag(petId: string, tag: LinkedDogTag): Promise<void> {
   await Pet.updateOne(
@@ -171,7 +180,14 @@ export async function linkPetDogTag(petId: string, tag: LinkedDogTag): Promise<v
       },
     },
   );
-  await activateAnchoredArtifact(petId, tag.root);
+  try {
+    await activateAnchoredArtifact(petId, tag.root);
+  } catch (err) {
+    // Never turn a genuine on-chain confirmation into a failed response - the pet is already linked
+    // above; a missing promotion is the fail-closed shape docs/DEPLOY.md's backfill runbook repairs
+    // (it now reactivates, per FIX ROUND 1 D1).
+    console.error(`could not promote the anchored TagArtifact for pet ${petId} root ${tag.root}:`, err);
+  }
 }
 
 /** Mongoose + real-chain `ReconcileDeps` - the production adapter shared by every call site. */

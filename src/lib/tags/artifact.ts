@@ -117,6 +117,14 @@ export function verifyForProtocolVersion(input: VerifyLeafCommitmentInput & {pro
  * for the pet's `dogTag.root`, which hits this repair branch and reactivates rather than reporting
  * `inserted` forever.
  *
+ * WP4.9V FIX ROUND 2 (N2): the repair branch above only fires when `input.activate ?? true` is
+ * true. A caller that explicitly passes `activate: false` (today, only `mongoIssuedArtifactStore`'s
+ * custodial-bind write) must never be the thing that promotes an un-anchored artifact, even when it
+ * happens to name a root that already has an inactive row on file - `activateAnchoredArtifact` is
+ * the only promoter, exactly the invariant the rest of this D3 fix depends on. This path is latent
+ * today (no caller can currently reach it - see wp4.9V-progress.md's FIX ROUND 2 log for the
+ * reachability analysis) but is one line to close and the whole custody model rests on it.
+ *
  * IDEMPOTENT on a repeated call for the SAME (petId, root) that is ALREADY active: returns the
  * already-stored row rather than attempting a second insert against the unique `root` index. This
  * is load-bearing for more than one caller, not a defensive nicety - the WP4.4 booking side
@@ -147,6 +155,12 @@ export async function createTagArtifact(input: CreateTagArtifactInput): Promise<
       );
     }
     if (!existing.active) {
+      if (!(input.activate ?? true)) {
+        // WP4.9V FIX ROUND 2 (N2) - a caller that explicitly declines activation must never be the
+        // thing that promotes an un-anchored artifact, even on a repeat call for a root that already
+        // has an inactive row on file. `activateAnchoredArtifact` is the only promoter.
+        return {ok: true, artifact: existing, reactivated: false};
+      }
       // Repair path (D1) - see this function's own doc comment. Defensively supersede first (in
       // case some OTHER row for this pet is somehow also active - the bad-data state
       // `supersedeActiveArtifactsForPet`'s own doc comment already tolerates), then promote this
@@ -211,15 +225,19 @@ export async function findActiveTagArtifact(petId: string): Promise<TagArtifactD
  * never at custodial-bind time, before `issueTag` has even been sent (see `createTagArtifact`'s own
  * doc comment for the full "anchor vs bind" reasoning).
  *
- * Defensive no-op, NEVER a throw, when no artifact row exists yet for this exact (petId, root) -
- * `linkPetDogTag` is also the write path for a legacy pre-WP4.9 pet (no backfill run yet) and for
- * WP4.4 tier-3's relink (a tag this clinic issued that a database restore disconnected from any
- * local Pet, which may predate this app's own `TagArtifact` collection entirely). Every one of
- * `linkPetDogTag`'s callers already treats its own write as complete regardless of this side
- * effect's outcome - throwing here would turn a genuine on-chain confirmation into a failed
- * response, exactly the failure mode `applyIssuedArtifactSideEffect`'s own "never throw" contract
- * exists to avoid one layer up. The backfill runbook (docs/DEPLOY.md) is the documented repair path
- * for a pet this leaves without a matching active artifact.
+ * Defensive no-op when no artifact row exists yet for this exact (petId, root) - `linkPetDogTag` is
+ * also the write path for a legacy pre-WP4.9 pet (no backfill run yet) and for WP4.4 tier-3's relink
+ * (a tag this clinic issued that a database restore disconnected from any local Pet, which may
+ * predate this app's own `TagArtifact` collection entirely).
+ *
+ * This function itself can still throw (a genuine Mongo failure on either write below) - WP4.9V FIX
+ * ROUND 2 (N1): the "never throw" guarantee this doc comment used to claim here is actually enforced
+ * one layer up, by `linkPetDogTag`'s own try/catch around this call. Every one of `linkPetDogTag`'s
+ * callers already treats its own write as complete regardless of this side effect's outcome -
+ * throwing past `linkPetDogTag` would turn a genuine on-chain confirmation into a failed response,
+ * exactly the failure mode `applyIssuedArtifactSideEffect`'s own "never throw" contract exists to
+ * avoid one layer up. The backfill runbook (docs/DEPLOY.md) is the documented repair path for a pet
+ * this leaves without a matching active artifact.
  *
  * Also a no-op (never re-supersedes) when the named artifact is ALREADY `active` - idempotent for
  * the worker boot recovery re-confirming an already-`bound` session, or a retried confirm call.

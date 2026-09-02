@@ -235,6 +235,38 @@ describe("createTagArtifact - the invariant (accept/refuse)", () => {
     const active = await findActiveTagArtifact("pet-1");
     expect(active?.root).toBe(first.artifact.root);
   });
+
+  /**
+   * WP4.9V FIX ROUND 2 (N2) - the grader's PROBE D, made permanent. The D1 repair branch above must
+   * still refuse to promote when the caller explicitly passed `activate: false` - the one thing the
+   * D3 invariant forbids is an `issued_here` artifact getting promoted anywhere but
+   * `activateAnchoredArtifact`'s own terminal-confirm write, and the repair branch is a second path
+   * into the same `active: true` state that must respect the same rule.
+   *
+   * BITE PROOF: removing the `if (!(input.activate ?? true)) return ...` guard turns this test red -
+   * the second call would return `reactivated: true` and leave the pet with one active row instead
+   * of zero.
+   */
+  it("(N2) does NOT reactivate an existing INACTIVE row when the caller passes activate:false", async () => {
+    const input = baseInput({activate: false});
+    const first = await createTagArtifact(input);
+    expect(first.ok).toBe(true);
+    if (!first.ok) throw new Error("unreachable");
+    expect(first.artifact.active).toBe(false);
+    expect(await TagArtifact.countDocuments({active: true})).toBe(0);
+
+    // Repeat call for the SAME (petId, root), still active:false - must NOT promote it, even though
+    // the row it would "repair" is inactive, exactly like the D1 crash-window state.
+    const second = await createTagArtifact(input);
+    expect(second.ok).toBe(true);
+    if (!second.ok) throw new Error("unreachable");
+    expect(second.reactivated).toBe(false);
+    expect(second.artifact.active).toBe(false);
+
+    expect(await TagArtifact.countDocuments({})).toBe(1);
+    expect(await TagArtifact.countDocuments({active: true})).toBe(0);
+    expect(await findActiveTagArtifact("pet-1")).toBeNull();
+  });
 });
 
 describe("activateAnchoredArtifact (D3 - anchor-at-confirm custody promotion)", () => {
@@ -366,6 +398,54 @@ describe("activateAnchoredArtifact (D3 - anchor-at-confirm custody promotion)", 
     expect(petAfterConfirm?.dogTag?.root?.toLowerCase()).toBe(second.root.toLowerCase());
     const supersededFirst = await TagArtifact.findOne({root: first.root.toLowerCase()}).lean();
     expect(supersededFirst?.active).toBe(false);
+  });
+});
+
+describe("linkPetDogTag (N1 - the artifact promotion must never turn a confirmed anchor into a thrown error)", () => {
+  /**
+   * WP4.9V FIX ROUND 2 (N1) - the grader's PROBE E, made permanent. `linkPetDogTag` writes
+   * `Pet.dogTag` FIRST (a durable confirmation the tag is anchored) and only then calls
+   * `activateAnchoredArtifact` to promote the matching `TagArtifact` row. A transient failure in
+   * that second write must never propagate past `linkPetDogTag` - every caller
+   * (`reconcileAnchoredSession`, the confirm route, the retry route, the worker's boot recovery, and
+   * WP4.4 tier-3's relink action) calls it unwrapped, so a throw here would turn a genuine on-chain
+   * confirmation into a 500 even though the pet is already linked.
+   *
+   * Fault-injects `TagArtifact.updateOne` (the second of `activateAnchoredArtifact`'s two writes) to
+   * reject, mirroring the grader's exact probe.
+   *
+   * BITE PROOF: removing the try/catch around `activateAnchoredArtifact` in
+   * `lib/mint/reconcile.ts::linkPetDogTag` turns this test red - `linkPetDogTag(...)` would reject
+   * with "transient mongo failure" instead of resolving.
+   */
+  it("(N1) resolves rather than rejects when the TagArtifact promotion write throws, and the Pet write still stands", async () => {
+    const input = baseInput({activate: false});
+    const created = await createTagArtifact(input);
+    expect(created.ok).toBe(true);
+    if (!created.ok) throw new Error("unreachable");
+
+    await Pet.create({petId: "pet-1", name: "P", ownerClientIds: [], dogTag: {}, searchKey: "p"});
+
+    const originalUpdateOne = TagArtifact.updateOne.bind(TagArtifact);
+    // @ts-expect-error - deliberate fault injection, mirroring the grader's own PROBE E
+    TagArtifact.updateOne = () => Promise.reject(new Error("transient mongo failure"));
+    try {
+      await expect(
+        linkPetDogTag("pet-1", {
+          dogTagIdDec: DOG_TAG_ID_DEC,
+          dogTagIdField: DOG_TAG_ID_FIELD,
+          root: input.root,
+          cloneAddress: ISSUER_CLONE,
+        }),
+      ).resolves.toBeUndefined();
+    } finally {
+      TagArtifact.updateOne = originalUpdateOne;
+    }
+
+    // The confirmed-anchor Pet write stands even though the artifact promotion failed.
+    const pet = await Pet.findOne({petId: "pet-1"}).lean();
+    expect(pet?.dogTag?.root?.toLowerCase()).toBe(input.root.toLowerCase());
+    expect(pet?.dogTag?.status).toBe("active");
   });
 });
 
