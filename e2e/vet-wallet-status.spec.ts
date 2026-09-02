@@ -2,6 +2,12 @@ import {MongoClient} from "mongodb";
 import {expect, test, type Page} from "@playwright/test";
 import {E2E_MONGO_URI} from "./mongo-fixture";
 import {getLastSentTxHash, setRpcReceipt, setRpcScenario} from "./rpcStub";
+// Relative, not the "@/..." alias - no existing e2e file imports from src/, and this repo's own
+// rpcStub.ts already proves a relative import reaching OUTSIDE e2e/ (its own vendored ABI JSON
+// under ../protocol/) resolves fine under Playwright's loader; a bare "@/lib/format" alias would
+// be untested territory for no benefit. `truncateMiddle` itself is a pure two-line function (its
+// own file's only other import is `import type` - erased at compile time, nothing to resolve).
+import {truncateMiddle} from "../src/lib/format";
 
 /**
  * WP4.7C item 4 - the end-to-end proof of items 2+3's whole point (K2, Kenneth's verbatim ask): a
@@ -25,6 +31,10 @@ import {getLastSentTxHash, setRpcReceipt, setRpcScenario} from "./rpcStub";
 
 const VET_EMAIL = "vet-wp47c@example.com";
 const CLONE_ADDRESS = "0x00000000000000000000000000000000000000ce";
+// WP4.7C GRADE ROUND 1 D1 - a second address, distinct from both this file's vetWallet and
+// practitioner-mode.spec.ts's own identifiers, used below to prove the mismatch half of the
+// banner renders independently of the status-issue half.
+const OTHER_WALLET = "0x00000000000000000000000000000000000000aa";
 
 const SHOTS_DIR =
   "/private/tmp/claude-501/-Users-zhenhaowu-code-dogtag/85e989bd-eec1-4250-ab09-83fb3244d856/scratchpad/wp47c-shots";
@@ -56,6 +66,17 @@ function myWalletCard(page: Page) {
  * are unrelated conditions that can legitimately both be visible on /tags/issue at once. */
 function walletStatusBanner(page: Page) {
   return page.getByRole("status").filter({hasText: "Check your issuance access"});
+}
+
+/** WP4.7C GRADE ROUND 1 D1 - escapes regex metacharacters so a literal string (specifically
+ * `truncateMiddle`'s own "..." middle separator) can be embedded in a `RegExp` without being
+ * interpreted as a wildcard. Needed because wagmi's mock connector returns a CHECKSUMMED address
+ * (`useAccount().address`) while the recorded one round-trips through Mongo lowercased
+ * (`lowercaseHexAddress`, selfWalletRoute) - `toContainText`'s plain-string form is case-sensitive
+ * and would fail against the render even though the render is correct, so every address assertion
+ * below builds a case-insensitive `RegExp` from this instead. */
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 test.describe.serial("WP4.7C - vet self-service wallet + whitelist status", () => {
@@ -199,5 +220,80 @@ test.describe.serial("WP4.7C - vet self-service wallet + whitelist status", () =
 
     await page.goto("/tags");
     await expect(walletStatusBanner(page)).toHaveCount(0);
+  });
+
+  /**
+   * WP4.7C GRADE ROUND 1 D1 (fix) - `VetWalletStatusBanner` has two independent halves
+   * (`decideVetWalletBanner`, staffRoleTone.ts): `showStatusIssue` (a missing/not-whitelisted/
+   * unreadable recorded address) and `showMismatch` (the CONNECTED wallet differs from the
+   * RECORDED one - true even when the recorded one is whitelisted). Tests 1+2 above only ever
+   * exercise `showStatusIssue`; the grader proved the entire `showMismatch` JSX block could be
+   * deleted from `VetWalletStatusBanner.tsx` and both tests would still pass. This test renders
+   * the two things tests 1+2 never do: the mismatch paragraph (isolated from `showStatusIssue` by
+   * whitelisting the NEW recorded address too, so only the mismatch fact has anything to render),
+   * and the /tags no-address banner (test 1 only ever checks that copy on the settings CARD,
+   * before ever navigating to /tags with no address saved).
+   *
+   * Depends on test 2 having left the vet whitelisted with recorded == connected (the clean
+   * baseline asserted first, below) - same `describe.serial` dependency test 2 itself has on
+   * test 1.
+   *
+   * GOTCHA: wagmi's mock connector (`NEXT_PUBLIC_E2E_MOCK_WALLET_ADDRESS`, playwright.config.ts)
+   * returns a CHECKSUMMED address; the recorded one round-trips through Mongo lowercased. Every
+   * address assertion below is a case-insensitive `RegExp` (via `escapeRegExp`), never a plain
+   * string.
+   */
+  test("connected wallet different from a whitelisted recorded address renders the mismatch half; clearing the recorded address renders the /tags no-address half", async ({page}) => {
+    await devLogin(page, VET_EMAIL);
+
+    // Clean baseline left by test 2: recorded == connected (case-insensitively) and whitelisted,
+    // so neither half has anything to show.
+    await page.goto("/tags");
+    await expect(walletStatusBanner(page)).toHaveCount(0);
+
+    // Whitelist a SECOND address before it is ever recorded, so once it IS recorded,
+    // `showStatusIssue` stays false and only the independent `showMismatch` fact has anything to
+    // say - isolating the mismatch branch from the status-issue branch.
+    await setRpcScenario("operators", CLONE_ADDRESS, [OTHER_WALLET], true);
+
+    await page.goto("/settings");
+    const card = myWalletCard(page);
+    const addressInput = card.locator("#my-wallet-address");
+    // The input's current value is the server's recorded address, which by now equals the
+    // connected mock wallet case-insensitively (test 2's own close) - captured here rather than
+    // re-derived from Mongo, since it is exactly the string the mismatch paragraph renders as
+    // "your connected wallet".
+    const connectedWallet = await addressInput.inputValue();
+    expect(connectedWallet).toMatch(/^0x[0-9a-fA-F]{40}$/);
+
+    await addressInput.fill(OTHER_WALLET);
+    await Promise.all([
+      page.waitForResponse((res) => res.url().includes("/api/settings/staff/me/wallet") && res.request().method() === "PATCH"),
+      card.getByRole("button", {name: "Save"}).click(),
+    ]);
+    // The now-recorded address is whitelisted too (see setRpcScenario above) - proves the
+    // isolation BEFORE checking the banner: showStatusIssue is false here, so anything the banner
+    // shows next can only be the independent mismatch fact.
+    await expect(card.getByText("Whitelisted", {exact: true})).toBeVisible({timeout: 15_000});
+
+    await page.goto("/tags");
+    const mismatchBanner = walletStatusBanner(page);
+    await expect(mismatchBanner).toBeVisible();
+    await expect(mismatchBanner).toContainText(/issuing uses whichever wallet is actually connected, not the recorded one/i);
+    await expect(mismatchBanner).toContainText(new RegExp(escapeRegExp(truncateMiddle(connectedWallet)), "i"));
+    await expect(mismatchBanner).toContainText(new RegExp(escapeRegExp(truncateMiddle(OTHER_WALLET)), "i"));
+    await expect(mismatchBanner).not.toContainText(/not whitelisted on the clinic clone/i);
+
+    // The /tags no-address half - test 1 only ever checks this copy on the settings CARD, before
+    // ever navigating to /tags with no address saved.
+    await page.goto("/settings");
+    await Promise.all([
+      page.waitForResponse((res) => res.url().includes("/api/settings/staff/me/wallet") && res.request().method() === "PATCH"),
+      card.getByRole("button", {name: "Clear"}).click(),
+    ]);
+    await expect(card.getByText("No address on file", {exact: true})).toBeVisible({timeout: 15_000});
+
+    await page.goto("/tags");
+    await expect(walletStatusBanner(page)).toContainText(/No wallet address is on file for you yet/i);
   });
 });
