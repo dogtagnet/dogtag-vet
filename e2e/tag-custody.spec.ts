@@ -145,7 +145,7 @@ test.describe("export ceremony (plan 2.2)", () => {
     // UI walkthrough - forces the cold client build of PetTagCard's new composition.
     await page.goto(`/pets/${petId}`);
     await page.getByRole("button", {name: "Share tag data to owner's phone"}).click();
-    await expect(page.getByText("Scan with the owner's DogTag app")).toBeVisible();
+    await expect(page.getByText("Scan with the owner's DogTag app")).toBeVisible({timeout: 15_000}); // POST + client QR render can outrun the 5s default under load
     const link = page.getByTestId("export-tag-data-link");
     const qrUrl = await link.textContent();
     expect(qrUrl).toContain("/e/");
@@ -321,6 +321,6 @@ test.describe("import ceremony (plan 2.3)", () => {
     // TagsTable's own "Share tag data" row action, the sibling mount point on this same page -
     // scoped to THIS pet's row, since the shared test database may carry other tagged pets by now.
     await row.getByRole("button", {name: "Share tag data"}).click();
-    await expect(page.getByText("Scan with the owner's DogTag app")).toBeVisible();
+    await expect(page.getByText("Scan with the owner's DogTag app")).toBeVisible({timeout: 15_000}); // POST + client QR render can outrun the 5s default under load
   });
 });

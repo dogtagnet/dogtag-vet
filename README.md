@@ -48,6 +48,33 @@ See `docs/DEPLOY.md` for the full quickstart, the Kubernetes path (`helm/dogtag-
 It holds the contract ABIs, the wire-authoritative OpenAPI spec (`protocol/specs/vet-public-api.yaml`), the QR and issuer-attestation format specs, and the `@dogtag/standard` crypto library, wired in as a pnpm workspace package.
 Re-vendor by re-copying that directory from the protocol repo; nothing in this app should ever need to change what lives inside it.
 
+## Tag data custody
+
+Every DogTag profile tree this clinic ever custodies - one it issued itself, or one it received from another clinic (a mobile booking's tag claim, or the dedicated export/import ceremony below) - is stored as a `TagArtifact` (`src/lib/models/TagArtifact.ts`).
+Each row holds the full set of opened profile-tree leaves, the three reserved owner-control leaf hashes, the on-chain root they fold to, which protocol version they were verified under, and where this row came from (`source: "issued_here" | "imported"`).
+
+**Verify-at-write, never verify-at-read.**
+`src/lib/tags/artifact.ts`'s `createTagArtifact` is the ONE write path onto this collection.
+Every caller - the custodial-bind terminal write, the WP4.4 mobile-booking tier-4 import, and the WP4.9 export/import ceremonies below - goes through it, and it runs `verifyLeafCommitment` against the claimed root before ever inserting a row.
+A `TagArtifact` existing at all is therefore itself the proof its leaves recompute its root; nothing downstream (the export ceremony, the pet page) re-verifies on read.
+
+**Version dispatch.**
+`protocolVersion` is looked up in a small table (`PROTOCOL_VERIFIERS` in `artifact.ts`) that maps a version string to the recompute function to use for it - today exactly one entry (`dogtag-v2/1` -> `verifyLeafCommitment`), since the leaf-commitment crypto itself is frozen (`dogtag-protocol/specs/leaf-commitment.md` section 12).
+An artifact whose `protocolVersion` is not in that table is refused outright, never silently accepted - a future protocol version needs a new table entry before this app will ever store one under it.
+
+**Export ceremony** (`plans/wp4.9-tag-data-custody.md` section 2.2) lets staff hand a pet's already-custodied data to its owner's phone without a chain write.
+`POST /api/pets/:id/export-tag-data` creates a one-time, 10-minute session for the pet's currently-active artifact; the owner's app scans the resulting QR and calls `GET /e/:token`, which atomically consumes the token and returns the full leaf set in one step - there is no separate resolve/complete split, since the phone only ever reads.
+A second fetch of the same token, or a fetch after the tag was revoked or replaced, is refused (`410`).
+
+**Import ceremony** (section 2.3) is the reverse: a pet's data arrives from elsewhere.
+Staff picks a target (an existing pet, or "create new from verified data") and generates a QR (`POST /api/tags/import-sessions`); the owner's app resolves it (`GET /i/:token`) and posts its tag's `dogTagIdDec`/`dogTagIdField` plus its full leaves back (`POST /i/:token/complete`).
+That completion re-runs the exact same chain-verification gates the WP4.4 booking import uses (`src/lib/tags/verifier.ts`) - dec/field consistency, a LIVE `profileRoot` read (never a client-supplied root, which is what makes a reinstated-after-revocation or replaced-root tag "just work" on a fresh scan), issuer validity, and `verifyLeafCommitment` - before attaching anything.
+A previously-empty field on the target pet is filled from the verified data; a field that already had a different value is kept exactly as the clinic had it and surfaced instead on the pet page as a conflict, timestamped to when the import happened.
+Both ceremonies' tokens are one-shot, burned on every outcome (success or refusal) - there is no retry endpoint for either, the same "generate a fresh one" convention this app's other ceremonies (mint, wallet registration) already use.
+
+**Existing-deployment backfill.**
+A clinic that adopted this schema after already having issued or imported tags needs a one-time pass to give its historical pets a `TagArtifact` row - see `docs/DEPLOY.md`'s "TagArtifact backfill" section for the runbook, which is deliberately never automated.
+
 ## Design decisions
 
 ### Invoice PDF library: pdfkit
