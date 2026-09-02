@@ -64,25 +64,40 @@ export interface ExportFlowStore {
 /** The crypto-bearing subset of a `RedactedTagArtifact` this module ever produces - shared by the
  * ceremony's response (`ExportResult.data`, plus display context) and the staff-only preview/
  * download route (`buildRedactedExportPayload`'s own doc comment), so both surfaces always agree
- * byte-for-byte on what a given (artifact, mask) pair actually exports. */
+ * byte-for-byte on what a given (artifact, mask) pair actually exports.
+ *
+ * CORRECTION (orchestrator ruling, P2 finding): this file originally renamed `leaves` to
+ * `disclosed` outright, on the claim that "no shipped consumer parses the old name". That claim
+ * was FALSE - WP4.9M (dogtag-ios) ships `ArtifactExportResponse.leaves: [OpenedLeaf]` as a
+ * NON-OPTIONAL Codable field (`DogTag/Net/VetAPIModels.swift`) that the real receive/device-
+ * recovery screen (`ArtifactReceiveEngine`) already decodes against the live vet server today - a
+ * bare rename would have broken that decode entirely (Codable throws on a missing required key)
+ * until WP4.10M (the not-yet-built masked-aware phone client) ships. Fixed to an ADDITIVE
+ * transition instead: both `leaves` and `disclosed` are served with IDENTICAL content (computed
+ * once, never two independently-maintained copies), `leaves` documented as the deprecated alias in
+ * the synced spec, to be dropped once WP4.10M lands and every consumer reads `disclosed`. */
 export interface RedactedExportData {
   protocolVersion: string;
   schemaId?: string;
   dogTagIdDec?: string;
   dogTagIdField: string;
   root: string;
-  /** The UNMASKED openings only - plan section 2's `disclosed` field, the same name the registry
-   * schema and `@dogtag/standard`'s `RedactedTagArtifact` type both use. Renamed from this route's
-   * pre-WP4.10V `leaves` field: no shipped consumer parses the old name (the phone-side scan
-   * screen for this ceremony has never been built - MANUAL-E2E.md Part 8's own text), and keeping
-   * two different names for "the disclosed subset" between this wire response and the registry/TS
-   * format it now IS would leave a masked export this route itself produced unable to pass the
-   * very `dogtag.redacted-tag-artifact.v1.schema.json` shape this same wave registers. */
+  /** DEPRECATED alias of `disclosed` (identical content) - kept only because WP4.9M's shipped
+   * `ArtifactReceiveEngine` decodes this exact key as non-optional. Never diverges from
+   * `disclosed`: both are populated from the same array in `buildRedactedExportPayload`, not two
+   * separately-maintained values. Remove once WP4.10M (the masked-aware phone client) ships and
+   * every consumer reads `disclosed` instead. */
+  leaves: {keyPath: string; saltHex: string; tag: TypeTag; value: string}[];
+  /** The UNMASKED openings - plan section 2's `disclosed` field, the same name the registry schema
+   * and `@dogtag/standard`'s `RedactedTagArtifact` type both use; the CANONICAL field going
+   * forward (`leaves` above is the deprecated alias, not the other way around). */
   disclosed: {keyPath: string; saltHex: string; tag: TypeTag; value: string}[];
   /** Every leaf hash this response withholds the opening for - the union of whatever the artifact
    * ITSELF already carried as opaque (partial custody, item 6) and whatever staff additionally
    * masked for THIS export. `[]` for an ordinary, fully-disclosed export - the exact pre-WP4.10V
-   * behavior, still fully supported. */
+   * behavior, still fully supported (and still exactly what WP4.9M's own `leaves`-only decode
+   * receives when nothing is masked - this field is simply new information that client does not
+   * yet read). */
   obfuscatedLeafHashes: string[];
   reservedLeafHashes: string[];
   issuerClone: string;
@@ -207,6 +222,11 @@ export function buildRedactedExportPayload(
       dogTagIdDec: artifact.dogTagIdDec,
       dogTagIdField: artifact.dogTagIdField,
       root: artifact.root,
+      // `leaves` is the DEPRECATED alias WP4.9M's shipped ArtifactReceiveEngine still requires
+      // (non-optional Codable field) - identical content to `disclosed`, computed from the same
+      // array, never a second independently-maintained value. See RedactedExportData's own doc
+      // comment for the full correction history.
+      leaves: disclosed,
       disclosed,
       obfuscatedLeafHashes,
       reservedLeafHashes: artifact.reservedLeafHashes,

@@ -1118,7 +1118,7 @@ components:
 
     ArtifactExportResponse:
       type: object
-      required: [protocolVersion, dogTagIdField, root, disclosed, obfuscatedLeafHashes, reservedLeafHashes, issuerClone, chainId, petName, clinicName]
+      required: [protocolVersion, dogTagIdField, root, leaves, disclosed, obfuscatedLeafHashes, reservedLeafHashes, issuerClone, chainId, petName, clinicName]
       description: |-
         The pet's currently-active `TagArtifact`, as a `RedactedTagArtifact` (WP4.10V,
         plans/wp4.10-masked-export.md section 2 - the crypto-bearing fields `protocolVersion`
@@ -1130,9 +1130,14 @@ components:
         the owner's app SHOULD independently re-verify this on device rather than trusting the
         transport regardless. An export with no mask picked - the pre-WP4.10V default, and still
         the common case - is this format's degenerate case: `obfuscatedLeafHashes` empty,
-        `disclosed` holding every attribute leaf, byte-identical to what this endpoint always
-        returned before this field existed (renamed from `leaves`, which had no live consumer -
-        the phone-side scan screen for this ceremony has never been built).
+        `disclosed`/`leaves` both holding every attribute leaf, byte-identical to what this
+        endpoint always returned before `obfuscatedLeafHashes` existed.
+
+        TRANSITION (`leaves` is a DEPRECATED ALIAS of `disclosed`, identical content, both always
+        present): WP4.9M's shipped phone client (`ArtifactReceiveEngine`) decodes `leaves` as a
+        non-optional field today and has no `disclosed`/`obfuscatedLeafHashes` concept yet. Once
+        WP4.10M (the masked-aware phone client) ships and every consumer reads `disclosed`, drop
+        `leaves` from this schema and this response.
       properties:
         protocolVersion:
           type: string
@@ -1147,9 +1152,14 @@ components:
           type: string
           description: The canonical on-chain dogTagId as a decimal uint256 string - `dogTagIdField(dogTagIdDec)` from `packages/dogtag-standard-ts`.
         root: {$ref: '#/components/schemas/Hex32'}
+        leaves:
+          type: array
+          deprecated: true
+          description: DEPRECATED - identical content to `disclosed` below, kept only for WP4.9M's shipped phone client, which decodes this exact key as required. New consumers should read `disclosed` instead; this field is removed once WP4.10M ships.
+          items: {$ref: '#/components/schemas/OpenedLeaf'}
         disclosed:
           type: array
-          description: Fully opened (unmasked) attribute leaves - every leaf this clinic holds an opening for AND staff did not choose to mask for this export.
+          description: Fully opened (unmasked) attribute leaves - every leaf this clinic holds an opening for AND staff did not choose to mask for this export. The canonical field going forward - see `leaves` above.
           items: {$ref: '#/components/schemas/OpenedLeaf'}
         obfuscatedLeafHashes:
           type: array
@@ -1193,8 +1203,18 @@ components:
 
     ArtifactImportCompleteRequest:
       type: object
-      required: [leaves, reservedLeafHashes]
-      description: At least one of `dogTagIdDec`/`dogTagIdField` is required; if both are present they must agree (`dogTagIdField(dogTagIdDec)`).
+      required: [reservedLeafHashes]
+      description: |-
+        At least one of `dogTagIdDec`/`dogTagIdField` is required; if both are present they must
+        agree (`dogTagIdField(dogTagIdDec)`). At least one of `leaves`/`disclosed` is required
+        (both describe the SAME thing - the disclosed openings - under two names); if both are
+        sent, their content must agree exactly, or the request is rejected.
+
+        TRANSITION (WP4.10V item 6, orchestrator ruling): `leaves` is what WP4.9M's shipped
+        `ArtifactShareEngine` sends today (no `obfuscatedLeafHashes` concept); `disclosed` is the
+        canonical `RedactedTagArtifact` field name (plans/wp4.10-masked-export.md section 2)
+        WP4.10M (the masked-aware phone client) will send once it ships. `obfuscatedLeafHashes` is
+        new and OPTIONAL - present only when the artifact being shared is itself a masked share.
       properties:
         dogTagIdDec:
           type: string
@@ -1204,13 +1224,28 @@ components:
           pattern: "^[0-9]+$"
         leaves:
           type: array
+          deprecated: true
           maxItems: 61
+          description: DEPRECATED alias of `disclosed` - see this schema's own description.
           items: {$ref: '#/components/schemas/OpenedLeaf'}
+        disclosed:
+          type: array
+          maxItems: 61
+          description: The canonical field going forward - see `leaves` above.
+          items: {$ref: '#/components/schemas/OpenedLeaf'}
+        obfuscatedLeafHashes:
+          type: array
+          maxItems: 61
+          description: Leaves named only by their opaque hash - present when the shared artifact is itself a masked share (WP4.10V item 6). The combined total of reservedLeafHashes + leaves/disclosed + this array must not exceed 64.
+          items: {$ref: '#/components/schemas/Hex32'}
         reservedLeafHashes:
           type: array
           minItems: 3
           maxItems: 3
           items: {$ref: '#/components/schemas/Hex32'}
+        schemaId:
+          type: string
+          description: The sender's own schemaId, when their export included one (WP4.10V item 2/3).
 
     ArtifactImportCompleteResponse:
       type: object

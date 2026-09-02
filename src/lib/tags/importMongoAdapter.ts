@@ -135,14 +135,23 @@ export const mongoImportStore: ImportFlowStore = {
     // No vet-attested identity record to check an imported claim against - the owner.identity.*
     // subset is checked against ITSELF, the same self-check lib/tags/verifier.ts's
     // verifyTagDataAgainstRoot already performed moments earlier with these same leaves (every
-    // gate has already passed by the time completeImport calls this).
+    // gate has already passed by the time completeImport calls this). Note: this self-check is
+    // over `input.leaves` (the DISCLOSED subset) only - an owner.identity.* leaf the sender masked
+    // is, correctly, never part of this self-check either, since it was never disclosed to check.
+    //
+    // WP4.10V item 6: obfuscatedLeafHashes threaded straight through - present (non-empty) only
+    // when the artifact being imported is itself REDACTED, producing honest PARTIAL custody for
+    // this clinic (TagArtifactDoc.leaves holds only what it actually received an opening for).
+    // schemaId threaded through too, when the sender's own export included one - never invented.
     const result = await createTagArtifact({
       petId: input.petId,
       dogTagIdDec: input.dogTagIdDec,
       dogTagIdField: input.dogTagIdField,
       root: input.root,
       protocolVersion: "dogtag-v2/1",
+      schemaId: input.schemaId,
       leaves: input.leaves,
+      obfuscatedLeafHashes: input.obfuscatedLeafHashes,
       reservedLeafHashes: input.reservedLeafHashes,
       expectedIdentityLeaves: identityLeafSelfCheckSubset(input.leaves),
       source: "imported",

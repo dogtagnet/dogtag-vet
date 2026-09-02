@@ -101,11 +101,11 @@ export interface ImportFlowStore {
   /** No conditional write needed - a brand new document has no prior state to race against. */
   createPetFromImport(attributes: ExistingPetAttributes, tag: AttachTagFields, now: number): Promise<{petId: string; petName: string}>;
   /** Wraps the shared `createTagArtifact` (`lib/tags/artifact.ts`) - throws on refusal (never
-   * expected here: the leaves already passed the shared verifier's `verifyLeafCommitment` moments
-   * earlier) or on the root-belongs-to-a-different-pet invariant violation (a genuine, rare race -
-   * two concurrent imports of the identical physical tag onto two different target pets - left
-   * unhandled here the same way `lib/tags/artifact.ts`'s own doc comment already accepts for its
-   * supersede-then-create crash window: a real but vanishingly rare operational scenario this
+   * expected here: the leaves already passed the shared verifier's `verifyRedactedArtifact`
+   * moments earlier) or on the root-belongs-to-a-different-pet invariant violation (a genuine, rare
+   * race - two concurrent imports of the identical physical tag onto two different target pets -
+   * left unhandled here the same way `lib/tags/artifact.ts`'s own doc comment already accepts for
+   * its supersede-then-create crash window: a real but vanishingly rare operational scenario this
    * codebase already has an equivalent accepted risk class for, not a new one introduced here). */
   createImportedArtifact(input: {
     petId: string;
@@ -114,7 +114,15 @@ export interface ImportFlowStore {
     root: string;
     issuerClone: string;
     leaves: OpenedLeaf[];
+    /** WP4.10V item 6 - present (non-empty) only when the shared artifact being imported is
+     * itself REDACTED (a masked share) - this clinic then stores honest PARTIAL custody: `leaves`
+     * holds only what it actually received an opening for, this holds the rest as opaque hashes. */
+    obfuscatedLeafHashes?: string[];
     reservedLeafHashes: string[];
+    /** WP4.10V item 6 - threaded straight from the wire when the sender's export included one
+     * (every artifact this app itself has ever exported does, since WP4.10V item 2/3) - never
+     * invented when absent (an honest "unknown" beats a guessed schemaId). */
+    schemaId?: string;
     now: number;
   }): Promise<void>;
 }
@@ -146,7 +154,12 @@ export interface CompleteImportInput {
   dogTagIdDec?: string;
   dogTagIdField?: string;
   leaves: OpenedLeaf[];
+  /** WP4.10V item 6 - present when the owner's share was itself a REDACTED (masked) artifact.
+   * Absent/empty is the pre-WP4.10V shape: an ordinary, fully-disclosed import. */
+  obfuscatedLeafHashes?: string[];
   reservedLeafHashes: string[];
+  /** WP4.10V item 6 - the sender's own `schemaId`, when their export included one. */
+  schemaId?: string;
 }
 
 export type CompleteImportResult =
@@ -208,11 +221,13 @@ export function mergeVerifiedAttributes(
  *    comment. Still before consuming, since this is "already known to be doomed" in the same sense
  *    the token-state pre-check is.
  * 3. Atomically consume.
- * 4. The shared verifier (`lib/tags/verifier.ts`, plan 2.3/item 4) - dec/field consistency,
- *    `profileRoot`, `rootIssuer`, then `isValid`/`verifyLeafCommitment`. `root` is NEVER
- *    client-supplied - always the live on-chain read for `dogTagIdField`, which is exactly what
- *    makes "a replaced root imports as its current self" and "reinstated-later succeeds on a fresh
- *    scan" true for free: this always checks the CURRENT chain state, never a cached one.
+ * 4. The shared verifier (`lib/tags/verifier.ts`, plan 2.3/item 4, generalized by WP4.10V item 6) -
+ *    dec/field consistency, `profileRoot`, `rootIssuer`, then `isValid`/`verifyRedactedArtifact`
+ *    (accepting `obfuscatedLeafHashes` when the sender's own share was itself redacted - a claim
+ *    with none verifies identically to the pre-WP4.10V shape). `root` is NEVER client-supplied -
+ *    always the live on-chain read for `dogTagIdField`, which is exactly what makes "a replaced
+ *    root imports as its current self" and "reinstated-later succeeds on a fresh scan" true for
+ *    free: this always checks the CURRENT chain state, never a cached one.
  * 5. For an existing-pet target: the ATOMIC conditional attach (`attachToExistingPet`) is the
  *    REAL enforcement of "no active tag already" - attach the pet BEFORE calling
  *    `createTagArtifact` below, so a lost race here never supersedes a live artifact for an import
@@ -250,6 +265,7 @@ export async function completeImport(
     root: resolved.root,
     dogTagIdField: resolved.dogTagIdField,
     leaves: input.leaves,
+    obfuscatedLeafHashes: input.obfuscatedLeafHashes,
     reservedLeafHashes: input.reservedLeafHashes,
   });
   if (!dataResult.ok) return {ok: false, code: "chain_unreadable"};
@@ -294,7 +310,9 @@ export async function completeImport(
     root: resolved.root,
     issuerClone: resolved.issuerClone,
     leaves: input.leaves,
+    obfuscatedLeafHashes: input.obfuscatedLeafHashes,
     reservedLeafHashes: input.reservedLeafHashes,
+    schemaId: input.schemaId,
     now,
   });
 

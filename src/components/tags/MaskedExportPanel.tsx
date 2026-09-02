@@ -18,6 +18,10 @@ interface ExportableFieldWire {
 interface FieldsResponse {
   fields: ExportableFieldWire[];
   reservedCount: number;
+  /** WP4.10V item 6 - leaves this artifact ITSELF already only holds a hash for (partial custody
+   * from an earlier masked import). Never offered as a pickable field - there is no opening to
+   * mask in the first place. */
+  alreadyMaskedCount: number;
 }
 
 interface ExportSessionResponse {
@@ -187,6 +191,13 @@ export function MaskedExportPanel({petId, onClose}: {petId: string; onClose: () 
             {fields.reservedCount} reserved owner-control value{fields.reservedCount === 1 ? "" : "s"} - always hidden, never shared, and
             never a choice: these stay opaque hashes in every export, masked or not.
           </p>
+          {fields.alreadyMaskedCount > 0 && (
+            <p className="text-caption text-ink-faint">
+              {fields.alreadyMaskedCount} field{fields.alreadyMaskedCount === 1 ? "" : "s"} already masked by the owner - not listed above
+              because this clinic never received {fields.alreadyMaskedCount === 1 ? "its" : "their"} data, only a hash. There is nothing
+              to unmask.
+            </p>
+          )}
 
           <div>
             <h4 className="mb-2 text-section-title text-ink">Live preview</h4>

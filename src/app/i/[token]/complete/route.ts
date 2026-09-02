@@ -73,7 +73,9 @@ export async function POST(request: Request, {params}: {params: Promise<{token: 
       dogTagIdDec: parsed.data.dogTagIdDec,
       dogTagIdField: parsed.data.dogTagIdField,
       leaves: parsed.data.leaves,
+      obfuscatedLeafHashes: parsed.data.obfuscatedLeafHashes,
       reservedLeafHashes: parsed.data.reservedLeafHashes,
+      schemaId: parsed.data.schemaId,
     },
     now,
   );

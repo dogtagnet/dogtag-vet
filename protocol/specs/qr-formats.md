@@ -5,12 +5,12 @@ Every payload is a plain URL or URI a general-purpose camera app already knows h
 
 ## The token grammar
 
-This section covers the mint and verify session tokens only.
+This section covers the mint, verify, tag-export, and tag-import session tokens.
 The receipt token has its own, deliberately different grammar; see "Receipt URL" below.
 
-Every mint or verify session token in this ecosystem is 32 lowercase hexadecimal characters: `^[0-9a-f]{32}$`.
+Every mint, verify, tag-export, or tag-import session token in this ecosystem is 32 lowercase hexadecimal characters: `^[0-9a-f]{32}$`.
 That is 128 bits of entropy, base16-encoded, always lowercase on the wire.
-A parser MUST reject a mint or verify token that is the wrong length, contains uppercase hex digits, or contains any character outside `[0-9a-f]`, rather than attempting to normalize it.
+A parser MUST reject a mint, verify, tag-export, or tag-import token that is the wrong length, contains uppercase hex digits, or contains any character outside `[0-9a-f]`, rather than attempting to normalize it.
 This grammar is v1-compatible: a v1 QR and a v2 QR use the same token shape, so a mixed fleet of old and new vet deployments during a migration window still produces scannable codes.
 
 ## Mint QR
@@ -48,6 +48,69 @@ https://<vet>/x/<32hex>?a=<relayer>
 1. The scheme MUST be `https`.
 2. The path MUST match `^/x/[0-9a-f]{32}$`.
 3. The query string MUST contain exactly one `a` parameter, matching `^0x[0-9a-fA-F]{40}$`; a scanner that finds additional unknown query parameters ignores them rather than rejecting the code (forward compatibility for a future optional hint), but MUST NOT ignore a missing or malformed `a`.
+
+## Export QR (device recovery)
+
+```
+https://<vet>/e/<32hex>
+```
+
+- `<vet>` and `<32hex>` as above (same token grammar as mint and verify).
+- Resolves via `GET /e/{token}` in `specs/vet-public-api.yaml`.
+- Printed or displayed by vet staff to hand a pet's currently-active tag data back to its owner's phone.
+  This is device recovery: a new phone, or a phone that lost its locally-stored owner secret, re-acquires the pet by scanning this at the clinic.
+- One-time, and consumed by the GET itself: unlike every other resolve route in this catalogue, a single `GET /e/{token}` both resolves AND atomically consumes the token, since the phone only ever reads here and there is no separate `/complete` step.
+  A concurrent or repeat scan of the same QR always loses the race.
+- Error states: `404` if the token is unknown or malformed; `410` if it was already used, naturally expired, the tag was revoked at the clinic, or the tag's root was superseded (replaced) since the session was created - `root` is fixed at the moment staff started the session, never re-read live, so a mid-session reissue surfaces as `superseded` rather than silently serving different data than what the vet saw on screen.
+  All three `410` reasons collapse to the same "get a new code from the clinic" copy on the phone, and there is no retry endpoint: the app MUST NOT attempt to re-resolve the same token after any refusal.
+- Fixed TTL: 600 seconds from creation, not extended by scanning or resolving, unlike the mint QR's TTL-extension-on-first-resolve.
+- Full disclosure by default: this ceremony discloses the pet's complete opened profile-tree leaf set (plus the 3 reserved owner-control leaf hashes) unless staff picked a mask when creating the session.
+  See "Masked export" below.
+- On a successful scan, the app shows a confirm screen (clinic name, pet name) before it does anything with the data.
+  Only after the owner confirms does it rebuild the profile tree, recompute `root` from the disclosed leaves, and cross-check that against the LIVE on-chain `profileRoot` for this pet's `dogTagIdField` before writing anything to local storage - the app trusts nothing it receives from this endpoint until that on-chain check passes.
+- The app calls `GET /e/{token}` against the exact host parsed from the QR, never a host it already has stored or discovered for a clinic of the same name ("scanned host only" - the same rule every vet-facing ceremony in this catalogue follows).
+
+### Masked export
+
+Staff may withhold a subset of attribute leaves before generating the export QR.
+When they do, the payload is a `RedactedTagArtifact` (`specs/leaf-commitment.md` section 15): every leaf staff left disclosed keeps its full opening, and every leaf staff masked is named only by its hash.
+An export with no mask chosen is this format's degenerate case: nothing withheld, every attribute leaf disclosed, the same shape this ceremony always served before masking existed.
+The QR shape, token grammar, one-time semantics, and TTL above are all unchanged by masking.
+The scanning app still recomputes and independently verifies (`verifyRedactedArtifact`) before trusting or storing anything, exactly as it would for a fully-disclosed export.
+
+TODO(WP4.10): `specs/vet-public-api.yaml` in this repo still documents `ArtifactExportResponse`'s pre-masking `leaves` field.
+Resync it once the masked-export endpoint schema lands here from the vendored copy.
+
+### Parsing rules
+
+1. The scheme MUST be `https`.
+2. The path MUST match `^/e/[0-9a-f]{32}$` exactly, with no trailing slash, query string, or fragment.
+
+## Import QR (share to vet)
+
+```
+https://<vet>/i/<32hex>
+```
+
+- `<vet>` and `<32hex>` as above (same token grammar as mint and verify).
+- Resolves via `GET /i/{token}` in `specs/vet-public-api.yaml`; submitted via `POST /i/{token}/complete`.
+- Printed or displayed by vet staff to pull a pet's tag data FROM the owner's phone.
+  Staff pick the target (an existing pet record, or "create new") before generating the code.
+- Non-consuming resolve, consuming complete: `GET /i/{token}` only returns a confirmation screen's worth of context (clinic name, and staff's chosen target) and can be safely retried, mirroring `GET /w/{token}`'s shape.
+  `POST /i/{token}/complete` is the action that consumes the token, on every outcome, success or refusal alike, mirroring `POST /w/{token}/complete`'s own "a burned token is simply dead" rule.
+- Error states: `GET /i/{token}` refuses with `404` (unknown or malformed) or `410` (already used or expired) before the owner ever sees the confirmation screen.
+  `POST /i/{token}/complete` additionally refuses with `400` (`malformed_claim`, `chain_unreadable`, or `root_unset` - no valid claim could be established at all) or `409` (`revoked`, `verify_failed`, or `already_has_active_tag` - a real claim was identified but its current state conflicts with completing the import), on top of the same `404`/`410` above.
+  There is no retry for any `POST` outcome; a fresh attempt needs a fresh QR from the clinic.
+- Fixed TTL: 600 seconds from creation, same as the export QR above, not extended by resolving.
+- On a successful scan, the app shows a confirmation screen naming the clinic and staff's chosen target, then lets the owner pick which of THEIR OWN local pets to send.
+  The vet-chosen target is display context only, never a restriction on which local pet's data the app will submit.
+  The owner re-authenticates (biometric) before the app rebuilds and submits that pet's data.
+- The app calls both `GET /i/{token}` and `POST /i/{token}/complete` against the exact host parsed from the QR ("scanned host only", as above) - never a different host, even across the two calls of the same ceremony.
+
+### Parsing rules
+
+1. The scheme MUST be `https`.
+2. The path MUST match `^/i/[0-9a-f]{32}$` exactly, with no trailing slash, query string, or fragment.
 
 ## Payment QR (EIP-681)
 

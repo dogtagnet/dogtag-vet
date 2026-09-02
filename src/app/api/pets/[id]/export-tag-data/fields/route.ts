@@ -21,6 +21,14 @@ import {notFound, requireStaffSession} from "@/lib/staffApi";
  * `reservedCount` is always 3 today (`TagArtifactDoc.reservedLeafHashes`'s own invariant) - surfaced
  * so the picker can render "N reserved owner-control values - always kept private" without the
  * client needing to know that number is a protocol constant.
+ *
+ * `alreadyMaskedCount` (WP4.10V item 6) - leaves this artifact ITSELF already only holds a hash
+ * for (partial custody from an earlier masked import). These can never appear in `fields` at all:
+ * there is no opening to list a keyPath/value/leafHash from, only the opaque hash already in
+ * `obfuscatedLeafHashes` - the picker can offer to mask what it holds, never to UNMASK what it
+ * never received. Surfaced as a count (never a keyPath - this clinic genuinely does not know
+ * which fields these were) so the picker can say so explicitly rather than the absence being
+ * silent.
  */
 export async function GET(_request: Request, {params}: {params: Promise<{id: string}>}) {
   const {response} = await requireStaffSession();
@@ -34,5 +42,6 @@ export async function GET(_request: Request, {params}: {params: Promise<{id: str
   return NextResponse.json({
     fields: listExportableFields(artifact.leaves),
     reservedCount: artifact.reservedLeafHashes.length,
+    alreadyMaskedCount: artifact.obfuscatedLeafHashes?.length ?? 0,
   });
 }

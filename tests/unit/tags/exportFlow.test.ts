@@ -122,6 +122,9 @@ describe("resolveAndConsumeExport (GET /e/:token)", () => {
         dogTagIdDec: "42",
         dogTagIdField: "999999",
         root: FIXTURE.root,
+        // `leaves` is the deprecated alias WP4.9M's shipped phone client still requires -
+        // identical content to `disclosed` (orchestrator ruling, P2 finding).
+        leaves: FIXTURE.leaves,
         disclosed: FIXTURE.leaves,
         obfuscatedLeafHashes: [],
         reservedLeafHashes: FIXTURE.reservedLeafHashes,
@@ -242,6 +245,23 @@ describe("resolveAndConsumeExport - masked export (WP4.10V item 3)", () => {
     if (!result.ok) throw new Error("unreachable");
     expect(result.data.disclosed).toEqual(FIXTURE.leaves);
     expect(result.data.obfuscatedLeafHashes).toEqual([]);
+  });
+
+  it("orchestrator ruling / P2 finding: a WP4.9M-shaped consumer that reads ONLY `leaves` (never `disclosed`) still gets the full unmasked artifact, unchanged", async () => {
+    // WP4.9M's shipped ArtifactReceiveEngine (dogtag-ios) decodes ArtifactExportResponse.leaves as
+    // a non-optional field and has no disclosed/obfuscatedLeafHashes concept at all - simulating
+    // exactly that reader here: touch ONLY `.leaves`, ignore every other field, and confirm it is
+    // both PRESENT and byte-identical to the full leaf set for an ordinary (no mask) export.
+    const session = newSessionFixture();
+    const {store} = makeStore(session);
+    const result = await resolveAndConsumeExport(store, session.token, NOW);
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("unreachable");
+    const leavesOnlyConsumerView = {leaves: result.data.leaves} as const;
+    expect(leavesOnlyConsumerView.leaves).toEqual(FIXTURE.leaves);
+    // And it is truly the SAME array content as the canonical field, not a coincidentally-equal
+    // second copy that could drift.
+    expect(result.data.leaves).toEqual(result.data.disclosed);
   });
 
   it("an INCONSISTENT partial-custody artifact (root does not account for its own inherited hash) is refused by the self-check, not silently served", async () => {

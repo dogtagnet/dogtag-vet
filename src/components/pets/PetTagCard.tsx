@@ -29,7 +29,20 @@ import type {DogTagInfo} from "@/lib/models/Pet";
  * today; `ChainActivity` was considered and rejected as the audit surface instead, since it
  * requires a real `txHash`/`logIndex` an off-chain import ceremony has neither of.
  */
-export function PetTagCard({petId, dogTag = {}, timeZone}: {petId: string; dogTag?: DogTagInfo; timeZone: string}) {
+export function PetTagCard({
+  petId,
+  dogTag = {},
+  timeZone,
+  maskedFieldCount = 0,
+}: {
+  petId: string;
+  dogTag?: DogTagInfo;
+  timeZone: string;
+  /** WP4.10V item 6 - the pet's ACTIVE `TagArtifact.obfuscatedLeafHashes.length`, when this record
+   * is (or arrived as) partial custody. Never a keyPath list - a masked leaf is only ever an
+   * opaque hash, so this clinic genuinely does not know WHICH fields these were, only how many. */
+  maskedFieldCount?: number;
+}) {
   const hasTag = Boolean(dogTag.dogTagIdDec);
 
   if (!hasTag) {
@@ -88,6 +101,15 @@ export function PetTagCard({petId, dogTag = {}, timeZone}: {petId: string; dogTa
               </li>
             ))}
           </ul>
+        </Banner>
+      )}
+      {maskedFieldCount > 0 && (
+        <Banner tone="info" title="Some fields are masked by the owner">
+          <p>
+            {maskedFieldCount} attribute{maskedFieldCount === 1 ? "" : "s"} on this tag {maskedFieldCount === 1 ? "was" : "were"} masked when
+            the owner shared it - this clinic holds the field&apos;s cryptographic hash only, never its value, and cannot disclose or
+            export what it does not have. The root still verifies exactly as if nothing were masked.
+          </p>
         </Banner>
       )}
       <dl className="grid grid-cols-1 gap-4 sm:grid-cols-2">
