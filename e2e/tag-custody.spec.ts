@@ -454,7 +454,11 @@ test.describe("import ceremony (plan 2.3)", () => {
     // navigation to it anywhere in this file - when this spec runs in isolation (its own
     // verification requirement), nothing has warmed this route yet. Same cold-compile reasoning as
     // f6c7f3a's identical hardening of the export QR panel's own visibility check just above.
-    await expect(row).toBeVisible({timeout: 15_000});
+    // WP4.16V-2: widened 15s -> 30s - the grader measured a 13.8s isolated pass here, leaving
+    // little headroom, and a load-induced failure at this exact line; 30s matches this suite's own
+    // generous cold-route precedent (20s elsewhere) with more margin, still comfortably inside the
+    // 60s per-test budget since this route's own compile is the only slow step in this test.
+    await expect(row).toBeVisible({timeout: 30_000});
 
     await page.getByRole("button", {name: "Import tag"}).click();
     await page.getByRole("button", {name: "Create new pet from verified data"}).click();
@@ -463,7 +467,10 @@ test.describe("import ceremony (plan 2.3)", () => {
     // TagsTable's own "Share tag data" row action, the sibling mount point on this same page -
     // scoped to THIS pet's row, since the shared test database may carry other tagged pets by now.
     await row.getByRole("button", {name: "Share tag data"}).click();
-    await expect(page.getByText("Scan with the owner's DogTag app")).toBeVisible({timeout: 15_000}); // POST + client QR render can outrun the 5s default under load
+    // WP4.16V-2: widened 15s -> 30s alongside the sibling wait above, same cold-route section and
+    // same reasoning - the POST + client QR render can outrun even a generous wait once /tags
+    // itself is also mid-compile.
+    await expect(page.getByText("Scan with the owner's DogTag app")).toBeVisible({timeout: 30_000}); // POST + client QR render can outrun the 5s default under load
   });
 });
 
