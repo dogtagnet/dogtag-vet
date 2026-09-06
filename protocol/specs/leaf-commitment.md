@@ -601,6 +601,18 @@ Where a `RedactedTagArtifact` binds via `profileRoot(dogTagIdField) == root` (se
 
 Every one of these five reads a NON-MASKABLE leaf's disclosed value, never a top-level envelope field (there is none to read - see "The wire format" above) - a verifier that has already passed the pure structural check knows all five values it needs are present and hash-consistent with `root` before making a single RPC call.
 
+### Reporting validity once binding succeeds
+
+`validFrom` and `validUntil` are ordinary MASKABLE clinical leaves (WP4.14, section on "The wire format" above), not part of the seven non-maskable keyPaths the on-chain binding rules above read. A record that passes every binding rule above may still disclose neither, either, or both of them - the binding rules alone say nothing about whether the record's own protection window currently covers "now". A verifier reports one of five values once the five binding checks above all agree and `isValid(root)` is true (a `false` `isValid` is `revoked`, unconditionally, regardless of either date leaf):
+
+- `valid` - both `validFrom` and `validUntil` are disclosed, and the verifier's own clock (UTC) falls within `[validFrom, end-of-validUntil]` inclusive (end-of-`validUntil` per the T24:00:00Z UTC cutoff this document already defines elsewhere for the tag side's own validity notion).
+- `expired` - `validUntil` is disclosed and the verifier's clock is past its UTC end-of-day, regardless of whether `validFrom` is also disclosed.
+- `not_yet_valid` - `validFrom` is disclosed and is still in the future relative to the verifier's clock. Distinct from `expired`, never collapsed into it - a record whose window has not opened yet is a different fact from one whose window has closed.
+- `hidden` - the presenting device withheld `validFrom` and/or `validUntil` (moved into `obfuscatedLeafHashes`, permitted since neither is non-maskable). A verifier that has not been shown a bound has no basis to compute `valid`, `expired`, or `not_yet_valid`, and reports that honestly rather than guessing - the failure mode this state exists to close is a verifier silently defaulting to `valid` for an artifact that discloses everything EXCEPT the one leaf that would prove it expired years ago.
+- Otherwise, `valid` - both bounds disclosed and the clock genuinely inside the window.
+
+This is a single decision procedure, not one per consumer: a vet's own Records tab (reading its own rows directly, not through a presented artifact) and the `/v` verify ceremony (reading a presented, possibly-masked artifact) both compute this the same way, over whatever `validFrom`/`validUntil` values are actually available to each - the vet's own record always has both, since neither can be withheld from its own issuer's database; only a PRESENTED artifact can genuinely lack one.
+
 ### The uncommitted block: never hashed
 
 A record is carried on the wire ALONGSIDE (never inside) its `RecordArtifact`, as a separate, UNCOMMITTED envelope block (WP4.14 plan sections 9-10, Kenneth round 3):

@@ -1263,8 +1263,17 @@ components:
           description: Present only when `stage` is `verified`. The record type as claimed by the artifact's own `recordType` leaf (e.g. `VACCINATION`) and cross-checked against the resolved clone's `recordTypeOf`.
         validity:
           type: string
-          enum: [valid, expired, revoked]
-          description: Present only when `stage` is `verified`. `revoked` here can only mean genuinely revoked, never "never issued" - `not_anchored/root_unset` already covers that case.
+          enum: [valid, expired, revoked, hidden, not_yet_valid]
+          description: |-
+            Present only when `stage` is `verified`. `revoked` here can only mean genuinely
+            revoked, never "never issued" - `not_anchored/root_unset` already covers that case.
+            `valid` requires BOTH bounds disclosed and the verifier's own clock inside
+            `[validFrom, end-of-validUntil UTC]`; `expired` requires `validUntil` disclosed and
+            the clock past its UTC end-of-day. `hidden` means the presenting device withheld
+            `validFrom` and/or `validUntil` - this deployment cannot compute a verdict for a
+            window it was not shown, so it says so rather than guessing `valid`. `not_yet_valid`
+            means `validFrom` WAS disclosed and is still in the future - a genuine record whose
+            protection window has not opened yet, never collapsed into `expired`.
         disclosedKeyPaths:
           type: array
           items: {type: string}
