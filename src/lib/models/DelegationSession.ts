@@ -80,6 +80,17 @@ export interface DelegationSessionDoc {
   /** The `addSecondaryOwner`/`revokeSecondaryOwner` transaction hash, once the operator wallet has
    * submitted it (`status` moves to `"submitting"` at the same time this is set). */
   txHash?: string;
+  /** Unix seconds, stamped when `status` first moves to `"submitting"` - what
+   * `src/lib/delegation/bootRecovery.ts` measures staleness from (mirrors `MintSession.issuingAt`'s
+   * own doc comment: "a seconds-old in-flight transaction from a process that is still very much
+   * alive must be left alone" - `createdAt` would be wrong here for the identical reason). */
+  submittingAt?: number;
+  /** `DelegationRegistry.secondaryCount`/`delegationRoot` read at the moment `status` moved to
+   * `"confirmed"` - audit trail only, never the decisive check (`src/lib/delegation/reconcile.ts`'s
+   * own doc comment: a concurrent, unrelated write on the same tag can move either value for
+   * reasons that have nothing to do with THIS session's own commitment). */
+  secondaryCountAtConfirm?: number;
+  delegationRootAtConfirm?: string;
   /** The public one-shot gate `GET /d/:token`/`POST /d/:token/complete` enforce (`kind: "add"`
    * only, in practice - see this file's own doc comment on why `kind: "revoke"` never exposes a
    * public route to consume in the first place). Set `true` immediately at creation for
@@ -112,6 +123,9 @@ const delegationSessionSchema = new Schema<DelegationSessionDoc>(
     status: {type: String, enum: ["pending", "claimed", "submitting", "confirmed", "error"], required: true},
     errorReason: String,
     txHash: String,
+    submittingAt: Number,
+    secondaryCountAtConfirm: Number,
+    delegationRootAtConfirm: String,
     consumed: {type: Boolean, required: true, default: false},
     consumedAt: Number,
   },

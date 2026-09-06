@@ -23,6 +23,8 @@ export function toDelegationSessionRow(doc: DelegationSessionDoc): DelegationSes
     status: doc.status,
     errorReason: doc.errorReason,
     txHash: doc.txHash,
+    secondaryCountAtConfirm: doc.secondaryCountAtConfirm,
+    delegationRootAtConfirm: doc.delegationRootAtConfirm,
     consumed: doc.consumed,
     consumedAt: doc.consumedAt,
   };

@@ -118,6 +118,11 @@ const envSchema = z.object({
   // itself calls this recovery step "stale" - a seconds-old in-flight `issueTag` transaction from
   // a process that is still very much alive must be left alone.
   MINT_SESSION_STALE_MS: z.coerce.number().default(5 * 60_000),
+
+  // WP4.15 multi-owner (PLANNED). Boot recovery for a DelegationSession a previous worker process
+  // left "submitting" mid-flight (src/lib/delegation/bootRecovery.ts) - same rationale and default
+  // as MINT_SESSION_STALE_MS above, measured from `submittingAt`.
+  DELEGATION_SESSION_STALE_MS: z.coerce.number().default(5 * 60_000),
 });
 
 export type ServerEnv = z.infer<typeof envSchema>;

@@ -36,6 +36,8 @@ export interface DelegationSessionRow {
   status: DelegationInternalStatus;
   errorReason?: string;
   txHash?: string;
+  secondaryCountAtConfirm?: number;
+  delegationRootAtConfirm?: string;
   consumed: boolean;
   consumedAt?: number;
 }

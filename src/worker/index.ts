@@ -9,6 +9,8 @@
  *    confirmed REVERTED (WP4.5 track 3), or otherwise - once genuinely stale, never a seconds-old
  *    in-flight issuance - marked `interrupted` so it shows up as retryable rather than silently
  *    stuck forever (`recoverInterruptedSessions`, `src/lib/mint/bootRecovery.ts`).
+ *    WP4.15 (PLANNED) adds the same recovery for a `DelegationSession` left `"submitting"`
+ *    (`recoverStuckDelegationSessions`, `src/lib/delegation/bootRecovery.ts`).
  * 2. The chain-activity follower for `/activity` (`runActivityFollowerLoop`): chunked `getLogs`
  *    over this clinic's clone (`TagIssued`/`TagRevoked`/`TagReactivated`/`RecordIssued`/
  *    `RecordRevoked`/`RecordReactivated`/`FundsReceived`/`RefundSkipped`), plus `StatusChanged` on
@@ -28,6 +30,7 @@ import {ChainActivity} from "@/lib/models/ChainActivity";
 import {roaxPublicClient} from "@/lib/chainRead";
 import {vetIssuerAbi, dogTagSBTConsentAbi, verificationRegistryConsentAbi} from "@/lib/abi";
 import {recoverInterruptedSessions} from "@/lib/mint/bootRecovery";
+import {recoverStuckDelegationSessions} from "@/lib/delegation/bootRecovery";
 import {runPaymentWatcherOnce} from "@/lib/payments/watcher";
 import type {Log} from "viem";
 
@@ -176,6 +179,7 @@ async function runActivityFollowerLoop(pollMs: number): Promise<never> {
 async function main() {
   await connectToDatabase();
   await recoverInterruptedSessions();
+  await recoverStuckDelegationSessions();
 
   const env = getServerEnv();
   console.log(`[worker] starting chain-activity follower (poll every ${env.ACTIVITY_POLL_MS}ms)`);
