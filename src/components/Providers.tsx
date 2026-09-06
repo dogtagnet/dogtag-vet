@@ -10,11 +10,28 @@ import {SnackbarProvider} from "@/components/ui/Snackbar";
 
 /** The only routes anything reads `useAccount()`/`useConnect()` at all
  * (`TagIssueWizard`/`TagsTable` under `/tags`, `VerifySessionPanel` under `/verify`,
- * `SetupWizard` under `/setup`, WP4.7 D4's `OperatorsSection` under `/settings`) - see
+ * `SetupWizard` under `/setup`, WP4.7 D4's `OperatorsSection` under `/settings`, WP4.14
+ * `IssueRecordForm`/`RecordsCard` under `/pets/:id`'s Records tab) - see
  * `E2EMockWalletAutoConnect`'s own doc comment on why the auto-connect effect is scoped to exactly
- * these instead of running on every page. */
+ * these instead of running on every page.
+ *
+ * `/pets/:id` ONLY, not bare `/pets` (the list) or `/pets/new` (the create form) - neither of
+ * those renders anything wagmi-aware (`PetForm` has no `useAccount`/`useConnect` at all, and
+ * neither does the list page), so neither has any reason to pay for an auto-connect attempt. A
+ * plain `startsWith("/pets")` would also catch them; scoped to `/pets/:id` instead to match this
+ * function's own stated principle above - no auto-connect on a page that never reads wagmi
+ * state. (`mint-issue-revert.spec.ts`'s "pet form round-trips..." test was investigated as a
+ * possible casualty of this gate during WP4.14V V8 - it also fails against pristine HEAD with no
+ * `/pets` clause at all, so it is a pre-existing flake unrelated to this gate, not something this
+ * scoping fixes or could have broken.) */
 function isWalletGatedPath(pathname: string): boolean {
-  return pathname === "/setup" || pathname === "/verify" || pathname === "/settings" || pathname.startsWith("/tags");
+  return (
+    pathname === "/setup" ||
+    pathname === "/verify" ||
+    pathname === "/settings" ||
+    pathname.startsWith("/tags") ||
+    (pathname.startsWith("/pets/") && pathname !== "/pets/new")
+  );
 }
 
 /**
