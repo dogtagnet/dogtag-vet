@@ -1269,6 +1269,15 @@ components:
           type: array
           items: {type: string}
           description: The keyPaths the presented artifact actually disclosed, echoed back for display purposes - never the leaf VALUES themselves.
+        hiddenCount:
+          type: integer
+          minimum: 0
+          description: |-
+            How many attribute leaves the presenting device withheld - directly the presented
+            artifact's own `obfuscatedLeafHashes.length`, never a diff against the record type's
+            full schema field set (which would fabricate a number for fields the issuer simply never
+            populated in the first place). Set regardless of `stage` - even a `crypto_failed` or
+            `not_anchored` presentment still structurally names how many leaves it withheld.
 
     RecordVerifyCompleteResponse:
       type: object
