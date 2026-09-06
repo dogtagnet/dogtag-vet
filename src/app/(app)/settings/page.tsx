@@ -15,6 +15,7 @@ import {listRecentAbuse} from "@/lib/abuseLog";
 import {AbuseLogSection} from "@/app/(app)/settings/AbuseLogSection";
 import {BookingConfigSection} from "@/app/(app)/settings/BookingConfigSection";
 import {IcsFeedSection} from "@/app/(app)/settings/IcsFeedSection";
+import {MyProfileSection} from "@/app/(app)/settings/MyProfileSection";
 import {MyWalletSection} from "@/app/(app)/settings/MyWalletSection";
 import {OperatorsSection} from "@/app/(app)/settings/OperatorsSection";
 import {SettingsForm} from "@/app/(app)/settings/SettingsForm";
@@ -97,6 +98,11 @@ export default async function SettingsPage() {
       <SettingsForm initial={settings} />
       <div className="mt-6 max-w-2xl space-y-6">
         <StaffSection initial={staff} isOwner={isOwner} currentStaffId={session?.user?.staffId} />
+        {/* WP4.13 item 3 - deliberately its OWN conditional, not folded into the MyWalletSection
+            one below: profile editing (name/title/accreditation) has nothing to do with whether
+            the chain could be read, and must not disappear just because myOperatorStatus came back
+            null (an unreadable chain, or the clone not being set up yet). */}
+        {isVetOrOwner(session?.user?.role) && myStaff && <MyProfileSection initial={myStaff} />}
         {isVetOrOwner(session?.user?.role) && myStaff && myOperatorStatus && (
           <MyWalletSection initial={myStaff} status={myOperatorStatus.status} />
         )}

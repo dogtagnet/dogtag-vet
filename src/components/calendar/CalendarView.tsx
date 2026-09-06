@@ -100,15 +100,6 @@ function practitionerAccentTone(practitioners: PractitionerSummary[], staffId: s
   return index === -1 ? "neutral" : (ACCENT_TONES[index % ACCENT_TONES.length] ?? "neutral");
 }
 
-/** "Dr. Jane Smith" -> "JS"; a single-word name (a bare email local-part fallback, e.g. "owner")
- * -> "OW". Initials read faster than a full name in a dense calendar cell (WP4.7 A6). */
-function practitionerInitials(name: string): string {
-  const parts = name.trim().split(/\s+/).filter(Boolean);
-  if (parts.length === 0) return "?";
-  if (parts.length === 1) return (parts[0] ?? "").slice(0, 2).toUpperCase();
-  return `${(parts[0] ?? "")[0] ?? ""}${(parts[parts.length - 1] ?? "")[0] ?? ""}`.toUpperCase();
-}
-
 /** Local (clinic-timezone, not browser-timezone) date string and minute-of-day for a UTC
  * unix-seconds instant, computed via `Intl.DateTimeFormat` so it is correct regardless of which
  * timezone the staff member's own browser happens to be in - a shared clinic calendar should show
@@ -233,7 +224,13 @@ export function CalendarView(props: CalendarViewProps) {
       date: dayDate,
       practitionerStaffId: p.staffId,
       headerPrimary: p.name,
-      headerSecondary: practitionerInitials(p.name),
+      // WP4.13 - `p.initials` (precomputed in `listBookablePractitioners` from the raw
+      // firstName/lastName fields), NEVER re-derived here by splitting `p.name` - `p.name` can now
+      // carry an appended ", Title" ("Jane Smith, DVM"), and splitting THAT on whitespace picks up
+      // the title's own initial instead of the practitioner's actual last-name one. Initials read
+      // faster than a full name in a dense calendar cell (WP4.7 A6), which is why this column
+      // exists at all.
+      headerSecondary: p.initials,
       accentTone: practitionerAccentTone(practitioners, p.staffId),
       appointments: dayAppointments.filter((a) => a.practitionerStaffId === p.staffId),
     }));
@@ -452,8 +449,10 @@ export function CalendarView(props: CalendarViewProps) {
                             <span
                               className={`mr-1 inline-flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-badge align-middle text-[8px] font-semibold ${toneClasses[practitionerAccentTone(practitioners, a.practitionerStaffId)]}`}
                             >
+                              {/* WP4.13 - `p.initials`, same reasoning as the column header above:
+                                  never re-split `p.name`, which may carry an appended title. */}
                               {a.practitionerStaffId
-                                ? practitionerInitials(practitioners.find((p) => p.staffId === a.practitionerStaffId)?.name ?? "?")
+                                ? (practitioners.find((p) => p.staffId === a.practitionerStaffId)?.initials ?? "?")
                                 : "?"}
                             </span>
                           )}

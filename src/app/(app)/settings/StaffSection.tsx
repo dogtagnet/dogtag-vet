@@ -7,16 +7,36 @@ import {FormField, FormSection} from "@/components/ui/FormSection";
 import {StatusBadge} from "@/components/ui/StatusBadge";
 import {Button, Input, Select} from "@/components/ui/controls";
 import {useSnackbar} from "@/components/ui/Snackbar";
-import {isVetOrOwner, staffRoleLabel, staffRoleOptions} from "@/lib/staffRoleTone";
+import {hasExplicitName, isVetOrOwner, practitionerDisplayName, staffRoleLabel, staffRoleOptions} from "@/lib/staffRoleTone";
 import type {StaffDoc, StaffRole} from "@/lib/models/Staff";
 
-/** Small text field bound to one practitioner's display name, saving on blur only when the
- * trimmed value actually changed - same convention as WalletsPanel.tsx's WalletLabelField (its
- * own doc comment explains why this needs to be a dedicated component rather than an inline
- * closure: it holds draft text between keystrokes independently of the parent's committed state). */
-function DisplayNameField({id, staff, disabled, onSave}: {id: string; staff: StaffDoc; disabled: boolean; onSave: (staffId: string, displayName: string) => void}) {
-  const [value, setValue] = useState(staff.displayName ?? "");
-  useEffect(() => setValue(staff.displayName ?? ""), [staff.displayName]);
+/**
+ * WP4.13 - one text field bound to a single practitioner-profile string field (first name, last
+ * name, title, or accreditation number), saving on blur only when the trimmed value actually
+ * changed - same draft/blur-commit convention as WalletsPanel.tsx's WalletLabelField (its own doc
+ * comment explains why this needs to be a dedicated component rather than an inline closure: it
+ * holds draft text between keystrokes independently of the parent's committed state). Replaces
+ * the single-field DisplayNameField this WP retires (`displayName` is now a deprecated fallback
+ * tier, edited only via the "Clear legacy name" action below, never typed into directly). An
+ * emptied field saves `null` (`Staff.setStaffProfile`'s `$unset` signal), not an empty string, so
+ * clearing a name/title/accreditation number actually clears it - same rule WalletAddressField
+ * below already follows.
+ */
+function ProfileTextField({
+  id,
+  value: storedValue,
+  disabled,
+  placeholder,
+  onSave,
+}: {
+  id: string;
+  value: string | undefined;
+  disabled: boolean;
+  placeholder?: string;
+  onSave: (value: string | null) => void;
+}) {
+  const [value, setValue] = useState(storedValue ?? "");
+  useEffect(() => setValue(storedValue ?? ""), [storedValue]);
   return (
     <Input
       id={id}
@@ -25,16 +45,18 @@ function DisplayNameField({id, staff, disabled, onSave}: {id: string; staff: Sta
       onChange={(e) => setValue(e.target.value)}
       onBlur={() => {
         const trimmed = value.trim();
-        if (trimmed !== (staff.displayName ?? "")) onSave(staff.staffId, trimmed);
+        if (trimmed !== (storedValue ?? "")) onSave(trimmed === "" ? null : trimmed);
       }}
-      placeholder={staff.email.split("@")[0]}
+      placeholder={placeholder}
     />
   );
 }
 
-/** Same draft/blur-commit convention as DisplayNameField above. An emptied field saves `null`
- * (Staff.setStaffProfile's documented `$unset` signal), not an empty string, so clearing a wallet
- * actually clears it rather than storing "" as if it were a real (invalid) address. */
+/** Same draft/blur-commit convention as ProfileTextField above (kept as its own component, not
+ * folded into it, since it also carries the mono font styling an address needs). An emptied field
+ * saves `null` (Staff.setStaffProfile's documented `$unset` signal), not an empty string, so
+ * clearing a wallet actually clears it rather than storing "" as if it were a real (invalid)
+ * address. */
 function WalletAddressField({id, staff, disabled, onSave}: {id: string; staff: StaffDoc; disabled: boolean; onSave: (staffId: string, walletAddress: string | null) => void}) {
   const [value, setValue] = useState(staff.walletAddress ?? "");
   useEffect(() => setValue(staff.walletAddress ?? ""), [staff.walletAddress]);
@@ -102,7 +124,20 @@ export function StaffSection({initial, isOwner, currentStaffId}: {initial: Staff
     }
   }
 
-  async function update(staffId: string, patch: {role?: StaffRole; disabled?: boolean; bookable?: boolean; displayName?: string; walletAddress?: string | null}) {
+  async function update(
+    staffId: string,
+    patch: {
+      role?: StaffRole;
+      disabled?: boolean;
+      bookable?: boolean;
+      displayName?: string | null;
+      firstName?: string | null;
+      lastName?: string | null;
+      title?: string | null;
+      accreditationNumber?: string | null;
+      walletAddress?: string | null;
+    },
+  ) {
     setBusy(true);
     // Optimistic update: every control bound to `staff` here (the role Select, the disable/restore
     // Buttons, and WP4.7 A5's new bookable checkbox) is controlled by this state, which otherwise
@@ -113,10 +148,20 @@ export function StaffSection({initial, isOwner, currentStaffId}: {initial: Staff
     // failure; reconciled with the server's authoritative shape either way via the `refresh()` below
     // (e.g. wouldRemoveActiveOwnerStatus side effects this optimistic patch doesn't know about).
     const previousStaff = staff;
-    // StaffDoc models "no wallet" as the field being absent (`undefined`), never `null` - `null` is
+    // StaffDoc models "unset" as the field being absent (`undefined`), never `null` - `null` is
     // only the WIRE signal telling the API to $unset it (Staff.setStaffProfile's own contract), so
-    // the optimistic local merge below normalizes it before assigning into StaffDoc-shaped state.
-    const optimisticPatch = {...patch, walletAddress: patch.walletAddress === null ? undefined : patch.walletAddress};
+    // the optimistic local merge below normalizes every nullable field the same way before
+    // assigning into StaffDoc-shaped state (WP4.13 widens this from walletAddress alone to every
+    // one of the five nullable string fields this panel can now clear).
+    const optimisticPatch = {
+      ...patch,
+      displayName: patch.displayName === null ? undefined : patch.displayName,
+      firstName: patch.firstName === null ? undefined : patch.firstName,
+      lastName: patch.lastName === null ? undefined : patch.lastName,
+      title: patch.title === null ? undefined : patch.title,
+      accreditationNumber: patch.accreditationNumber === null ? undefined : patch.accreditationNumber,
+      walletAddress: patch.walletAddress === null ? undefined : patch.walletAddress,
+    };
     setStaff((prev) => prev.map((s) => (s.staffId === staffId ? {...s, ...optimisticPatch} : s)));
     try {
       const res = await fetch(`/api/settings/staff/${staffId}`, {
@@ -153,6 +198,10 @@ export function StaffSection({initial, isOwner, currentStaffId}: {initial: Staff
       >
         <DataTable
           columns={[
+            // WP4.13 - blank rather than the email local part for a staff member nobody has ever
+            // named: showing that guess here would just duplicate the adjacent Email column in a
+            // slightly different format (see `hasExplicitName`'s own doc comment).
+            {key: "name", header: "Name", render: (s: StaffDoc) => (hasExplicitName(s) ? practitionerDisplayName(s) : "")},
             {key: "email", header: "Email", render: (s: StaffDoc) => s.email},
             {key: "role", header: "Role", render: (s: StaffDoc) => staffRoleLabel[s.role]},
             {
@@ -232,43 +281,108 @@ export function StaffSection({initial, isOwner, currentStaffId}: {initial: Staff
 
       <FormSection
         title="Practitioner profiles"
-        helperText="Vet and owner accounts can be marked bookable for the public booking page and per-practitioner scheduling (WP4.7), with a display name shown to clients and the wallet used to sign DogTag issuance transactions."
+        helperText="Vet and owner accounts can be marked bookable for the public booking page and per-practitioner scheduling, with a name and qualification shown to clients, a government accreditation number kept internal to this clinic, and the wallet used to sign DogTag issuance transactions."
       >
         <div className="space-y-4">
-          {practitioners.map((s) => (
-            <div key={s.staffId} className="rounded-control border border-border p-3">
-              <div className="mb-3 flex items-center justify-between gap-2">
-                <span className="text-body font-medium text-ink">{s.email}</span>
-                <label className="flex shrink-0 items-center gap-2 text-body text-ink">
-                  <input
-                    type="checkbox"
-                    checked={s.bookable ?? false}
-                    disabled={!isOwner || busy}
-                    onChange={(e) => update(s.staffId, {bookable: e.target.checked})}
-                  />
-                  Bookable
-                </label>
+          {practitioners.map((s) => {
+            // WP4.13 - a legacy displayName only still means something to show/clear once neither
+            // half of the new first/last split has been entered; the moment either is set, tier 1
+            // takes over (`practitionerDisplayName`'s own tier order) and the old value is inert.
+            const tier1NameSet = Boolean(s.firstName?.trim() || s.lastName?.trim());
+            const legacyDisplayName = tier1NameSet ? undefined : s.displayName?.trim();
+            return (
+              <div key={s.staffId} className="rounded-control border border-border p-3">
+                <div className="mb-3 flex items-center justify-between gap-2">
+                  <div className="min-w-0">
+                    <p className="truncate text-body font-medium text-ink">{practitionerDisplayName(s)}</p>
+                    <p className="truncate text-caption text-ink-faint">{s.email}</p>
+                  </div>
+                  <label className="flex shrink-0 items-center gap-2 text-body text-ink">
+                    <input
+                      type="checkbox"
+                      checked={s.bookable ?? false}
+                      disabled={!isOwner || busy}
+                      onChange={(e) => update(s.staffId, {bookable: e.target.checked})}
+                    />
+                    Bookable
+                  </label>
+                </div>
+                {legacyDisplayName && (
+                  <p className="mb-3 text-caption text-ink-faint">
+                    Currently shown as &quot;{legacyDisplayName}&quot; (legacy display name). Enter a first and last name below to replace it.
+                    {isOwner && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="ml-2"
+                        disabled={busy}
+                        onClick={() => update(s.staffId, {displayName: null})}
+                      >
+                        Clear legacy name
+                      </Button>
+                    )}
+                  </p>
+                )}
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <FormField label="First name" htmlFor={`first-name-${s.staffId}`}>
+                    <ProfileTextField
+                      id={`first-name-${s.staffId}`}
+                      value={s.firstName}
+                      disabled={!isOwner || busy}
+                      onSave={(firstName) => update(s.staffId, {firstName})}
+                    />
+                  </FormField>
+                  <FormField label="Last name" htmlFor={`last-name-${s.staffId}`}>
+                    <ProfileTextField
+                      id={`last-name-${s.staffId}`}
+                      value={s.lastName}
+                      disabled={!isOwner || busy}
+                      onSave={(lastName) => update(s.staffId, {lastName})}
+                    />
+                  </FormField>
+                  <FormField
+                    label="Title / qualification"
+                    htmlFor={`title-${s.staffId}`}
+                    helperText="Shown after the name, e.g. Jane Smith, DVM."
+                  >
+                    <ProfileTextField
+                      id={`title-${s.staffId}`}
+                      value={s.title}
+                      placeholder="DVM"
+                      disabled={!isOwner || busy}
+                      onSave={(title) => update(s.staffId, {title})}
+                    />
+                  </FormField>
+                  <FormField
+                    label="Government accreditation number"
+                    htmlFor={`accreditation-${s.staffId}`}
+                    helperText="Internal only - never shown to clients or on the public booking page."
+                  >
+                    <ProfileTextField
+                      id={`accreditation-${s.staffId}`}
+                      value={s.accreditationNumber}
+                      placeholder="USDA accreditation number"
+                      disabled={!isOwner || busy}
+                      onSave={(accreditationNumber) => update(s.staffId, {accreditationNumber})}
+                    />
+                  </FormField>
+                  <FormField
+                    label="Wallet address"
+                    htmlFor={`wallet-${s.staffId}`}
+                    helperText="The address that signs this practitioner's DogTag issuance transactions."
+                    className="sm:col-span-2"
+                  >
+                    <WalletAddressField
+                      id={`wallet-${s.staffId}`}
+                      staff={s}
+                      disabled={!isOwner || busy}
+                      onSave={(staffId, walletAddress) => update(staffId, {walletAddress})}
+                    />
+                  </FormField>
+                </div>
               </div>
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                <FormField label="Display name" htmlFor={`display-name-${s.staffId}`} helperText="Shown to clients in place of the email's local part.">
-                  <DisplayNameField
-                    id={`display-name-${s.staffId}`}
-                    staff={s}
-                    disabled={!isOwner || busy}
-                    onSave={(staffId, displayName) => update(staffId, {displayName})}
-                  />
-                </FormField>
-                <FormField label="Wallet address" htmlFor={`wallet-${s.staffId}`} helperText="The address that signs this practitioner's DogTag issuance transactions.">
-                  <WalletAddressField
-                    id={`wallet-${s.staffId}`}
-                    staff={s}
-                    disabled={!isOwner || busy}
-                    onSave={(staffId, walletAddress) => update(staffId, {walletAddress})}
-                  />
-                </FormField>
-              </div>
-            </div>
-          ))}
+            );
+          })}
           {practitioners.length === 0 && (
             <p className="text-body text-ink-faint">No vet or owner accounts yet - invite one above, or change an existing staff member&apos;s role.</p>
           )}
