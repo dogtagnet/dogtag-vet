@@ -2,7 +2,7 @@ import "server-only";
 import {recordTypeKey} from "@dogtag/standard";
 import {RecordArtifact} from "@/lib/models/RecordArtifact";
 import type {RecordErrorStage} from "@/lib/models/RecordArtifact";
-import {readIsValidRoot, readIssuedBy, readRecordTypeOf, readRootIssuer, readTxReceiptStatus} from "@/lib/chainRead";
+import {readIsValidRoot, readIssuedBy, readRecordTypeOf, readRootIssuer, readTxAnchoring, readTxReceiptStatus} from "@/lib/chainRead";
 
 /** Surfaced verbatim in the wizard's error banner - mirrors `ISSUE_TX_REVERTED_MESSAGE`
  * (`lib/mint/reconcile.ts`) exactly. */
@@ -44,10 +44,16 @@ export interface ReconcileRecordDeps {
    * refund tail can OutOfGas after the mapping write, or the whole call can revert for any other
    * reason, and either way the receipt itself is conclusive where a bare state re-read is not). */
   readTxReceiptStatus(txHash: string): Promise<"success" | "reverted" | "pending">;
-  /** Marks the record `active` with the anchoring metadata the confirm route's own receipt read
-   * supplies (never re-derived here) - idempotent, safe to call again for an already-active record. */
+  /** The anchoring transaction's own mined block number + timestamp - display/export metadata only
+   * (`RecordChainInfo.blockNumber`/`blockTime` have no leaf counterpart; `root` alone is what a
+   * verifier ever recomputes). Called only once the four agreement reads already passed; a THROW
+   * here must never turn a genuinely-anchored record back into a failure - see this function's own
+   * call site below. */
+  readTxAnchoring(txHash: string): Promise<{blockNumber: number; blockTime: Date}>;
+  /** Marks the record `active` with the anchoring metadata this function's own `readTxAnchoring`
+   * call supplies (absent when that read itself failed) - idempotent, safe to call again for an
+   * already-active record. */
   markRecordActive(recordId: string, anchor: {contract: string; blockNumber?: number; blockTime?: Date}): Promise<void>;
-  markRecordError(recordId: string, stage: RecordErrorStage): Promise<void>;
   /** The reverted-tx recovery write (mirrors `markSessionRevertedReady`): back to `"draft"` (never
    * `"error"`) - the leaves and root are already computed and already verified, so the SAME record
    * can retry `issueRecord` immediately with a fresh transaction, no redraft needed. */
@@ -127,7 +133,22 @@ export async function reconcileAnchoredRecord(input: ReconcileRecordInput, deps:
     return {reconciled: false, reason: "not-anchored"};
   }
 
-  await deps.markRecordActive(input.recordId, {contract: resolvedClone});
+  // The record IS genuinely anchored at this point - every agreement check above already passed.
+  // The block number/timestamp are display-only metadata with no leaf counterpart (this file's own
+  // `ReconcileRecordDeps.readTxAnchoring` doc comment), so a failure reading them must never turn a
+  // real confirmation into a failure: fall back to leaving them absent rather than propagating the
+  // throw. `specs/leaf-commitment.md` section 16 explicitly allows this metadata to mature later
+  // ("may mature from absent/pending to a confirmed value ... without invalidating `root`").
+  let anchoring: {blockNumber?: number; blockTime?: Date} = {};
+  if (input.txHash) {
+    try {
+      anchoring = await deps.readTxAnchoring(input.txHash);
+    } catch {
+      anchoring = {};
+    }
+  }
+
+  await deps.markRecordActive(input.recordId, {contract: resolvedClone, ...anchoring});
   return {reconciled: true, contract: resolvedClone};
 }
 
@@ -140,6 +161,7 @@ export function mongoReconcileRecordDeps(factoryAddress: `0x${string}`): Reconci
     readRecordTypeOf: (cloneAddress, root) => readRecordTypeOf(cloneAddress as `0x${string}`, root as `0x${string}`),
     readIssuedBy: (cloneAddress, root) => readIssuedBy(cloneAddress as `0x${string}`, root as `0x${string}`),
     readTxReceiptStatus: (txHash) => readTxReceiptStatus(txHash as `0x${string}`),
+    readTxAnchoring: (txHash) => readTxAnchoring(txHash as `0x${string}`),
     async markRecordActive(recordId, anchor) {
       await RecordArtifact.updateOne(
         {recordId},
@@ -155,9 +177,6 @@ export function mongoReconcileRecordDeps(factoryAddress: `0x${string}`): Reconci
         },
       );
     },
-    async markRecordError(recordId, stage) {
-      await RecordArtifact.updateOne({recordId}, {$set: {status: "error", errorStage: stage}});
-    },
     async markRecordRevertedDraft(recordId, txHash) {
       await RecordArtifact.updateOne(
         {recordId, "chain.txHash": txHash},
@@ -172,4 +191,19 @@ export function mongoReconcileRecordDeps(factoryAddress: `0x${string}`): Reconci
 export function isRecordStale(record: {issuingAt?: Date | string}, nowMs: number, staleMs: number): boolean {
   if (!record.issuingAt) return false;
   return nowMs - new Date(record.issuingAt).getTime() >= staleMs;
+}
+
+/**
+ * Burns a record to `error` when neither `reconcileAnchoredRecord`'s "actually anchored" nor
+ * "confirmed reverted" outcome applies - not part of `ReconcileRecordDeps` (`reconcileAnchoredRecord`
+ * itself never calls this; only its two callers below decide to, on the terminal `not-anchored`
+ * outcome), so this is a plain function both share directly rather than a dependency either one would
+ * otherwise have to fake identically in tests. `onlyIfStatus`, when given, guards the write against a
+ * status that already moved concurrently between the caller's own read and this write (`bootRecovery.ts`'s
+ * loop reads once and can race a live request; `confirm/route.ts` already re-reads `record` immediately
+ * before calling this, so it passes no guard, matching its prior inline behavior exactly).
+ */
+export async function markRecordError(recordId: string, stage: RecordErrorStage, options?: {onlyIfStatus: string}): Promise<void> {
+  const filter = options ? {recordId, status: options.onlyIfStatus} : {recordId};
+  await RecordArtifact.updateOne(filter, {$set: {status: "error", errorStage: stage}});
 }

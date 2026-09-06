@@ -25,6 +25,7 @@ vi.mock("@/lib/chainRead", async (importOriginal) => {
     readRecordTypeOf: vi.fn(),
     readIssuedBy: vi.fn(),
     readTxReceiptStatus: vi.fn(),
+    readTxAnchoring: vi.fn(),
     readRecordTypeVaccination: vi.fn(),
   };
 });
@@ -100,6 +101,7 @@ afterEach(async () => {
   vi.mocked(chainRead.readRecordTypeOf).mockReset();
   vi.mocked(chainRead.readIssuedBy).mockReset();
   vi.mocked(chainRead.readTxReceiptStatus).mockReset();
+  vi.mocked(chainRead.readTxAnchoring).mockReset();
   vi.mocked(chainRead.readRecordTypeVaccination).mockReset();
 });
 
@@ -170,6 +172,56 @@ describe("auth gating", () => {
   });
 });
 
+describe("conformsTo (UNCOMMITTED, descriptive-only vet claim - lib/records/standards.ts)", () => {
+  it("accepts a known (standard, version) pair and stores it on the draft", async () => {
+    const petId = randomUUID();
+    await withStaffSession("vet");
+    await seedClinicAndPet(petId);
+
+    const res = await createPOST(
+      jsonRequest(`https://vet.example.com/api/pets/${petId}/records`, {
+        operatorAddress: OPERATOR,
+        form: VALID_FORM,
+        conformsTo: [{standard: "nasphv-form51", version: "2007"}],
+      }),
+      idParams(petId),
+    );
+    expect(res.status).toBe(201);
+    const {record} = (await res.json()) as {record: RecordArtifactDoc};
+    expect(record.conformsTo).toEqual([{standard: "nasphv-form51", version: "2007"}]);
+  });
+
+  it("rejects a standard/version pair this protocol version does not recognize", async () => {
+    const petId = randomUUID();
+    await withStaffSession("vet");
+    await seedClinicAndPet(petId);
+
+    const res = await createPOST(
+      jsonRequest(`https://vet.example.com/api/pets/${petId}/records`, {
+        operatorAddress: OPERATOR,
+        form: VALID_FORM,
+        conformsTo: [{standard: "nasphv-form51", version: "1999"}],
+      }),
+      idParams(petId),
+    );
+    expect(res.status).toBe(400);
+  });
+
+  it("omitting conformsTo entirely defaults to an empty array (no claimed conformance)", async () => {
+    const petId = randomUUID();
+    await withStaffSession("vet");
+    await seedClinicAndPet(petId);
+
+    const res = await createPOST(
+      jsonRequest(`https://vet.example.com/api/pets/${petId}/records`, {operatorAddress: OPERATOR, form: VALID_FORM}),
+      idParams(petId),
+    );
+    expect(res.status).toBe(201);
+    const {record} = (await res.json()) as {record: RecordArtifactDoc};
+    expect(record.conformsTo).toEqual([]);
+  });
+});
+
 describe("issuance happy path: create -> tx -> confirm -> attestation", () => {
   it("walks a vaccination record from draft through active with a signed C3 attestation", async () => {
     const petId = randomUUID();
@@ -221,12 +273,22 @@ describe("issuance happy path: create -> tx -> confirm -> attestation", () => {
     vi.mocked(chainRead.readIsValidRoot).mockResolvedValue(true);
     vi.mocked(chainRead.readRecordTypeOf).mockResolvedValue(VACCINATION_RECORD_TYPE_HASH);
     vi.mocked(chainRead.readIssuedBy).mockResolvedValue(OPERATOR);
+    const anchoredBlockTime = new Date("2026-01-15T10:00:00.000Z");
+    vi.mocked(chainRead.readTxAnchoring).mockResolvedValue({blockNumber: 12345, blockTime: anchoredBlockTime});
 
     const confirmRes = await confirmPOST(new Request(`https://vet.example.com/api/records/${created.recordId}/confirm`, {method: "POST"}), idParams(created.recordId));
     expect(confirmRes.status).toBe(200);
     const confirmed = (await confirmRes.json()) as {status: string; contract: string};
     expect(confirmed.status).toBe("active");
     expect(confirmed.contract).toBe(OUR_CLONE);
+
+    // The anchoring block number/timestamp (advisor review finding: previously never populated -
+    // `reconcileAnchoredRecord` only ever passed `{contract}` to `markRecordActive`) land on the
+    // record via a real GET poll, not just the confirm response's own smaller body.
+    const pollActive = await recordGET(new Request(`https://vet.example.com/api/records/${created.recordId}`), idParams(created.recordId));
+    const activeRecord = (await pollActive.json()).record as {chain: {blockNumber?: number; blockTime?: string}};
+    expect(activeRecord.chain.blockNumber).toBe(12345);
+    expect(new Date(activeRecord.chain.blockTime!).toISOString()).toBe(anchoredBlockTime.toISOString());
 
     // Idempotent repeat confirm.
     const confirmAgain = await confirmPOST(new Request(`https://vet.example.com/api/records/${created.recordId}/confirm`, {method: "POST"}), idParams(created.recordId));
@@ -403,6 +465,25 @@ describe("confirm - fail-closed", () => {
     const reverted = await RecordArtifact.findOne({recordId: created.recordId}).lean<RecordArtifactDoc>();
     expect(reverted?.status).toBe("draft");
     expect(reverted?.chain.txHash).toBeUndefined();
+  });
+
+  it("a THROWING anchoring-metadata read never blocks a genuine confirmation - it only leaves blockNumber/blockTime absent", async () => {
+    const petId = randomUUID();
+    const created = await draftedAndIssuing(petId);
+    vi.mocked(chainRead.readTxReceiptStatus).mockResolvedValue("success");
+    vi.mocked(chainRead.readRootIssuer).mockResolvedValue(OUR_CLONE);
+    vi.mocked(chainRead.readIsValidRoot).mockResolvedValue(true);
+    vi.mocked(chainRead.readRecordTypeOf).mockResolvedValue(VACCINATION_RECORD_TYPE_HASH);
+    vi.mocked(chainRead.readIssuedBy).mockResolvedValue(OPERATOR);
+    vi.mocked(chainRead.readTxAnchoring).mockRejectedValue(new Error("RPC timeout reading block"));
+
+    const res = await confirmPOST(new Request(`https://vet.example.com/api/records/${created.recordId}/confirm`, {method: "POST"}), idParams(created.recordId));
+    expect(res.status).toBe(200);
+    expect((await res.json()).status).toBe("active");
+    const active = await RecordArtifact.findOne({recordId: created.recordId}).lean<RecordArtifactDoc>();
+    expect(active?.status).toBe("active");
+    expect(active?.chain.blockNumber).toBeUndefined();
+    expect(active?.chain.blockTime).toBeUndefined();
   });
 
   it("missing VET_ISSUER_FACTORY_ADDRESS refuses the confirm rather than silently skipping the rootIssuer read", async () => {

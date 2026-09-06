@@ -90,6 +90,7 @@ export async function POST(request: Request, {params}: {params: Promise<{id: str
     root,
     leaves,
     chain: {chainId: roax.id, contract: preflight.cloneAddress, operator: input.operatorAddress},
+    conformsTo: input.conformsTo,
   });
   if (!created.ok) {
     // Server bug, not a caller input problem - buildVaccinationRecord's own output should always

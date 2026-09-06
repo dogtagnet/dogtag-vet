@@ -2,6 +2,7 @@ import {createServer, type IncomingMessage, type Server, type ServerResponse} fr
 import {randomBytes} from "node:crypto";
 import {decodeFunctionData, encodeFunctionResult} from "viem";
 import type {Abi, Address, Hex} from "viem";
+import {recordTypeKey} from "@dogtag/standard";
 // Playwright loads e2e spec/support files through Node's own native ESM loader (unlike the Next.js
 // app itself, bundled by webpack/turbopack, where a plain JSON import needs no attribute at all -
 // `src/lib/abi.ts`'s own imports of these same files) - Node's native loader requires the explicit
@@ -123,7 +124,20 @@ function defaultResultFor(functionName: string): ScenarioResult {
   // `false` on a real chain, exactly like `isValid`'s own unset-mapping default above.
   if (functionName === "operators") return false;
   if (functionName === "rootIssuer") return "0x0000000000000000000000000000000000000000";
-  return `0x${"0".repeat(64)}`; // profileRoot
+  // WP4.14 - `issuedBy` returns an `address`, never a bytes32 word: falling through to this
+  // function's own zero-bytes32 default below would fail `encodeResult`'s ABI encoding outright
+  // (an `address` output slot cannot accept a 32-byte value) the first time any record e2e spec
+  // exercises `POST /api/records/:id/confirm` (or the attestation route) without scripting this
+  // read explicitly. The zero ADDRESS is still the correct "never written" default, matching a root
+  // that was never anchored on this clone.
+  if (functionName === "issuedBy") return "0x0000000000000000000000000000000000000000";
+  // WP4.14 - `RECORD_TYPE_VACCINATION()` is a CONSTANT getter (no args), not a per-root mapping
+  // lookup - a real clone never returns zero for it, unlike `recordTypeOf`/`profileRoot` below,
+  // where zero genuinely is the correct "never written" default. `recordTypeKey` (the identical
+  // vendored `@dogtag/standard` helper `lib/records/reconcile.ts` itself uses) keeps this stub's
+  // default in permanent lockstep with the real value, rather than a second hand-copied hex literal.
+  if (functionName === "RECORD_TYPE_VACCINATION") return recordTypeKey("VACCINATION");
+  return `0x${"0".repeat(64)}`; // profileRoot / recordTypeOf - zero IS the correct "never written" default for both mappings
 }
 
 function decodeCall(data: Hex): {functionName: string; args: readonly unknown[]} | null {

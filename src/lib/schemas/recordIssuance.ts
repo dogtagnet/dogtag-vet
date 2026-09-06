@@ -1,5 +1,6 @@
 import {z} from "zod";
 import {decimalString, hexAddress, isoDate} from "@/lib/schemas/common";
+import {isKnownRecordStandard, KNOWN_RECORD_STANDARDS} from "@/lib/records/standards";
 
 /**
  * `POST /api/pets/:id/records` request body - plan section 11.2 item V3's issuance form.
@@ -29,12 +30,28 @@ export const vaccinationRecordFormSchema = z.object({
   vaccineExpirationDate: isoDate.optional(),
 });
 
+/** One entry of the issuing vet's OWN claim that this record's data was filled out to satisfy a
+ * known external standard (`lib/records/standards.ts`) - UNCOMMITTED, descriptive-only, and never
+ * itself verified against the record's leaves (see that module's own doc comment for why not: the
+ * registry is explicitly "nothing ... parses, validates, or enforces any of it"). Only the
+ * (standard, version) PAIR is checked, against the whitelist - a client cannot claim conformance to
+ * a standard this protocol version does not even recognize. */
+const conformsToEntrySchema = z
+  .object({
+    standard: z.string().trim().min(1).max(120),
+    version: z.string().trim().min(1).max(60),
+  })
+  .refine((entry) => isKnownRecordStandard(entry.standard, entry.version), {
+    message: "Unrecognized standard/version pair - see lib/records/standards.ts for the known list.",
+  });
+
 export const createRecordArtifactSchema = z.object({
   /** The staff member's currently-connected wallet - the server preflights whitelist status
    * against THIS address (never `ClinicSettings.operatorWallet`), exactly like
    * `startMintSessionSchema.operatorAddress`'s own doc comment states for tags. */
   operatorAddress: hexAddress,
   form: vaccinationRecordFormSchema,
+  conformsTo: z.array(conformsToEntrySchema).max(KNOWN_RECORD_STANDARDS.length).optional(),
 });
 
 export type VaccinationRecordFormInput = z.infer<typeof vaccinationRecordFormSchema>;

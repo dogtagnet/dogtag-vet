@@ -3,7 +3,7 @@ import {connectToDatabase} from "@/lib/db";
 import {RecordArtifact, type RecordArtifactDoc} from "@/lib/models/RecordArtifact";
 import {getClinicSettings} from "@/lib/models/ClinicSettings";
 import {requireEnv} from "@/lib/env";
-import {mongoReconcileRecordDeps, reconcileAnchoredRecord, RECORD_TX_REVERTED_MESSAGE} from "@/lib/records/reconcile";
+import {markRecordError, mongoReconcileRecordDeps, reconcileAnchoredRecord, RECORD_TX_REVERTED_MESSAGE} from "@/lib/records/reconcile";
 import {badRequest, notFound, requireVetSession} from "@/lib/staffApi";
 
 /**
@@ -82,7 +82,7 @@ export async function POST(_request: Request, {params}: {params: Promise<{id: st
   // this route already `error` must not have its state clobbered just because the chain still
   // disagrees; it stays exactly as retryable as it was.
   if (record.status === "issuing") {
-    await RecordArtifact.updateOne({recordId}, {$set: {status: "error", errorStage: "verify"}});
+    await markRecordError(recordId, "verify");
   }
   return badRequest("On-chain confirmation did not match. The record was not marked active.");
 }

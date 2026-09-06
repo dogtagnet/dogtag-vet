@@ -2,7 +2,7 @@ import "server-only";
 import {getServerEnv, requireEnv} from "@/lib/env";
 import {getClinicSettings} from "@/lib/models/ClinicSettings";
 import {RecordArtifact, type RecordArtifactDoc} from "@/lib/models/RecordArtifact";
-import {isRecordStale, mongoReconcileRecordDeps, reconcileAnchoredRecord} from "@/lib/records/reconcile";
+import {isRecordStale, markRecordError, mongoReconcileRecordDeps, reconcileAnchoredRecord} from "@/lib/records/reconcile";
 
 /**
  * Boot recovery for `RecordArtifact` rows a previous process left `issuing` when it died mid-flight
@@ -69,7 +69,7 @@ export async function recoverInterruptedRecords(): Promise<void> {
     } else {
       // Re-check `status: "issuing"` at write time - defensive against this same record being
       // reconciled or confirmed by a concurrent request between this loop's read and this write.
-      await RecordArtifact.updateOne({recordId: record.recordId, status: "issuing"}, {$set: {status: "error", errorStage: "interrupted"}});
+      await markRecordError(record.recordId, "interrupted", {onlyIfStatus: "issuing"});
       interruptedCount++;
     }
   }

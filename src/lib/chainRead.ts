@@ -192,6 +192,25 @@ export async function readTxReceiptStatus(txHash: Hex): Promise<"success" | "rev
   }
 }
 
+export interface TxAnchoring {
+  blockNumber: number;
+  blockTime: Date;
+}
+
+/**
+ * The mined block number + timestamp of an already-`"success"` transaction (WP4.14 V3's "active +
+ * anchoring from the receipt (block number, block timestamp)"). Only ever called once `readTxReceiptStatus`
+ * has already reported `"success"` for the same hash - a receipt carries a block NUMBER only, so the
+ * timestamp needs a second read (`getBlock`) against that same number. Fail-closed like every other
+ * read in this file: a pending/nonexistent receipt throws via `getTransactionReceipt` itself, never
+ * resolves to a guessed value.
+ */
+export async function readTxAnchoring(txHash: Hex): Promise<TxAnchoring> {
+  const receipt = await roaxPublicClient().getTransactionReceipt({hash: txHash});
+  const block = await roaxPublicClient().getBlock({blockNumber: receipt.blockNumber});
+  return {blockNumber: Number(receipt.blockNumber), blockTime: new Date(Number(block.timestamp) * 1000)};
+}
+
 /** `VetIssuer.issuedBy(root)` - the operator wallet that actually anchored `root` on this clone,
  * set to `msg.sender` inside `issueTag`/`issueRecord` (`onlyOperator`). This is the sole correct
  * gate for accepting a C3 issuer attestation's signer (`specs/issuer-attestation.md`: "The signer
