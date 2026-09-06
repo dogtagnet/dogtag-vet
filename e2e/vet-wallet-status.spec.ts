@@ -81,6 +81,15 @@ function escapeRegExp(value: string): string {
 
 test.describe.serial("WP4.7C - vet self-service wallet + whitelist status", () => {
   test("vet registers their own wallet via 'Use connected wallet' and sees an honest NOT-whitelisted status + banner", async ({page}) => {
+    // Generous, not the 30s default - see calendar-services.spec.ts's/booking-config-timezone.spec.ts's/
+    // tag-custody.spec.ts's own identical note (WP4.13 fix round 2, grader R2). This test does FOUR
+    // full navigations (/settings, /tags, /tags/issue, /settings again for screenshots), each a
+    // first-hit cold client compile the first time this suite touches that route, plus its own
+    // explicit 10s and 15s internal waits - between the compiles and those two waits alone, little
+    // of the 30s default is left for the rest of the test. Reproduced failing 2/2 in full-suite runs
+    // under NORMAL load (not just heavy load) while passing 3/3 in isolation - the identical
+    // class of defect as tag-custody.spec.ts:151, fixed the same way.
+    test.setTimeout(60_000);
     // Bootstrap: owner@example.com is the first-ever staff row this deployment sees (same rule
     // practitioner-mode.spec.ts's own comment documents) - idempotent if some other spec already
     // ran first in this invocation.

@@ -187,11 +187,25 @@ test.describe.serial("WP4.13 - practitioner first/last name, title, accreditatio
     // snackbar), and (2) `update()`'s failure path unconditionally called
     // `setStaff(previousStaff)`, which flips `ProfileTextField`'s `storedValue` prop back to the
     // last-saved value and fires its `useEffect([storedValue])`, silently discarding the draft -
-    // exactly the two-part bug `MyProfileSection` already avoided (plan RESULT deviation 7). The
-    // second assertion below (the field still holding the 41-character string) is what actually
-    // pins the second mechanism; without it, a fixer who wires the `error` prop but leaves the
-    // blanket rollback in place would still pass on a half-fix that reads worse than the previous
-    // snackbar-only behavior, not better - the grader's own explicit warning.
+    // exactly the two-part bug `MyProfileSection` already avoided (plan RESULT deviation 7).
+    //
+    // FIX ROUND 2 (grader R1): a bare `toHaveValue(tooLongTitle)` right after the PATCH response
+    // does NOT reliably pin mechanism (2) - `page.waitForResponse` resolves at the network layer
+    // the moment the response arrives, which can win the race against the PAGE's own
+    // `res.json() -> catch -> setStaff(previousStaff)` continuation actually flushing into React
+    // state. Under a reverted rollback-skip (the exact half-fix round 1 warned about),
+    // `toHaveValue` can sample the still-optimistic 41-character value BEFORE the rollback lands
+    // and pass by accident - confirmed by the grader running that exact half-fix and capturing a
+    // pass here, with the real failure surfacing 7 lines later as an unrelated 30s hang (the
+    // restore step's own `fill("DVM")` becomes a no-op once the rollback already landed by then,
+    // since `storedValue` is already "DVM", so no PATCH ever fires for `Promise.all` to wait on).
+    // `update()`'s `finally { setBusy(false) }` runs strictly after the `catch` block (or this
+    // branch's own early return) in the same tick, so waiting for the field to re-enable is a
+    // reliable "the failure path, rollback included, has fully flushed" signal - only THEN is
+    // sampling the value meaningful, which is what actually pins mechanism (2); without it, a
+    // fixer who wires the `error` prop but leaves the blanket rollback in place ships a half-fix
+    // that reads worse than the previous snackbar-only behavior, not better (the grader's own
+    // warning, round 1) - and this file would not have caught it.
     const tooLongTitle = "T".repeat(41);
     await cardAfterReload.getByLabel("Title / qualification").fill(tooLongTitle);
     await Promise.all([
@@ -199,6 +213,7 @@ test.describe.serial("WP4.13 - practitioner first/last name, title, accreditatio
       cardAfterReload.getByLabel("Title / qualification").blur(),
     ]);
     await expect(cardAfterReload.getByText(/at most 40 character/i)).toBeVisible();
+    await expect(cardAfterReload.getByLabel("Title / qualification")).toBeEnabled(); // busy cleared => rollback (if any) has flushed
     await expect(cardAfterReload.getByLabel("Title / qualification")).toHaveValue(tooLongTitle);
 
     // Restore a valid title - test 2 (per-practitioner mode) asserts the composed "Jane Smith,
