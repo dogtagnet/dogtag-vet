@@ -129,4 +129,39 @@ describe("GET /v1/booking/availability - practitioner mode wire shape", () => {
     expect(body.practitioners).toEqual([]);
     expect(body.slots).toEqual([]);
   });
+
+  /**
+   * WP4.13 - the plan's own strictest wire property, re-verified after this WP's changes:
+   * `PractitionerSummary` gained `initials` and `Staff` gained `firstName`/`lastName`/`title`/
+   * `accreditationNumber`, and NONE of that may leak onto this response. `initials` is internal
+   * (calendar-only); `accreditationNumber` is internal to Settings entirely (never public, by
+   * this WP's own settlement). The route's own mapping (`{id: p.staffId, name: p.name}`, never a
+   * spread of `p`) is what keeps this true - this test proves it holds even with every new field
+   * populated, not merely when they are absent.
+   */
+  it("never leaks initials or accreditationNumber - the wire stays exactly {id, name} even with a full WP4.13 profile on file", async () => {
+    await BookingSettings.findByIdAndUpdate("singleton", {$set: {schedulingMode: "practitioner"}}, {upsert: true});
+    const vet = await Staff.create({
+      email: "full-profile@example.com",
+      role: "vet",
+      bookable: true,
+      firstName: "Jane",
+      lastName: "Smith",
+      title: "DVM",
+      accreditationNumber: "USDA-1234",
+    });
+    await AvailabilityRule.create({dayOfWeek: THURSDAY, startMinute: 9 * 60, endMinute: 17 * 60, staffId: vet.staffId});
+
+    const res = await GET(new Request(requestUrl()));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.practitioners).toEqual([{id: vet.staffId, name: "Jane Smith, DVM"}]);
+    for (const practitioner of body.practitioners) {
+      expect(Object.keys(practitioner).sort()).toEqual(["id", "name"]);
+    }
+    const raw = JSON.stringify(body);
+    expect(raw).not.toContain("USDA-1234");
+    expect(raw).not.toContain("initials");
+    expect(raw).not.toContain("accreditationNumber");
+  });
 });

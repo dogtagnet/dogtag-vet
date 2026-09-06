@@ -9,7 +9,7 @@ import {
   type AvailabilityRuleDoc,
 } from "@/lib/models/Availability";
 import {Staff, type StaffDoc} from "@/lib/models/Staff";
-import {practitionerDisplayName} from "@/lib/staffRoleTone";
+import {practitionerDisplayName, practitionerInitials} from "@/lib/staffRoleTone";
 import type {
   AvailabilityExceptionLike,
   AvailabilityRuleLike,
@@ -61,6 +61,14 @@ export async function loadExistingOccupiedIntervals(fromUtc: number, toUtc: numb
 export interface PractitionerSummary {
   staffId: string;
   name: string;
+  /** WP4.13 - precomputed here (once, from the raw Staff fields) rather than left for each
+   * consumer to derive from `name` - `CalendarView.tsx` used to split `name` on whitespace
+   * itself, which breaks the moment `name` carries an appended ", Title" (see
+   * `practitionerInitials`'s own doc comment for the exact trap). Every UI consumer should read
+   * this field directly instead of recomputing initials from `name`. Internal only - the public
+   * `/v1/booking/availability` wire maps `PractitionerSummary` down to `{id, name}` and never
+   * includes `initials` (`src/app/v1/booking/availability/route.ts`). */
+  initials: string;
 }
 
 /** Every currently bookable practitioner (D2: a Staff row with role `vet` or `owner`, `bookable:
@@ -71,7 +79,7 @@ export interface PractitionerSummary {
 export async function listBookablePractitioners(): Promise<PractitionerSummary[]> {
   const staff = await Staff.find({role: {$in: ["vet", "owner"]}, bookable: true, disabled: false}).lean<StaffDoc[]>();
   return staff
-    .map((s) => ({staffId: s.staffId, name: practitionerDisplayName(s)}))
+    .map((s) => ({staffId: s.staffId, name: practitionerDisplayName(s), initials: practitionerInitials(s)}))
     .sort((a, b) => a.staffId.localeCompare(b.staffId));
 }
 

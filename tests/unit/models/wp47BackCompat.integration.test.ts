@@ -30,6 +30,7 @@ import {connectToDatabase} from "@/lib/db";
 import {AvailabilityException, AvailabilityRule, BookingSettings, getBookingSettings} from "@/lib/models/Availability";
 import {listStaff, Staff, type StaffDoc} from "@/lib/models/Staff";
 import {requireOwnerSession, requireVetSession} from "@/lib/staffApi";
+import {practitionerDisplayName} from "@/lib/staffRoleTone";
 
 const MONGO_PORT = 44_118; // staleModelRepro already owns 44117.
 
@@ -99,6 +100,47 @@ describe("Staff back-compat (bookable/displayName/walletAddress)", () => {
       walletAddress: "0x1234567890abcdef1234567890ABCDEF12345678",
     });
     expect(created.toObject().walletAddress).toBe("0x1234567890abcdef1234567890abcdef12345678");
+  });
+});
+
+/**
+ * WP4.13 (Kenneth issue 3) - back-compat proof for the newest Staff fields (firstName/lastName/
+ * title/accreditationNumber), same reasoning as the sibling describe block above: a raw insert
+ * shaped exactly like a pre-WP4.13 row (which is every row that predates this WP, including every
+ * row the WP4.7/WP4.7C describe block above itself already covers) must read back cleanly, with
+ * the deprecated `displayName` tier still resolving `practitionerDisplayName` correctly for a row
+ * nobody has split into first/last yet.
+ */
+describe("Staff back-compat (WP4.13 - firstName/lastName/title/accreditationNumber)", () => {
+  it("a pre-WP4.13 row (raw insert, no new fields in storage) reads back via listStaff() with the new fields absent, not null - and the deprecated displayName tier still resolves", async () => {
+    await Staff.collection.insertOne({
+      staffId: "legacy-vet-wp413",
+      email: "legacy-vet-wp413@example.com",
+      role: "vet",
+      disabled: false,
+      bookable: true,
+      displayName: "Dr. Legacy",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    } as never);
+
+    const list = await listStaff();
+    const found = list.find((s) => s.staffId === "legacy-vet-wp413");
+    expect(found).toBeDefined();
+    expect(found!.firstName).toBeUndefined();
+    expect(found!.lastName).toBeUndefined();
+    expect(found!.title).toBeUndefined();
+    expect(found!.accreditationNumber).toBeUndefined();
+    expect(practitionerDisplayName(found!)).toBe("Dr. Legacy");
+  });
+
+  it("a freshly created Staff row leaves firstName/lastName/title/accreditationNumber unset", async () => {
+    const created = await Staff.create({email: "fresh-wp413@example.com", role: "vet"});
+    const plain = created.toObject() as StaffDoc;
+    expect(plain.firstName).toBeUndefined();
+    expect(plain.lastName).toBeUndefined();
+    expect(plain.title).toBeUndefined();
+    expect(plain.accreditationNumber).toBeUndefined();
   });
 });
 

@@ -12,11 +12,23 @@ export const updateStaffSchema = z
     role: z.enum(["owner", "staff", "vet"]).optional(),
     disabled: z.boolean().optional(),
     // WP4.7 A3 - practitioner-profile fields (D2/D4). Owner-only, same route as role/disabled;
-    // self-service editing of one's own row is explicitly out of scope for this WP.
+    // self-service editing of one's own row for a SUBSET of these (WP4.13's firstName/lastName/
+    // title/accreditationNumber, WP4.7C's walletAddress) also exists via the dedicated `/me/...`
+    // routes below, each scoped to the session's own staffId - this schema stays the owner-only,
+    // any-row surface for all of them.
     bookable: z.boolean().optional(),
-    displayName: z.string().trim().min(1).max(120).optional(),
-    // `null` explicitly clears a previously-recorded wallet (`Staff.setStaffProfile`'s `$unset`
-    // path) - distinct from omitting the field, which leaves whatever is stored untouched.
+    // `null` explicitly clears a previously-recorded value (`Staff.setStaffProfile`'s `$unset`
+    // path) - distinct from omitting the field, which leaves whatever is stored untouched. WP4.13
+    // fixes a pre-existing gap: `displayName` used to accept only a non-empty string, with no way
+    // to clear it at all once set.
+    displayName: z.string().trim().min(1).max(120).nullable().optional(),
+    // WP4.13 (Kenneth issue 3) - the first/last name split, a title/qualification, and a
+    // government accreditation number. See `Staff.ts`'s own doc comments for the tier order and
+    // the internal-only rule on accreditationNumber.
+    firstName: z.string().trim().min(1).max(120).nullable().optional(),
+    lastName: z.string().trim().min(1).max(120).nullable().optional(),
+    title: z.string().trim().min(1).max(40).nullable().optional(),
+    accreditationNumber: z.string().trim().min(1).max(64).nullable().optional(),
     walletAddress: lowercaseHexAddress.nullable().optional(),
   })
   .refine(
@@ -25,6 +37,10 @@ export const updateStaffSchema = z
       v.disabled !== undefined ||
       v.bookable !== undefined ||
       v.displayName !== undefined ||
+      v.firstName !== undefined ||
+      v.lastName !== undefined ||
+      v.title !== undefined ||
+      v.accreditationNumber !== undefined ||
       v.walletAddress !== undefined,
     {message: "At least one field is required."},
   );
@@ -45,3 +61,29 @@ export const selfWalletSchema = z
   })
   .strict();
 export type SelfWalletInput = z.infer<typeof selfWalletSchema>;
+
+/**
+ * WP4.13 item 2 - the self-service counterpart to `updateStaffSchema` for a vet/owner editing
+ * THEIR OWN name/title/accreditation (Kenneth issue 3: "split the name of the vet from display
+ * name to first name, last name... qualifications / title field... government accreditation
+ * number"), modelled directly on `selfWalletSchema` above: `.strict()` so an unexpected key (a
+ * `role`, `bookable`, or `walletAddress` a client should never be able to send here) is rejected
+ * outright with a 400, and every field independently optional-but-nullable so a PATCH may touch
+ * any subset of the four and `null` clears one (`setStaffProfile`'s `$unset` contract) - unlike
+ * `selfWalletSchema`'s single always-required field, this route can update several fields at once,
+ * so the "at least one" refine (not "exactly one") is the right shape here, matching
+ * `updateStaffSchema`'s own refine style.
+ */
+export const selfProfileSchema = z
+  .object({
+    firstName: z.string().trim().min(1).max(120).nullable().optional(),
+    lastName: z.string().trim().min(1).max(120).nullable().optional(),
+    title: z.string().trim().min(1).max(40).nullable().optional(),
+    accreditationNumber: z.string().trim().min(1).max(64).nullable().optional(),
+  })
+  .strict()
+  .refine(
+    (v) => v.firstName !== undefined || v.lastName !== undefined || v.title !== undefined || v.accreditationNumber !== undefined,
+    {message: "At least one field is required."},
+  );
+export type SelfProfileInput = z.infer<typeof selfProfileSchema>;

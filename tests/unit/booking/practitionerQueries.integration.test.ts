@@ -103,6 +103,39 @@ describe("listBookablePractitioners", () => {
     const list = await listBookablePractitioners();
     expect(list.find((p) => p.staffId === vet.staffId)?.name).toBe("Dr. Rivera");
   });
+
+  it("WP4.13: composes firstName + lastName + title as one line, taking priority over a legacy displayName", async () => {
+    const vet = await Staff.create({
+      email: "priority@example.com",
+      role: "vet",
+      bookable: true,
+      displayName: "Legacy Name",
+      firstName: "Jane",
+      lastName: "Smith",
+      title: "DVM",
+    });
+    const list = await listBookablePractitioners();
+    expect(list.find((p) => p.staffId === vet.staffId)?.name).toBe("Jane Smith, DVM");
+  });
+
+  it("WP4.13: gains an initials field derived from firstName/lastName, never from the composed (titled) line", async () => {
+    const vet = await Staff.create({
+      email: "initials@example.com",
+      role: "vet",
+      bookable: true,
+      firstName: "Jane",
+      lastName: "Smith",
+      title: "DVM",
+    });
+    const list = await listBookablePractitioners();
+    expect(list.find((p) => p.staffId === vet.staffId)?.initials).toBe("JS");
+  });
+
+  it("WP4.13: falls back to email-local-part initials when no first/last/displayName is set", async () => {
+    const vet = await Staff.create({email: "dr.rivera@example.com", role: "vet", bookable: true});
+    const list = await listBookablePractitioners();
+    expect(list.find((p) => p.staffId === vet.staffId)?.initials).toBe("DR");
+  });
 });
 
 describe("loadPractitionerRulesAndExceptions", () => {

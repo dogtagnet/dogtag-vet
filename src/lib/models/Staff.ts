@@ -50,8 +50,36 @@ export interface StaffDoc {
   bookable: boolean;
   /** WP4.7 D2: falls back to the email local-part (the UI's job, not this field's) until set -
    * shown on calendar chips/pickers instead of a raw email once a clinic has more than one
-   * practitioner. */
+   * practitioner.
+   *
+   * WP4.13 DEPRECATES this field in favor of `firstName`/`lastName`/`title` below - it remains the
+   * middle fallback tier (`practitionerDisplayName`'s tier 2) for any row that predates the split
+   * and has not yet had a first/last name entered, and stays fully clearable
+   * (`setStaffProfile`'s `null` -> `$unset`, same as every other field here). There is
+   * deliberately NO backfill: a whitespace split of an existing free-text `displayName` (e.g. "Dr.
+   * Maria de la Cruz") would be a guess, and writing a guess to the live database is worse than
+   * falling back to it unsplit until someone enters a real first/last name. */
   displayName?: string;
+  /** WP4.13 (Kenneth issue 3: "split the name of the vet from display name to first name, last
+   * name"): the two fields `practitionerDisplayName`'s tier 1 composes as `"First Last"`, with
+   * `title` appended as `", Title"` when set. Both optional and independently clearable - a row
+   * with only one of the two still counts as tier 1 (see `practitionerDisplayName`'s own doc
+   * comment for the exact rule). */
+  firstName?: string;
+  lastName?: string;
+  /** WP4.13: a professional qualification shown after the composed name, e.g. "DVM" ->
+   * "Jane Smith, DVM". Only ever rendered as part of tier 1 (alongside `firstName`/`lastName`) -
+   * never appended to the deprecated `displayName` tier or the email-local-part tier, since a
+   * title with no real name to attach to would read as a stray fragment. Public: appears in the
+   * name line on the booking wire and the calendar, same as the name itself. */
+  title?: string;
+  /** WP4.13: a government accreditation number (UI placeholder "USDA accreditation number" - an
+   * example, not a format requirement, since accrediting bodies vary by jurisdiction). INTERNAL
+   * ONLY for now (Kenneth's own ask named a placeholder example but did not ask for public
+   * display) - shown and edited in Settings alone; every public-facing surface (the booking wire,
+   * the calendar, ICS, emails) must never read this field. See `plans/wp4.13-practitioner-
+   * profile.md` section 6 for the open question to Kenneth on whether this should become public. */
+  accreditationNumber?: string;
   /** WP4.7 D4: this staff member's own wallet, recorded so the Settings "Issuance operators"
    * panel can read its on-chain `operators(address)` status and submit `addOperator`/
    * `removeOperator` for it. Always lowercased on write (`schemas/staff.ts`'s
@@ -71,6 +99,10 @@ const staffSchema = new Schema<StaffDoc>(
     disabled: {type: Boolean, required: true, default: false},
     bookable: {type: Boolean, required: true, default: false},
     displayName: String,
+    firstName: String,
+    lastName: String,
+    title: String,
+    accreditationNumber: String,
     walletAddress: {type: String, lowercase: true},
   },
   {timestamps: true},
@@ -163,22 +195,46 @@ export async function setStaffRole(staffId: string, role: StaffRole): Promise<St
 }
 
 /**
- * WP4.7 A3: updates the practitioner-profile fields (`bookable`, `displayName`, `walletAddress`) -
+ * WP4.7 A3 (widened by WP4.13): updates the practitioner-profile fields (`bookable`,
+ * `displayName`, `firstName`, `lastName`, `title`, `accreditationNumber`, `walletAddress`) -
  * owner-only via the same `PATCH /api/settings/staff/:staffId` route `setStaffRole`/
- * `setStaffDisabled` back; self-service editing of one's own row is explicitly OUT of scope for
- * this WP (an owner edits everyone's, including their own). `undefined` in `patch` means "leave
- * unchanged" for every field EXCEPT `walletAddress`, which additionally accepts an explicit `null`
- * to mean "clear it" (`$unset`) - a vet who no longer wants a wallet on file must be able to remove
- * it, not merely overwrite it with a different one.
+ * `setStaffDisabled` back, OR the caller's own row via the self-service `/me/wallet` and
+ * `/me/profile` routes (each of which only ever passes a subset of these keys for the session's
+ * own `staffId` - this function itself does no scoping, the callers do).
+ *
+ * `undefined` in `patch` means "leave unchanged" for every field. `null` means "clear it"
+ * (`$unset`) and is accepted for EVERY string field here, `displayName` included - WP4.13 fixes a
+ * pre-existing gap where `displayName` had no way to be cleared at all (`updateStaffSchema` only
+ * ever accepted a non-empty string for it); a vet who no longer wants a value recorded for any of
+ * these fields must be able to remove it, not merely overwrite it with something else.
  */
 export async function setStaffProfile(
   staffId: string,
-  patch: {bookable?: boolean; displayName?: string; walletAddress?: string | null},
+  patch: {
+    bookable?: boolean;
+    displayName?: string | null;
+    firstName?: string | null;
+    lastName?: string | null;
+    title?: string | null;
+    accreditationNumber?: string | null;
+    walletAddress?: string | null;
+  },
 ): Promise<StaffDoc | null> {
-  const set: Partial<Pick<StaffDoc, "bookable" | "displayName" | "walletAddress">> = {};
+  const set: Partial<
+    Pick<StaffDoc, "bookable" | "displayName" | "firstName" | "lastName" | "title" | "accreditationNumber" | "walletAddress">
+  > = {};
   const unset: Record<string, ""> = {};
   if (patch.bookable !== undefined) set.bookable = patch.bookable;
-  if (patch.displayName !== undefined) set.displayName = patch.displayName;
+  if (patch.displayName === null) unset.displayName = "";
+  else if (patch.displayName !== undefined) set.displayName = patch.displayName;
+  if (patch.firstName === null) unset.firstName = "";
+  else if (patch.firstName !== undefined) set.firstName = patch.firstName;
+  if (patch.lastName === null) unset.lastName = "";
+  else if (patch.lastName !== undefined) set.lastName = patch.lastName;
+  if (patch.title === null) unset.title = "";
+  else if (patch.title !== undefined) set.title = patch.title;
+  if (patch.accreditationNumber === null) unset.accreditationNumber = "";
+  else if (patch.accreditationNumber !== undefined) set.accreditationNumber = patch.accreditationNumber;
   if (patch.walletAddress === null) unset.walletAddress = "";
   else if (patch.walletAddress !== undefined) set.walletAddress = patch.walletAddress;
 

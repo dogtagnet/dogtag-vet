@@ -48,14 +48,91 @@ export function isVetOrOwner(role: StaffRole | undefined | null): boolean {
 
 /**
  * A bookable practitioner's display name for calendar chips, the practitioner picker (A5/A6), and
- * the public availability response's `practitioners[].name` (D5) - `displayName` when set (D2),
- * else the email's local part (everything before `@`) as a reasonable default rather than showing
- * a full email address (or nothing) on a public-facing slot button. Pure and reused everywhere a
- * practitioner needs a human-readable name so this fallback rule lives in exactly one place.
+ * the public availability response's `practitioners[].name` (D5) - the ONE composition point
+ * every one of those surfaces shares, so the tier order below can never drift between them.
+ *
+ * WP4.13 (Kenneth issue 3) widens this from two tiers to three:
+ * 1. `firstName`/`lastName` (either or both set) - composed as `"First Last"`, or just whichever
+ *    one is set if only one is - with `, Title` appended when `title` is also set ("Jane Smith,
+ *    DVM"). This is the CURRENT, encouraged way to name a practitioner.
+ * 2. `displayName` - DEPRECATED (see `Staff.ts`'s own doc comment): a legacy free-text name from
+ *    before the first/last split existed, still honored for any row nobody has updated yet. Never
+ *    gets a title appended - a title only ever pairs with tier 1's real first/last fields.
+ * 3. The email's local part (everything before `@`) - a reasonable default rather than showing a
+ *    full email address (or nothing) on a public-facing slot button. Two e2e specs
+ *    (`practitioner-mode.spec.ts`, `vet-wallet-status.spec.ts`) depend on this tier staying
+ *    reachable for a practitioner with no name recorded at all.
+ *
+ * Pure and reused everywhere a practitioner needs a human-readable name so this fallback rule
+ * lives in exactly one place. See `practitionerInitials` below for the SEPARATE function that
+ * derives initials - deliberately never by splitting this function's own output (a composed
+ * "Jane Smith, DVM" line splits on whitespace into the wrong pair of letters; initials are derived
+ * from the same raw fields instead).
  */
-export function practitionerDisplayName(staff: Pick<StaffDoc, "displayName" | "email">): string {
+export function practitionerDisplayName(
+  staff: Pick<StaffDoc, "firstName" | "lastName" | "title" | "displayName" | "email">,
+): string {
+  const firstName = staff.firstName?.trim();
+  const lastName = staff.lastName?.trim();
+  if (firstName || lastName) {
+    const fullName = [firstName, lastName].filter(Boolean).join(" ");
+    const title = staff.title?.trim();
+    return title ? `${fullName}, ${title}` : fullName;
+  }
   if (staff.displayName?.trim()) return staff.displayName.trim();
   return staff.email.split("@")[0] ?? staff.email;
+}
+
+/** Splits a plain (untitled) name into up to 2 initials: a single word (e.g. an email local part
+ * or a lone first name) takes its own first 2 characters; two or more words take the first
+ * character of the first and of the last word. Shared by `practitionerInitials` for every tier -
+ * never given a string that might still carry a trailing ", Title" (callers strip that first). */
+function initialsFromWords(name: string): string {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return "?";
+  if (parts.length === 1) return (parts[0] ?? "").slice(0, 2).toUpperCase();
+  return `${(parts[0] ?? "")[0] ?? ""}${(parts[parts.length - 1] ?? "")[0] ?? ""}`.toUpperCase();
+}
+
+/**
+ * WP4.13 - a practitioner's initials for dense UI (calendar day-view column headers, appointment
+ * chips), derived from the SAME raw fields `practitionerDisplayName` composes from, but NEVER by
+ * splitting that function's own composed output. That trap is real: `practitionerDisplayName`'s
+ * tier-1 output for `{firstName: "Jane", lastName: "Smith", title: "DVM"}` is `"Jane Smith, DVM"`,
+ * and naively splitting THAT on whitespace takes the first letter of `"Jane"` and of `"DVM"` -
+ * "JD", not the correct "JS" - because the title tags along as if it were part of the name. This
+ * function instead uses `firstName`/`lastName` directly (tier 1) whenever either is set, so a
+ * title never enters the computation at all; otherwise it falls back to the SAME tier-2/3 name
+ * `practitionerDisplayName` would show (the deprecated `displayName`, else the email local part),
+ * with any accidentally-embedded ", trailing text" stripped first - a legacy `displayName` set
+ * before this WP could freely contain a comma (someone's own manual "Name, Title" workaround),
+ * and stripping it here keeps that case from producing nonsense initials the way the trap above
+ * would.
+ */
+export function practitionerInitials(
+  staff: Pick<StaffDoc, "firstName" | "lastName" | "displayName" | "email">,
+): string {
+  const firstName = staff.firstName?.trim();
+  const lastName = staff.lastName?.trim();
+  if (firstName || lastName) return initialsFromWords([firstName, lastName].filter(Boolean).join(" "));
+
+  const fallbackName = staff.displayName?.trim() || staff.email.split("@")[0] || staff.email;
+  const beforeFirstComma = fallbackName.split(",")[0] ?? fallbackName;
+  return initialsFromWords(beforeFirstComma);
+}
+
+/**
+ * Whether `staff` has an EXPLICIT name on file - tier 1 (`firstName`/`lastName`) or the deprecated
+ * tier 2 (`displayName`) - as opposed to only ever resolving `practitionerDisplayName` through the
+ * tier-3 email fallback. `practitionerDisplayName` itself always returns a usable string either
+ * way (the email fallback IS the intended behavior for calendar chips/the booking wire, where
+ * SOME name must always render) - this predicate exists only for the staff roster's own Name
+ * column, which sits right next to an Email column already: showing the identical email-derived
+ * text twice, once per column, would read as a display bug rather than useful information, so the
+ * roster leaves that column blank for a staff member nobody has ever named.
+ */
+export function hasExplicitName(staff: Pick<StaffDoc, "firstName" | "lastName" | "displayName">): boolean {
+  return Boolean(staff.firstName?.trim() || staff.lastName?.trim() || staff.displayName?.trim());
 }
 
 /**
