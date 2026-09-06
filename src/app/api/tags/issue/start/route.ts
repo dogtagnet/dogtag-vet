@@ -56,11 +56,22 @@ export async function POST(request: Request) {
       registrationId: input.profile.registrationId,
       registrationAuthority: input.profile.registrationAuthority,
       ownerClientIds: [input.clientId],
+      // WP4.15 multi-owner (PLANNED) - a brand-new pet has no prior primary owner to protect, so
+      // this is set unconditionally at creation (see `Pet.ts`'s own doc comment on why this field
+      // is never inferred or overwritten once set).
+      primaryOwnerClientId: input.clientId,
       dogTag: {},
       searchKey: buildPetSearchKey({name: input.petName, species: input.profile.species, breed: input.profile.breedLabel}),
     });
     petId = pet.petId;
     await linkPetToClient(petId, input.clientId);
+  } else {
+    // WP4.15 multi-owner (PLANNED) - an EXISTING pet being issued a (first) tag: set the primary
+    // owner ONLY IF ABSENT, never overwriting a value some earlier issuance already recorded (the
+    // WP4.13 `displayName` lesson - a guess or a silent overwrite here is worse than leaving a
+    // legacy pet's primary "not recorded"). `$exists: false` targets exactly the pets that have
+    // never had this field set, matching mongoose's own on-write semantics.
+    await Pet.updateOne({petId, primaryOwnerClientId: {$exists: false}}, {$set: {primaryOwnerClientId: input.clientId}});
   }
 
   let allocation;

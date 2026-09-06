@@ -93,6 +93,20 @@ export interface PetDoc {
   registrationId?: string;
   registrationAuthority?: string;
   ownerClientIds: string[];
+  /** WP4.15 multi-owner (PLANNED) - the client this tag's primary owner is, set ONCE by
+   * `/api/tags/issue/start` at issuance time (both the new-pet and existing-pet branches) and
+   * never overwritten after: `ownerClientIds` is a plain many-to-many membership list with no
+   * notion of ordering or primacy (`ownerClientIds[0]` is insertion-ordered, not "the" owner), so
+   * this field is the one place "who is the primary owner" is an actual, asserted fact rather than
+   * an inference. Optional and BACK-COMPAT: every pet issued before this field existed has none,
+   * and this app never guesses or backfills one for such a pet - the WP4.13 `displayName` lesson
+   * ("a guess written to the live database is worse than falling back to the unsplit text")
+   * applies identically here; a legacy pet's Owners card shows every current owner with an honest
+   * "primary not recorded" rather than picking one. A primary-owner CHANGE is a fresh custodial
+   * issuance under a new dogTagId (`docs/DELEGATION.md` section 4.7 - Kenneth's own ask, verbatim:
+   * "changing primary owner means re-issuing a new dogtag id"), so a replace-flow re-issue does
+   * NOT reassign this field on the pet's prior tag; the new tag's own issuance sets its own. */
+  primaryOwnerClientId?: string;
   dogTag: DogTagInfo;
   photoFileId?: string;
   searchKey: string;
@@ -188,6 +202,7 @@ const petSchema = new Schema<PetDoc>(
     registrationId: String,
     registrationAuthority: String,
     ownerClientIds: {type: [String], default: [], index: true},
+    primaryOwnerClientId: String,
     dogTag: {type: dogTagSchema, default: () => ({})},
     photoFileId: String,
     searchKey: {type: String, required: true, index: true},
