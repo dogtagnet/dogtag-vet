@@ -179,6 +179,38 @@ test.describe.serial("WP4.13 - practitioner first/last name, title, accreditatio
     ]);
     await expect(cardAfterReload.getByRole("checkbox", {name: "Bookable"})).toBeChecked();
 
+    // D1 fix round (grader): a too-long Title must show an inline error INSIDE this
+    // practitioner's own card (scoped via `cardAfterReload`, never a bare page-level locator -
+    // the same field label exists on the "My profile" card too) AND must not discard what the
+    // owner typed. Two separate mechanisms were broken before this fix round: (1) `StaffSection`
+    // never wired `FormField`'s own `error` prop at all (a 400 surfaced only as a generic
+    // snackbar), and (2) `update()`'s failure path unconditionally called
+    // `setStaff(previousStaff)`, which flips `ProfileTextField`'s `storedValue` prop back to the
+    // last-saved value and fires its `useEffect([storedValue])`, silently discarding the draft -
+    // exactly the two-part bug `MyProfileSection` already avoided (plan RESULT deviation 7). The
+    // second assertion below (the field still holding the 41-character string) is what actually
+    // pins the second mechanism; without it, a fixer who wires the `error` prop but leaves the
+    // blanket rollback in place would still pass on a half-fix that reads worse than the previous
+    // snackbar-only behavior, not better - the grader's own explicit warning.
+    const tooLongTitle = "T".repeat(41);
+    await cardAfterReload.getByLabel("Title / qualification").fill(tooLongTitle);
+    await Promise.all([
+      page.waitForResponse((res) => isStaffPatch(res.url()) && res.request().method() === "PATCH"),
+      cardAfterReload.getByLabel("Title / qualification").blur(),
+    ]);
+    await expect(cardAfterReload.getByText(/at most 40 character/i)).toBeVisible();
+    await expect(cardAfterReload.getByLabel("Title / qualification")).toHaveValue(tooLongTitle);
+
+    // Restore a valid title - test 2 (per-practitioner mode) asserts the composed "Jane Smith,
+    // DVM" line, including this field.
+    await cardAfterReload.getByLabel("Title / qualification").fill("DVM");
+    await Promise.all([
+      page.waitForResponse((res) => isStaffPatch(res.url()) && res.request().method() === "PATCH"),
+      cardAfterReload.getByLabel("Title / qualification").blur(),
+    ]);
+    await expect(cardAfterReload.getByLabel("Title / qualification")).toHaveValue("DVM");
+    await expect(cardAfterReload.getByText(/at most 40 character/i)).toHaveCount(0);
+
     // The roster's own Name column (Staff access, a SEPARATE section from Practitioner profiles -
     // scoped so this can never accidentally match the practitioner card's own header instead).
     const roster = page.locator("section", {hasText: "Staff access"});

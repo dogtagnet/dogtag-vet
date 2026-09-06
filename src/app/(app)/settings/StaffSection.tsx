@@ -10,6 +10,52 @@ import {useSnackbar} from "@/components/ui/Snackbar";
 import {hasExplicitName, isVetOrOwner, practitionerDisplayName, staffRoleLabel, staffRoleOptions} from "@/lib/staffRoleTone";
 import type {StaffDoc, StaffRole} from "@/lib/models/Staff";
 
+/** The five practitioner-profile fields this card's own zod schema (`updateStaffSchema`) can
+ * reject with a per-field message - `role`/`disabled`/`bookable` are a Select/Button/checkbox with
+ * no free-text draft to preserve, and (per `updateStaffSchema`) can only ever fail with a
+ * whole-object `.refine` message, which zod's `flatten()` puts in `formErrors`, never
+ * `fieldErrors` - so they are deliberately excluded from this union; see `update()`'s own comment
+ * for how that distinction decides whether a failed PATCH rolls the optimistic guess back. */
+type ProfileFieldKey = "firstName" | "lastName" | "title" | "accreditationNumber" | "walletAddress";
+
+const PROFILE_FIELD_KEYS: readonly ProfileFieldKey[] = ["firstName", "lastName", "title", "accreditationNumber", "walletAddress"];
+
+type FieldErrors = Partial<Record<ProfileFieldKey, string>>;
+
+function isProfileFieldKey(key: string): key is ProfileFieldKey {
+  return (PROFILE_FIELD_KEYS as readonly string[]).includes(key);
+}
+
+/**
+ * The API's 400 shape: `error.details` is a zod `flatten()` - `fieldErrors` keyed by payload
+ * field. Same convention as `MyProfileSection.tsx`'s own `parseFieldErrors` (each form's
+ * `FieldErrors` type keys to its own field union - see that file's comment for why this small
+ * function is restated per form rather than shared into one generic helper).
+ */
+function parseFieldErrors(body: unknown): {message?: string; fields: FieldErrors} {
+  const error = (body as {error?: {message?: string; details?: {fieldErrors?: Record<string, string[]>}}} | null)?.error;
+  const fields: FieldErrors = {};
+  for (const [key, messages] of Object.entries(error?.details?.fieldErrors ?? {})) {
+    if (messages?.[0] && isProfileFieldKey(key)) fields[key] = messages[0];
+  }
+  return {message: error?.message, fields};
+}
+
+function fieldLabel(key: ProfileFieldKey): string {
+  switch (key) {
+    case "firstName":
+      return "First name";
+    case "lastName":
+      return "Last name";
+    case "title":
+      return "Title / qualification";
+    case "accreditationNumber":
+      return "Government accreditation number";
+    case "walletAddress":
+      return "Wallet address";
+  }
+}
+
 /**
  * WP4.13 - one text field bound to a single practitioner-profile string field (first name, last
  * name, title, or accreditation number), saving on blur only when the trimmed value actually
@@ -28,12 +74,19 @@ function ProfileTextField({
   disabled,
   placeholder,
   onSave,
+  onEdit,
 }: {
   id: string;
   value: string | undefined;
   disabled: boolean;
   placeholder?: string;
   onSave: (value: string | null) => void;
+  /** Fired on every keystroke, before any blur/save - retires this field's own stale inline
+   * error the moment the practitioner starts correcting it, mirroring MyProfileSection's own
+   * `setField`. Optional and separate from `onSave` (which only fires on a committing blur)
+   * because this component stays a plain draft-holder with no knowledge of field errors itself -
+   * see its own doc comment above. */
+  onEdit?: () => void;
 }) {
   const [value, setValue] = useState(storedValue ?? "");
   useEffect(() => setValue(storedValue ?? ""), [storedValue]);
@@ -42,7 +95,10 @@ function ProfileTextField({
       id={id}
       value={value}
       disabled={disabled}
-      onChange={(e) => setValue(e.target.value)}
+      onChange={(e) => {
+        setValue(e.target.value);
+        onEdit?.();
+      }}
       onBlur={() => {
         const trimmed = value.trim();
         if (trimmed !== (storedValue ?? "")) onSave(trimmed === "" ? null : trimmed);
@@ -57,7 +113,20 @@ function ProfileTextField({
  * saves `null` (Staff.setStaffProfile's documented `$unset` signal), not an empty string, so
  * clearing a wallet actually clears it rather than storing "" as if it were a real (invalid)
  * address. */
-function WalletAddressField({id, staff, disabled, onSave}: {id: string; staff: StaffDoc; disabled: boolean; onSave: (staffId: string, walletAddress: string | null) => void}) {
+function WalletAddressField({
+  id,
+  staff,
+  disabled,
+  onSave,
+  onEdit,
+}: {
+  id: string;
+  staff: StaffDoc;
+  disabled: boolean;
+  onSave: (staffId: string, walletAddress: string | null) => void;
+  /** Same purpose as `ProfileTextField`'s own `onEdit` above. */
+  onEdit?: () => void;
+}) {
   const [value, setValue] = useState(staff.walletAddress ?? "");
   useEffect(() => setValue(staff.walletAddress ?? ""), [staff.walletAddress]);
   return (
@@ -65,7 +134,10 @@ function WalletAddressField({id, staff, disabled, onSave}: {id: string; staff: S
       id={id}
       value={value}
       disabled={disabled}
-      onChange={(e) => setValue(e.target.value)}
+      onChange={(e) => {
+        setValue(e.target.value);
+        onEdit?.();
+      }}
       onBlur={() => {
         const trimmed = value.trim();
         if (trimmed !== (staff.walletAddress ?? "")) onSave(staff.staffId, trimmed === "" ? null : trimmed);
@@ -94,6 +166,13 @@ export function StaffSection({initial, isOwner, currentStaffId}: {initial: Staff
   const [email, setEmail] = useState("");
   const [role, setRole] = useState<StaffRole>("staff");
   const [busy, setBusy] = useState(false);
+  // Keyed by staffId, not a single shared object - this card renders one block per practitioner,
+  // so a validation error on one row must never bleed into or clear another row's own error.
+  const [fieldErrors, setFieldErrors] = useState<Record<string, FieldErrors>>({});
+
+  function clearFieldError(staffId: string, key: ProfileFieldKey) {
+    setFieldErrors((prev) => (prev[staffId]?.[key] ? {...prev, [staffId]: {...prev[staffId], [key]: undefined}} : prev));
+  }
 
   async function refresh() {
     const res = await fetch("/api/settings/staff");
@@ -139,6 +218,10 @@ export function StaffSection({initial, isOwner, currentStaffId}: {initial: Staff
     },
   ) {
     setBusy(true);
+    // A fresh attempt retires this row's own stale error(s) - mirrors MyProfileSection's own
+    // `setFieldErrors({})` at the top of `save()`, scoped to just this staffId so it can never
+    // clear a DIFFERENT practitioner's still-valid error.
+    setFieldErrors((prev) => ({...prev, [staffId]: {}}));
     // Optimistic update: every control bound to `staff` here (the role Select, the disable/restore
     // Buttons, and WP4.7 A5's new bookable checkbox) is controlled by this state, which otherwise
     // only ever changes once `refresh()` resolves - a controlled checkbox re-renders back to its
@@ -147,6 +230,8 @@ export function StaffSection({initial, isOwner, currentStaffId}: {initial: Staff
     // failing with "did not change its state" while building A5's own visual check). Rolled back on
     // failure; reconciled with the server's authoritative shape either way via the `refresh()` below
     // (e.g. wouldRemoveActiveOwnerStatus side effects this optimistic patch doesn't know about).
+    // EXCEPT a field-level validation error (see the `!res.ok` branch below) - see that comment for
+    // why those specifically skip this rollback instead.
     const previousStaff = staff;
     // StaffDoc models "unset" as the field being absent (`undefined`), never `null` - `null` is
     // only the WIRE signal telling the API to $unset it (Staff.setStaffProfile's own contract).
@@ -177,7 +262,29 @@ export function StaffSection({initial, isOwner, currentStaffId}: {initial: Staff
         body: JSON.stringify(patch),
       });
       const body = await res.json().catch(() => null);
-      if (!res.ok) throw new Error(body?.error?.message ?? "Could not update this staff member.");
+      if (!res.ok) {
+        const {message, fields} = parseFieldErrors(body);
+        const firstField = Object.entries(fields).find((entry): entry is [string, string] => Boolean(entry[1]));
+        if (firstField) {
+          // A field-level error means the server parsed the request and rejected one specific
+          // field by NAME (title too long, a malformed wallet address, etc.) - the row was never
+          // written, so there is no optimistic state to undo, and the practitioner's typed text
+          // should survive next to its inline error exactly as MyProfileSection's own save()
+          // already does (plan RESULT deviation 7), rather than snapping back to the old value the
+          // instant `setStaff(previousStaff)` re-triggers ProfileTextField's/WalletAddressField's
+          // own `useEffect([storedValue])`. Deliberately NOT keyed on `res.status === 400` alone:
+          // an own-row role/disabled refusal and the "at least one active owner must remain" guard
+          // are ALSO plain 400s but carry no per-field detail (zod's `flatten()` puts a
+          // whole-object `.refine` message in `formErrors`, not `fieldErrors`) - those fall through
+          // to the rollback below because their controls (Select/Button) have no draft of their own
+          // to protect, and leaving their optimistic guess on screen after a refusal would
+          // misrepresent the row's real state.
+          setFieldErrors((prev) => ({...prev, [staffId]: fields}));
+          snackbar.show(`${fieldLabel(firstField[0] as ProfileFieldKey)}: ${firstField[1]}`, "danger");
+          return;
+        }
+        throw new Error(message ?? "Could not update this staff member.");
+      }
       await refresh();
       // WP4.7 A5 - role/bookable changes here feed BookingConfigSection's practitioner picker
       // (`listBookablePractitioners()`, fetched server-side once in page.tsx and passed down as a
@@ -331,26 +438,29 @@ export function StaffSection({initial, isOwner, currentStaffId}: {initial: Staff
                   </p>
                 )}
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                  <FormField label="First name" htmlFor={`first-name-${s.staffId}`}>
+                  <FormField label="First name" htmlFor={`first-name-${s.staffId}`} error={fieldErrors[s.staffId]?.firstName}>
                     <ProfileTextField
                       id={`first-name-${s.staffId}`}
                       value={s.firstName}
                       disabled={!isOwner || busy}
                       onSave={(firstName) => update(s.staffId, {firstName})}
+                      onEdit={() => clearFieldError(s.staffId, "firstName")}
                     />
                   </FormField>
-                  <FormField label="Last name" htmlFor={`last-name-${s.staffId}`}>
+                  <FormField label="Last name" htmlFor={`last-name-${s.staffId}`} error={fieldErrors[s.staffId]?.lastName}>
                     <ProfileTextField
                       id={`last-name-${s.staffId}`}
                       value={s.lastName}
                       disabled={!isOwner || busy}
                       onSave={(lastName) => update(s.staffId, {lastName})}
+                      onEdit={() => clearFieldError(s.staffId, "lastName")}
                     />
                   </FormField>
                   <FormField
                     label="Title / qualification"
                     htmlFor={`title-${s.staffId}`}
                     helperText="Shown after the name, e.g. Jane Smith, DVM."
+                    error={fieldErrors[s.staffId]?.title}
                   >
                     <ProfileTextField
                       id={`title-${s.staffId}`}
@@ -358,12 +468,14 @@ export function StaffSection({initial, isOwner, currentStaffId}: {initial: Staff
                       placeholder="DVM"
                       disabled={!isOwner || busy}
                       onSave={(title) => update(s.staffId, {title})}
+                      onEdit={() => clearFieldError(s.staffId, "title")}
                     />
                   </FormField>
                   <FormField
                     label="Government accreditation number"
                     htmlFor={`accreditation-${s.staffId}`}
                     helperText="Internal only - never shown to clients or on the public booking page."
+                    error={fieldErrors[s.staffId]?.accreditationNumber}
                   >
                     <ProfileTextField
                       id={`accreditation-${s.staffId}`}
@@ -371,6 +483,7 @@ export function StaffSection({initial, isOwner, currentStaffId}: {initial: Staff
                       placeholder="USDA accreditation number"
                       disabled={!isOwner || busy}
                       onSave={(accreditationNumber) => update(s.staffId, {accreditationNumber})}
+                      onEdit={() => clearFieldError(s.staffId, "accreditationNumber")}
                     />
                   </FormField>
                   <FormField
@@ -378,12 +491,14 @@ export function StaffSection({initial, isOwner, currentStaffId}: {initial: Staff
                     htmlFor={`wallet-${s.staffId}`}
                     helperText="The address that signs this practitioner's DogTag issuance transactions."
                     className="sm:col-span-2"
+                    error={fieldErrors[s.staffId]?.walletAddress}
                   >
                     <WalletAddressField
                       id={`wallet-${s.staffId}`}
                       staff={s}
                       disabled={!isOwner || busy}
                       onSave={(staffId, walletAddress) => update(staffId, {walletAddress})}
+                      onEdit={() => clearFieldError(s.staffId, "walletAddress")}
                     />
                   </FormField>
                 </div>

@@ -149,6 +149,20 @@ test.beforeEach(async ({page}) => {
 
 test.describe("export ceremony (plan 2.2)", () => {
   test("staff clicks Share on the pet page, the QR resolves once with the full leaf set, and a second fetch is 410", async ({page}) => {
+    // Generous, not the 30s default - see calendar-services.spec.ts's/booking-config-timezone.spec.ts's
+    // own identical note. This is the file's own documented first cold client webpack build of
+    // PetTagCard's new composition in the WHOLE suite (top-of-file comment), AND the "Scan with the
+    // owner's DogTag app" wait below already needs its own 15s override because the POST + client QR
+    // render "can outrun the 5s default under load" - between the two, well over half the 30s default
+    // is already spoken for before the rest of the test (DB seed, page load, two API round trips) even
+    // runs. WP4.13 fix round D2: two independent full-suite runs (11 files, one worker, tag-custody 9th
+    // alphabetically after ~70 prior tests) both failed HERE under cumulative dev-server load - once at
+    // the 15s "Scan with..." wait, once at the plain `page.request.get(qrUrl)` below with no override at
+    // all - while the SAME test passed cleanly alone, paired with practitioner-profile.spec.ts (17/17),
+    // and paired with the pre-existing practitioner-mode.spec.ts (19/19). Pre-existing test
+    // infrastructure fragility, not a WP4.13 product regression (see plan RESULT deviation 8 for the
+    // full evidence) - fixed here rather than merely documented, per house standard on flakiness.
+    test.setTimeout(60_000);
     const petId = await createPetApi(page, "Rex");
     const fixture = buildVerifiableProfile("Rex", "dog");
     await seedCustodiedPet(page, petId, "70001", fixture);
