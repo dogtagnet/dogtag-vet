@@ -112,6 +112,18 @@ describe("computeRecordValidity", () => {
     it("both masked - 'hidden'", () => {
       expect(computeRecordValidity("active", undefined, undefined, now)).toBe("hidden");
     });
+
+    // Grade round 2 R1 (residual from round 1's own new spec prose): leaf-commitment.md section
+    // 16's freshly-written subsection claimed 'expired' applies "regardless of whether validFrom
+    // is also disclosed" - false against this exact branch. The sibling test above already proves
+    // 'hidden' beats a validUntil that is disclosed and in the FUTURE; this one proves the same
+    // precedence when validUntil is disclosed and ALREADY PAST - the one case where a checker that
+    // read the old (wrong) spec text would expect 'expired', not 'hidden'. Bite: gate an
+    // `expired` check on `validUntilIsoDate && now >= cutoff` and run it BEFORE this line (mirroring
+    // the deleted spec clause verbatim) - turns exactly this test red, no other test in this file.
+    it("validFrom masked and validUntil disclosed but ALREADY PAST - still 'hidden', never 'expired'", () => {
+      expect(computeRecordValidity("active", undefined, "2000-01-01", now)).toBe("hidden");
+    });
   });
 
   // Grade round 1 D1's second (folded-in) case: validFrom was never consulted at all before this

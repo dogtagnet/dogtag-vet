@@ -117,6 +117,23 @@ describe("verifyPresentedRecordArtifact", () => {
     expect(result).toEqual({stage: "verified", issuerClone: CLONE, recordType: "VACCINATION", validity: "revoked"});
   });
 
+  // Grade round 2 (coordinator addendum, pinning leaf-commitment.md section 16's ordered
+  // procedure step 1 over step 4): the test above uses the default window, whose validUntil
+  // ("2027-09-01") is still in the future - a bug that skipped or deprioritized the isValid(root)
+  // check would independently compute "valid" there, not "expired", so that test cannot tell
+  // "revoked outranks valid" apart from "revoked outranks expired". This one discloses a window
+  // that has ALREADY closed on its own - a non-revoked artifact with this exact validFrom/validUntil
+  // pair reports "expired" (proved by the "verified/expired" test below using the same shape) - and
+  // pins that isValid(root) === false still wins, unconditionally, over that disclosed, expired
+  // window. Bite: moving the `status === "revoked"` check in computeRecordValidity to run AFTER the
+  // date comparisons turns exactly this test red (it would report "expired" instead of "revoked").
+  it("verified/revoked: isValid is false even though the disclosed window has already expired on its own", async () => {
+    const artifact = buildArtifact({validFrom: "1999-01-01", validUntil: "2000-01-01"});
+    const deps: RecordChainDeps = {...agreeingDeps(), readIsValidRoot: async () => false};
+    const result = await verifyPresentedRecordArtifact(artifact, deps, CHAIN_ID);
+    expect(result).toEqual({stage: "verified", issuerClone: CLONE, recordType: "VACCINATION", validity: "revoked"});
+  });
+
   it("verified/valid: every check agrees, isValid true, validUntil in the future", async () => {
     const artifact = buildArtifact({validUntil: "2099-01-01"});
     const result = await verifyPresentedRecordArtifact(artifact, agreeingDeps(), CHAIN_ID);
