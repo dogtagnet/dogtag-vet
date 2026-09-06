@@ -16,6 +16,15 @@ export const mintProfileSchema = z.object({
   neuterStatus: z.enum(["intact", "neutered", "spayed", "unknown"]).optional(),
   dateOfBirth: isoDate.optional(),
   weightHistory: z.array(weightEntrySchema).default([]),
+  // WP4.12 (Kenneth issue 2) - three optional, flat `credentialSubject.*` string leaves folded by
+  // the owner's device (dogtag-protocol's dog-profile schema/leaf-dictionary, ticked 1.0.0 ->
+  // 1.1.0). Trimmed + capped at 120 like every other free-text profile field this app validates
+  // (see staff.ts's firstName/lastName/displayName) - not `.min(1)`, since an empty string is a
+  // valid "no value" input here exactly like species/breedLabel above (the device's own `addString`
+  // fold already skips empty strings when building leaves, so this schema does not need to).
+  color: z.string().trim().max(120).optional(),
+  registrationId: z.string().trim().max(120).optional(),
+  registrationAuthority: z.string().trim().max(120).optional(),
 });
 
 /** Staff-side `/tags/issue` start-session input: pick/create client+pet, enter owner identity and
