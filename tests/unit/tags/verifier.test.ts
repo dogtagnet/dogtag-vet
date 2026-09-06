@@ -235,4 +235,34 @@ describe("mapVerifiedLeavesToPetAttributes (re-exported, exercised directly from
     const {leaves} = buildVerifiableFixture();
     expect(mapVerifiedLeavesToPetAttributes(leaves)).toEqual({species: "dog", name: "Rex"});
   });
+
+  /** WP4.12 (Kenneth issue 2) - color/registrationId/registrationAuthority, mirroring the existing
+   * name/species case above exactly: PRESENT when a leaf exists at the keyPath, and genuinely
+   * ABSENT (not merely `undefined`-valued) when it does not - `mapVerifiedLeavesToPetAttributes`'s
+   * own trailing `Object.entries(...).filter(([, v]) => v !== undefined)` is what strips it, so
+   * `toHaveProperty` (not `toBeUndefined`) is the assertion that actually exercises that filter. */
+  it("maps color/registrationId/registrationAuthority when present as string leaves", () => {
+    const salt = (n: number) => new Uint8Array(16).fill(n);
+    const saltHexOf = (n: number) => ("0x" + Array.from(salt(n)).map((b) => b.toString(16).padStart(2, "0")).join("")) as `0x${string}`;
+    const leaves: OpenedLeaf[] = [
+      {keyPath: "credentialSubject.name", saltHex: saltHexOf(1), tag: TypeTag.String, value: "Rex"},
+      {keyPath: "credentialSubject.color", saltHex: saltHexOf(2), tag: TypeTag.String, value: "brown"},
+      {keyPath: "credentialSubject.registrationId", saltHex: saltHexOf(3), tag: TypeTag.String, value: "SGP-DOG-0042"},
+      {keyPath: "credentialSubject.registrationAuthority", saltHex: saltHexOf(4), tag: TypeTag.String, value: "AVS Singapore"},
+    ];
+    expect(mapVerifiedLeavesToPetAttributes(leaves)).toEqual({
+      name: "Rex",
+      color: "brown",
+      registrationId: "SGP-DOG-0042",
+      registrationAuthority: "AVS Singapore",
+    });
+  });
+
+  it("omits color/registrationId/registrationAuthority entirely (not undefined-valued) when no such leaf exists", () => {
+    const {leaves} = buildVerifiableFixture(); // species + name only, no color/registrationId/registrationAuthority
+    const attributes = mapVerifiedLeavesToPetAttributes(leaves);
+    expect(attributes).not.toHaveProperty("color");
+    expect(attributes).not.toHaveProperty("registrationId");
+    expect(attributes).not.toHaveProperty("registrationAuthority");
+  });
 });

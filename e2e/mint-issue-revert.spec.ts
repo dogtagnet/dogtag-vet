@@ -2,7 +2,7 @@ import {expect, test, type Page} from "@playwright/test";
 import {execFile} from "node:child_process";
 import {promisify} from "node:util";
 import {fileURLToPath} from "node:url";
-import {randomUUID} from "node:crypto";
+import {randomBytes, randomUUID} from "node:crypto";
 import {MongoClient} from "mongodb";
 import {E2E_MONGO_URI} from "./mongo-fixture";
 import {RPC_STUB_URL, getLastSendTransaction, resetRpcStub, setRpcGasEstimate, setRpcReceipt, setRpcScenario} from "./rpcStub";
@@ -173,6 +173,50 @@ async function seedReadySessionWithRevert(): Promise<{sessionId: string; root: s
     createdAt: new Date(),
   });
   return {sessionId, root, dogTagIdField};
+}
+
+/** WP4.12V - creates a client via the API (the same fixture-via-API convention
+ * appointment-tagging.spec.ts's own `createClient` uses), for tests that need one to reach
+ * TagIssueWizard's "1. Client" step without seeding one directly into Mongo. */
+async function createClient(page: Page, name: string): Promise<{clientId: string}> {
+  const res = await page.request.post("/api/clients", {data: {name}});
+  expect(res.ok()).toBe(true);
+  return res.json();
+}
+
+/** WP4.12V - a valid, unconsumed 32-lowercase-hex token (the `hexToken32`/`BindToken.token`
+ * grammar - NOT 0x-prefixed, unlike this file's own `randomHex`), bound to `sessionId`. */
+function randomToken(): string {
+  return randomBytes(16).toString("hex");
+}
+
+/** Seeds a `MintSession` at `status: "pending"` with a real `BindToken`, mirroring exactly what
+ * `POST /api/tags/issue/start` creates - for `GET /p/:token` resolve-payload tests that need a
+ * real token rather than driving the full preflight/allocate start flow (this suite's own
+ * established convention: every other `seed*Session` helper above seeds the session directly for
+ * the SAME reason - the thing under test here is the resolve route's field passthrough, not
+ * session creation). */
+async function seedPendingSessionWithProfile(profile: Record<string, unknown>): Promise<{token: string}> {
+  const sessionId = randomUUID();
+  const dogTagIdField = String(Math.floor(Math.random() * 1_000_000) + 1);
+  const now = Math.floor(Date.now() / 1000);
+  const token = randomToken();
+  await mongoClient.db().collection("mintsessions").insertOne({
+    sessionId,
+    dogTagIdDec: dogTagIdField,
+    dogTagIdField,
+    ownerIdentity: {},
+    identityLeaves: [],
+    petName: "Blaze",
+    microchip: {},
+    profile: {weightHistory: [], ...profile},
+    status: "pending",
+    protocolVersion: "dogtag-v2/1",
+    tokenExp: now + 600,
+    createdAt: new Date(),
+  });
+  await mongoClient.db().collection("bindtokens").insertOne({token, sessionId, exp: now + 600, consumed: false});
+  return {token};
 }
 
 /** Seeds a fresh `MintSession` at `status: "ready"` - no prior attempt, no `lastIssueError` - the
@@ -623,4 +667,90 @@ test("UI: the Issue on chain click sends eth_sendTransaction with gas headroom o
   expect(sent?.gas).toBe(`0x${(432_044).toString(16)}`);
   expect(sent?.type).toBe("0x0"); // ROAX-only-accepts-legacy, enforced by legacyTx
   expect(String(sent?.to).toLowerCase()).toBe(CLONE_ADDRESS.toLowerCase());
+});
+
+/**
+ * WP4.12V (Kenneth issue 2) - plan section 3.2 item 8's Playwright coverage: the issue wizard's
+ * "4. Pet profile" section shows the three new inputs with the plan's own labels and placeholders.
+ * A NEW pet name (not an existing one) is enough to reach this section - no session start, no
+ * chain interaction needed, since the thing under test is purely what TagIssueWizard renders.
+ */
+test("UI: Pet profile section shows Color / Government registration id / Registration authority inputs", async ({page}) => {
+  await createClient(page, "WP412V Wizard Client");
+
+  await page.goto("/tags/issue");
+  await page.getByRole("combobox", {name: "Search clients"}).fill("WP412V Wizard Client");
+  await page.getByRole("option", {name: /^WP412V Wizard Client/}).click();
+  await page.getByLabel("New pet name").fill("WP412V Wizard Pet");
+
+  await expect(page.getByLabel("Color")).toBeVisible();
+  await expect(page.getByLabel("Color")).toHaveAttribute("placeholder", "brown");
+  await expect(page.getByLabel("Government registration id")).toHaveAttribute("placeholder", "e.g. AVS licence number");
+  await expect(page.getByLabel("Registration authority")).toHaveAttribute("placeholder", "e.g. AVS Singapore");
+
+  // Not just visible - actually usable, and independent of each other.
+  await page.getByLabel("Color").fill("brown");
+  await page.getByLabel("Government registration id").fill("SGP-DOG-0042");
+  await page.getByLabel("Registration authority").fill("AVS Singapore");
+  await expect(page.getByLabel("Color")).toHaveValue("brown");
+  await expect(page.getByLabel("Government registration id")).toHaveValue("SGP-DOG-0042");
+  await expect(page.getByLabel("Registration authority")).toHaveValue("AVS Singapore");
+});
+
+/**
+ * WP4.12V - plan section 3.2 item 8: "a started session's resolve JSON carries them". Seeds a
+ * pending session with a real BindToken (this suite's own established convention for reaching a
+ * specific session state without re-driving the full start flow) and reads `GET /p/:token`
+ * directly, proving the passthrough against the REAL running app + REAL e2e mongo - the precise
+ * presence/absence contract itself is unit-tested more thoroughly in
+ * tests/unit/api/mintSessionResolveRoute.integration.test.ts; this is the holistic, fully
+ * integrated proof the plan's own wording asks for.
+ */
+test("a started session's resolve JSON carries color/registrationId/registrationAuthority when set", async ({page}) => {
+  const {token} = await seedPendingSessionWithProfile({
+    color: "brown",
+    registrationId: "SGP-DOG-0042",
+    registrationAuthority: "AVS Singapore",
+  });
+
+  const res = await page.request.get(`/p/${token}`);
+  expect(res.ok()).toBe(true);
+  const body = await res.json();
+  expect(body.pet.profile.color).toBe("brown");
+  expect(body.pet.profile.registrationId).toBe("SGP-DOG-0042");
+  expect(body.pet.profile.registrationAuthority).toBe("AVS Singapore");
+});
+
+/**
+ * WP4.12V - plan section 3.2 item 8: "pet form round-trips them". Drives the REAL PetForm UI (not
+ * just the API): create via `/pets/new`, land on the pet detail page (PetForm's own
+ * `router.push` on success), and confirm the values shown there were actually read back from a
+ * fresh server render (`Pet.findOne` + `toPlain`, `src/app/(app)/pets/[id]/page.tsx`), not merely
+ * client state left over from the save.
+ */
+test("pet form round-trips color/registrationId/registrationAuthority", async ({page}) => {
+  const client = await createClient(page, "WP412V Pet Form Client");
+
+  await page.goto(`/pets/new?ownerClientId=${client.clientId}`);
+  await page.getByLabel("Name").fill("WP412V Pet Form Pet");
+  await page.getByLabel("Color").fill("brown");
+  await page.getByLabel("Government registration id").fill("SGP-DOG-0042");
+  await page.getByLabel("Registration authority").fill("AVS Singapore");
+  await page.getByRole("button", {name: "Create pet"}).click();
+
+  // NOT /\/pets\/[^/]+$/ - that also matches the STARTING /pets/new?ownerClientId=... url (the
+  // query string contains no further "/"), so it would be satisfied instantly, before the actual
+  // post-create navigation ever happens, and the assertions below would then be reading the OLD
+  // /pets/new page's own lingering client state rather than a fresh server render. petId is a
+  // randomUUID(), so anchor on that exact shape instead - it can never match "new".
+  await expect(page).toHaveURL(/\/pets\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/, {timeout: 15_000});
+  await expect(page.getByLabel("Color")).toHaveValue("brown");
+  await expect(page.getByLabel("Government registration id")).toHaveValue("SGP-DOG-0042");
+  await expect(page.getByLabel("Registration authority")).toHaveValue("AVS Singapore");
+
+  // Reload - a real server render from a freshly persisted document, not client-side leftover state.
+  await page.reload();
+  await expect(page.getByLabel("Color")).toHaveValue("brown");
+  await expect(page.getByLabel("Government registration id")).toHaveValue("SGP-DOG-0042");
+  await expect(page.getByLabel("Registration authority")).toHaveValue("AVS Singapore");
 });

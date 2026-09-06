@@ -164,6 +164,39 @@ describe("mergeVerifiedAttributes (pure fill-empty-only merge)", () => {
   });
 });
 
+/** WP4.12 (Kenneth issue 2) - same three fill-empty-only cases as the block above, for
+ * color/registrationId/registrationAuthority specifically (a separate describe rather than
+ * extending the shared `verified` fixture above, so the existing four passing cases stay exactly
+ * as they were). */
+describe("mergeVerifiedAttributes (WP4.12 - color/registrationId/registrationAuthority)", () => {
+  const verified: VerifiedPetAttributes = {color: "brown", registrationId: "SGP-DOG-0042", registrationAuthority: "AVS Singapore"};
+
+  it("fills empty fields from the verified claim", () => {
+    const result = mergeVerifiedAttributes({}, verified);
+    expect(result).toEqual({
+      resolved: {color: "brown", registrationId: "SGP-DOG-0042", registrationAuthority: "AVS Singapore"},
+      conflicts: [],
+    });
+  });
+
+  it("never overwrites an existing value that agrees - no conflict recorded either", () => {
+    const result = mergeVerifiedAttributes({color: "brown"}, verified);
+    expect(result.resolved.color).toBe("brown");
+    expect(result.conflicts).toEqual([]);
+  });
+
+  it("records a conflict (and does NOT overwrite) when an existing value differs, while still filling whatever was empty", () => {
+    const result = mergeVerifiedAttributes({color: "black", registrationId: "OLD-REG-1"}, verified);
+    expect(result.resolved.color).toBe("black");
+    expect(result.resolved.registrationId).toBe("OLD-REG-1");
+    expect(result.resolved.registrationAuthority).toBe("AVS Singapore"); // still filled - registrationAuthority was empty
+    expect(result.conflicts).toEqual([
+      {field: "color", petValue: "black", verifiedValue: "brown"},
+      {field: "registrationId", petValue: "OLD-REG-1", verifiedValue: "SGP-DOG-0042"},
+    ]);
+  });
+});
+
 describe("resolveImportSession (GET /i/:token)", () => {
   it("not_found for an unknown token", async () => {
     const {store} = makeStore(newSessionFixture());

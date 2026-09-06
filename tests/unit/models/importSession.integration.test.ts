@@ -46,13 +46,35 @@ afterEach(async () => {
   await Promise.all([Pet.deleteMany({}), TagArtifact.deleteMany({}), ArtifactImportSession.deleteMany({})]);
 });
 
-function buildVerifiableFixture(nameValue = "Rex", speciesValue = "dog"): {leaves: OpenedLeaf[]; reservedLeafHashes: string[]; root: string} {
+/** `extra` (WP4.12, Kenneth issue 2) optionally adds color/registrationId/registrationAuthority
+ * leaves on top of the species/name pair every existing caller already relies on - a purely
+ * additive, default-valued parameter, so every pre-WP4.12V call site above (0 or 2 positional
+ * args) is unaffected. */
+function buildVerifiableFixture(
+  nameValue = "Rex",
+  speciesValue = "dog",
+  extra: {color?: string; registrationId?: string; registrationAuthority?: string} = {},
+): {leaves: OpenedLeaf[]; reservedLeafHashes: string[]; root: string} {
   const salt = (n: number) => new Uint8Array(16).fill(n);
   const saltHexOf = (n: number) => ("0x" + Array.from(salt(n)).map((b) => b.toString(16).padStart(2, "0")).join("")) as `0x${string}`;
   const leaves: OpenedLeaf[] = [
     {keyPath: "credentialSubject.species", saltHex: saltHexOf(11), tag: TypeTag.String, value: speciesValue},
     {keyPath: "credentialSubject.name", saltHex: saltHexOf(12), tag: TypeTag.String, value: nameValue},
   ];
+  if (extra.color !== undefined) {
+    leaves.push({keyPath: "credentialSubject.color", saltHex: saltHexOf(13), tag: TypeTag.String, value: extra.color});
+  }
+  if (extra.registrationId !== undefined) {
+    leaves.push({keyPath: "credentialSubject.registrationId", saltHex: saltHexOf(14), tag: TypeTag.String, value: extra.registrationId});
+  }
+  if (extra.registrationAuthority !== undefined) {
+    leaves.push({
+      keyPath: "credentialSubject.registrationAuthority",
+      saltHex: saltHexOf(15),
+      tag: TypeTag.String,
+      value: extra.registrationAuthority,
+    });
+  }
   const reservedLeafHashes = [
     toHex32(hashLeaf("owner.address", salt(201), {tag: TypeTag.Bytes, value: new Uint8Array([1])} as TypedScalar)),
     toHex32(hashLeaf("owner.consentKey", salt(202), {tag: TypeTag.Bytes, value: new Uint8Array([2])} as TypedScalar)),
@@ -73,10 +95,14 @@ function fakeDepsFor(fixture: {root: string}, issuerClone = FOREIGN_CLONE): TagD
   };
 }
 
-async function seedPet(petId: string, options: {status?: "active" | "revoked"; dogTagIdDec?: string} = {}) {
+async function seedPet(
+  petId: string,
+  options: {status?: "active" | "revoked"; dogTagIdDec?: string; color?: string} = {},
+) {
   await Pet.create({
     petId,
     name: "Rex",
+    color: options.color,
     ownerClientIds: [],
     dogTag: options.status ? {dogTagIdDec: options.dogTagIdDec ?? "1", dogTagIdField: "1", root: `0x${"9".repeat(64)}`, status: options.status, cloneAddress: OUR_CLONE} : {},
     searchKey: "rex",
@@ -197,5 +223,70 @@ describe("mongoImportStore + completeImport against a real ephemeral mongod", ()
     expect(result).toEqual({ok: true, clinicName: "Example Vet Clinic", isNewPet: false, targetPetName: "Rex", ttlSecs: 600});
     const session = await ArtifactImportSession.findOne({token: "2".repeat(32)}).lean();
     expect(session?.usedAt).toBeUndefined();
+  });
+
+  /**
+   * WP4.12V item 7/8 - proves `importMongoAdapter.ts`'s three new call sites actually persist
+   * color/registrationId/registrationAuthority through a REAL write, not just that
+   * `mergeVerifiedAttributes` (tests/unit/tags/importFlow.test.ts, entirely in-memory) computes the
+   * right `resolved`/`conflicts` values in isolation. `importMongoAdapter.ts` is not literally named
+   * in plan section 3.2 item 7 but is required for the merge to have any effect at all - this is the
+   * test that closes that gap empirically.
+   */
+  it("fills empty color/registrationId/registrationAuthority on an existing pet target from the verified claim", async () => {
+    await seedPet("pet-profile-leaves");
+    await seedImportSession("3".repeat(32), "pet-profile-leaves");
+    const fixture = buildVerifiableFixture("Rex", "dog", {
+      color: "brown",
+      registrationId: "SGP-DOG-0042",
+      registrationAuthority: "AVS Singapore",
+    });
+
+    const result = await completeImport(
+      mongoImportStore,
+      fakeDepsFor(fixture),
+      {token: "3".repeat(32), dogTagIdDec: DOG_TAG_ID_DEC, ...fixture},
+      NOW,
+    );
+    expect(result).toMatchObject({ok: true, petId: "pet-profile-leaves", conflicts: []});
+
+    const pet = await Pet.findOne({petId: "pet-profile-leaves"}).lean();
+    expect(pet?.color).toBe("brown");
+    expect(pet?.registrationId).toBe("SGP-DOG-0042");
+    expect(pet?.registrationAuthority).toBe("AVS Singapore");
+  });
+
+  it("a pre-existing color on the target pet is KEPT (never overwritten) and surfaced as a real, persisted importConflicts entry", async () => {
+    await seedPet("pet-color-conflict", {color: "black"});
+    await seedImportSession("4".repeat(32), "pet-color-conflict");
+    const fixture = buildVerifiableFixture("Rex", "dog", {color: "brown"});
+
+    const result = await completeImport(
+      mongoImportStore,
+      fakeDepsFor(fixture),
+      {token: "4".repeat(32), dogTagIdDec: DOG_TAG_ID_DEC, ...fixture},
+      NOW,
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.conflicts).toEqual([{field: "color", petValue: "black", verifiedValue: "brown"}]);
+
+    const pet = await Pet.findOne({petId: "pet-color-conflict"}).lean();
+    expect(pet?.color).toBe("black"); // this clinic's own value, never overwritten
+    expect(pet?.dogTag.importConflicts?.fields).toEqual([{field: "color", petValue: "black", verifiedValue: "brown"}]);
+  });
+
+  it("creating a brand-new pet from an import carries color/registrationId/registrationAuthority onto the new Pet document", async () => {
+    await seedImportSession("5".repeat(32));
+    const fixture = buildVerifiableFixture("Buddy", "cat", {registrationId: "SGP-CAT-0007"});
+
+    const result = await completeImport(mongoImportStore, fakeDepsFor(fixture), {token: "5".repeat(32), dogTagIdDec: DOG_TAG_ID_DEC, ...fixture}, NOW);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    const pet = await Pet.findOne({petId: result.petId}).lean();
+    expect(pet?.registrationId).toBe("SGP-CAT-0007");
+    expect(pet?.color).toBeUndefined();
+    expect(pet?.registrationAuthority).toBeUndefined();
   });
 });
