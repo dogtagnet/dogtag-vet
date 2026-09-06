@@ -13,12 +13,15 @@ import {updateStaffSchema} from "@/lib/schemas/staff";
 import {badRequest, notFound, requireOwnerSession} from "@/lib/staffApi";
 
 /**
- * `PATCH /api/settings/staff/:staffId {role?, disabled?, bookable?, displayName?, walletAddress?}`
- * - owner-only. Backs "revoke access" (`disabled: true` - a flag, never a delete; see `Staff.ts`'s
- * doc comment on why), changing a staff member's role, and (WP4.7 A3/D2/D4) the
- * practitioner-profile fields: `bookable`, `displayName`, `walletAddress`. There is no self-service
- * path for a vet to edit their own row - an owner edits everyone's, per
- * `wp4.7-vet-role-practitioner-availability.md`'s A3 item.
+ * `PATCH /api/settings/staff/:staffId {role?, disabled?, bookable?, displayName?, firstName?,
+ * lastName?, title?, accreditationNumber?, walletAddress?}` - owner-only. Backs "revoke access"
+ * (`disabled: true` - a flag, never a delete; see `Staff.ts`'s doc comment on why), changing a
+ * staff member's role, and the practitioner-profile fields: `bookable` (WP4.7 D2), `displayName`
+ * (WP4.7 D2, now deprecated), `firstName`/`lastName`/`title`/`accreditationNumber` (WP4.13), and
+ * `walletAddress` (WP4.7 D4). An owner edits everyone's row here, including their own; a vet/owner
+ * may ALSO edit a SUBSET of their own fields directly via the self-service `/me/wallet` (WP4.7C)
+ * and `/me/profile` (WP4.13) routes - both paths call the same `setStaffProfile`, never a
+ * duplicated write path.
  *
  * Guardrails an owner cannot bypass through this route:
  * - An owner can never change their OWN `role` or `disabled` here (demoting or disabling yourself
@@ -70,11 +73,23 @@ export async function PATCH(request: Request, {params}: {params: Promise<{staffI
   let updated = target;
   if (parsed.data.role !== undefined) updated = (await setStaffRole(staffId, parsed.data.role)) ?? updated;
   if (parsed.data.disabled !== undefined) updated = (await setStaffDisabled(staffId, parsed.data.disabled)) ?? updated;
-  if (parsed.data.bookable !== undefined || parsed.data.displayName !== undefined || parsed.data.walletAddress !== undefined) {
+  if (
+    parsed.data.bookable !== undefined ||
+    parsed.data.displayName !== undefined ||
+    parsed.data.firstName !== undefined ||
+    parsed.data.lastName !== undefined ||
+    parsed.data.title !== undefined ||
+    parsed.data.accreditationNumber !== undefined ||
+    parsed.data.walletAddress !== undefined
+  ) {
     updated =
       (await setStaffProfile(staffId, {
         bookable: parsed.data.bookable,
         displayName: parsed.data.displayName,
+        firstName: parsed.data.firstName,
+        lastName: parsed.data.lastName,
+        title: parsed.data.title,
+        accreditationNumber: parsed.data.accreditationNumber,
         walletAddress: parsed.data.walletAddress,
       })) ?? updated;
   }
