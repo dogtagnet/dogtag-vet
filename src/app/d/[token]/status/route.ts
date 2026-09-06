@@ -1,8 +1,14 @@
 import {connectToDatabase} from "@/lib/db";
 import {getDelegationSessionStatusForDevice} from "@/lib/delegation/flow";
 import {mongoDelegationStore} from "@/lib/delegation/mongoStore";
+import {buildDelegationCoOwnerBundle} from "@/lib/delegation/bundle";
+import {findActiveTagArtifact} from "@/lib/tags/artifact";
+import {Pet, type PetDoc} from "@/lib/models/Pet";
+import {roax} from "@/lib/chains";
+import {readDelegationLeaves} from "@/lib/chainRead";
 import {hexToken32} from "@/lib/schemas/common";
 import {enforceRateLimit, errorBody, jsonWithHeaders} from "@/lib/publicApi";
+import {requireEnv} from "@/lib/env";
 
 /**
  * `GET /d/:token/status` - `specs/vet-public-api.yaml`'s `getDelegationSessionStatus`, add-kind
@@ -12,9 +18,14 @@ import {enforceRateLimit, errorBody, jsonWithHeaders} from "@/lib/publicApi";
  * to the wire's `"adding"/"added"` (`lib/delegation/flow.ts`'s own doc comment on why the
  * translation lives here and not on the stored document).
  *
- * `bundle` (V4, `DelegationCoOwnerBundle`) is not yet attached - `readyForBundle` on the pure
- * result flags exactly when it should be, for the follow-up wave to wire in without touching this
- * route's shape.
+ * `bundle` (V4, `DelegationCoOwnerBundle`) is attached whenever `readyForBundle` is true - on
+ * EVERY such poll within the grace window, not merely the first (a deliberate, disclosed deviation
+ * from the spec's "once (and only once)" phrasing - see `getDelegationSessionStatusForDevice`'s own
+ * doc comment for the full reasoning). Built from the pet's currently-ACTIVE `TagArtifact` (this
+ * clinic's own custody record, the same one `/e/:token` exports through) plus a LIVE
+ * `delegationLeaves` chain read - never reconstructed from anything this app stores, per
+ * `specs/vet-public-api.yaml`'s own warning that folding fewer than 16 values produces a different
+ * tree than the one `delegationRoot` actually commits to.
  */
 export async function GET(request: Request, {params}: {params: Promise<{token: string}>}) {
   const rateLimit = enforceRateLimit(request, "delegation-status", 60, 60_000);
@@ -35,12 +46,48 @@ export async function GET(request: Request, {params}: {params: Promise<{token: s
     return jsonWithHeaders(errorBody(code, message), {status: result.status, headers: rateLimit.headers});
   }
 
+  let bundle: ReturnType<typeof buildDelegationCoOwnerBundle> | undefined;
+  if (result.readyForBundle) {
+    bundle = await tryBuildBundle(result.session);
+  }
+
   return jsonWithHeaders(
     {
       status: result.status,
       dogTagIdField: result.dogTagIdField,
       ...(result.reason ? {reason: result.reason} : {}),
+      ...(bundle?.ok ? {bundle: bundle.bundle} : {}),
     },
     {headers: rateLimit.headers},
   );
+}
+
+async function tryBuildBundle(session: {
+  petId: string;
+  dogTagIdField: string;
+  clinicName: string;
+}): Promise<ReturnType<typeof buildDelegationCoOwnerBundle> | undefined> {
+  try {
+    const delegationRegistryAddress = requireEnv("DELEGATION_REGISTRY_ADDRESS") as `0x${string}`;
+    const [artifact, pet, leaves] = await Promise.all([
+      findActiveTagArtifact(session.petId),
+      Pet.findOne({petId: session.petId}).select("name").lean<Pick<PetDoc, "name">>(),
+      readDelegationLeaves(delegationRegistryAddress, session.dogTagIdField),
+    ]);
+    if (!artifact) return undefined;
+    return buildDelegationCoOwnerBundle(
+      // `.lean()` never applies a schema default - a row written before `obfuscatedLeafHashes`
+      // existed reads back with the key genuinely absent, normalized here the same way
+      // `exportMongoAdapter.ts` does for the identical field on the identical model.
+      {...artifact, obfuscatedLeafHashes: artifact.obfuscatedLeafHashes ?? []},
+      {delegationLeaves: leaves, chainId: roax.id, petName: pet?.name ?? "", clinicName: session.clinicName},
+    );
+  } catch (err) {
+    // The bundle is additive - a failure to build it here must never turn an otherwise-successful
+    // "added" status poll into an error response; the device simply polls again, and this app's
+    // own boot-recovery/confirm route already made the on-chain state true regardless of whether
+    // this particular read of it happened to succeed.
+    console.error("[delegation] failed to build the co-owner bundle for a confirmed session", err);
+    return undefined;
+  }
 }

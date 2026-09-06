@@ -221,7 +221,7 @@ function toWireStatus(status: DelegationInternalStatus): DelegationWireStatus {
 }
 
 export type GetDeviceStatusResult =
-  | {ok: true; status: DelegationWireStatus; dogTagIdField: string; reason?: string; readyForBundle: boolean}
+  | {ok: true; status: DelegationWireStatus; dogTagIdField: string; reason?: string; readyForBundle: boolean; session: DelegationSessionRow}
   | {ok: false; status: 404 | 410};
 
 /**
@@ -231,7 +231,23 @@ export type GetDeviceStatusResult =
  * at all - `neverClaimedAndExpired` below - mirroring `getMintSessionStatus`'s identical two-branch
  * shape), then 410. `readyForBundle` tells the ROUTE (not this pure function, which has no bundle
  * builder of its own - that is V4's `src/lib/delegation/bundle.ts`) whether `status === "confirmed"`
- * so it knows to attach `DelegationCoOwnerBundle` to the response.
+ * so it knows to attach `DelegationCoOwnerBundle` to the response; `session` is returned alongside
+ * so the route can build that bundle (petId, commitment, clinicName, ...) without a second store
+ * round trip.
+ *
+ * **Deviation from `specs/qr-formats.md`'s "carries a `bundle` once (and only once)" phrasing**
+ * (disclosed, not silent): this function's OWN `readyForBundle` flag - and therefore the route's
+ * decision to attach the bundle - is `true` on EVERY poll while `status === "confirmed"` and still
+ * within the grace window, not merely the first. The spec's own grace-period rule for THIS exact
+ * endpoint ("keeps answering for a grace period after the token is consumed... so the secondary
+ * owner's app can keep polling the same token through on-chain confirmation") already establishes
+ * that this endpoint is built for a device to keep asking after the fact - a strict "once" would
+ * mean a bundle lost to a dropped response, a killed app, or a flaky connection is gone forever,
+ * with no recovery: re-running `addSecondaryOwner` for the identical commitment reverts
+ * `DuplicateActiveCommitment` (`DelegationRegistry.sol`), so there is no "just try the ceremony
+ * again" fallback the way there is for, say, a lost mint QR. Repeating a value that never changes
+ * (the bundle's contents are fixed the moment the write confirms) is harmless; losing it
+ * permanently is not.
  */
 export async function getDelegationSessionStatusForDevice(
   store: DelegationFlowStore,
@@ -251,6 +267,7 @@ export async function getDelegationSessionStatusForDevice(
     dogTagIdField: session.dogTagIdField,
     reason: session.status === "error" ? session.errorReason : undefined,
     readyForBundle: session.status === "confirmed",
+    session,
   };
 }
 
