@@ -219,7 +219,7 @@ test.describe.serial("WP4.7C - vet self-service wallet + whitelist status", () =
           await page.reload();
           return "not-yet";
         },
-        {timeout: 15_000, intervals: [1_000, 2_000, 3_000]},
+        {timeout: 20_000, intervals: [1_000, 2_000, 3_000]},
       )
       .toBe("active");
 

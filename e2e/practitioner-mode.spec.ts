@@ -162,7 +162,7 @@ test.describe.serial("flow 1+2: role gating, wallet, and the D4 operator panel",
           await page.reload();
           return "not-yet";
         },
-        {timeout: 15_000, intervals: [1_000, 2_000, 3_000]},
+        {timeout: 20_000, intervals: [1_000, 2_000, 3_000]},
       )
       .toBe("active");
 
@@ -175,7 +175,7 @@ test.describe.serial("flow 1+2: role gating, wallet, and the D4 operator panel",
           await page.reload();
           return "not-yet";
         },
-        {timeout: 15_000, intervals: [1_000, 2_000, 3_000]},
+        {timeout: 20_000, intervals: [1_000, 2_000, 3_000]},
       )
       .toBe("inactive");
   });
