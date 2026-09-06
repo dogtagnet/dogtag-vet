@@ -68,6 +68,14 @@ const envSchema = z.object({
   ENTITY_REGISTRY_ADDRESS: z.string().optional(),
   DOGTAG_SBT_ADDRESS: z.string().optional(),
   VERIFICATION_REGISTRY_ADDRESS: z.string().optional(),
+  // WP4.15 (PLANNED - the contract does not exist on any real chain yet; deployment is Kenneth's
+  // own action per docs/DEPLOY-wp4.15.md in the protocol branch). Only ever needed SERVER-side:
+  // the browser write targets `settings.cloneAddress` (the clinic's OWN clone, already fetched via
+  // `/api/settings`) and never calls DelegationRegistry directly - the clone calls it internally
+  // (`VetIssuer.addSecondaryOwner`/`revokeSecondaryOwner`). This address is read only by the
+  // server's own confirm/status chain reads (`isSecondary`/`secondaryCount`/`delegationRoot`/
+  // `delegationLeaves`), so unlike the other four addresses above it has no `NEXT_PUBLIC_` twin.
+  DELEGATION_REGISTRY_ADDRESS: z.string().optional(),
 
   // Invoicing
   INVOICE_NUMBER_PREFIX: z.string().default("INV"),

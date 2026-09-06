@@ -6,6 +6,11 @@ import VetIssuerAbiJson from "../../protocol/contracts/exports/abi/VetIssuer.jso
 import EntityRegistryAbiJson from "../../protocol/contracts/exports/abi/EntityRegistry.json";
 import DogTagSBTConsentAbiJson from "../../protocol/contracts/exports/abi/DogTagSBTConsent.json";
 import VerificationRegistryConsentAbiJson from "../../protocol/contracts/exports/abi/VerificationRegistryConsent.json";
+// WP4.15 (PLANNED - not yet deployed to any real chain; vendored from the dogtag-protocol BRANCH
+// `feature/wp4.15-multi-owner`, not master - see protocol/PROVENANCE.md). `VetIssuerAbiJson` above
+// is ALSO this branch's 2.1.0 copy (addSecondaryOwner/revokeSecondaryOwner/relayVerification/
+// initializeDelegation), not master's 2.0.0 - both vendored files moved together.
+import DelegationRegistryAbiJson from "../../protocol/contracts/exports/abi/DelegationRegistry.json";
 
 // Cast through `unknown`: the vendored JSON's inferred TS shape (string-typed
 // `stateMutability`/`type` fields) is wider than viem's `Abi` literal-union shape, even though the
@@ -16,6 +21,7 @@ export const vetIssuerAbi = VetIssuerAbiJson as unknown as Abi;
 export const entityRegistryAbi = EntityRegistryAbiJson as unknown as Abi;
 export const dogTagSBTConsentAbi = DogTagSBTConsentAbiJson as unknown as Abi;
 export const verificationRegistryConsentAbi = VerificationRegistryConsentAbiJson as unknown as Abi;
+export const delegationRegistryAbi = DelegationRegistryAbiJson as unknown as Abi;
 
 // The generic ERC-20 `Transfer` event (and `decimals`, used only for display/sanity checks, never
 // for computing amountBase - that always comes from the token registry so a misreporting contract

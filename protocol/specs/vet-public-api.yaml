@@ -46,6 +46,14 @@ tags:
       copy of a pet's opened profile-tree leaves - plans/wp4.9-tag-data-custody.md). The vet
       starts a session in person; the owner's app scans a QR and resolves it. No on-chain
       writes happen as part of either ceremony.
+  - name: delegation
+    description: |-
+      PLANNED - NOT YET DEPLOYED (WP4.15, plans/wp4.15-multi-owner.md). Vet-issued secondary
+      ownership: a session-plus-QR ceremony that adds or revokes a distinguishable, individually
+      revocable secondary owner on an existing dogtag, gas-sponsored through the clinic's own
+      clone the same way tag issuance already is. No ZK consent proof from the primary owner is
+      required for this ceremony - see docs/DELEGATION.md for the full model. These endpoints do
+      not exist on any deployed vet platform yet.
 x-common-headers:
   rateLimit: &rateLimitHeaders
     X-RateLimit-Limit: {$ref: '#/components/headers/RateLimitLimit'}
@@ -294,6 +302,182 @@ paths:
               schema: {$ref: '#/components/schemas/Error'}
         "410":
           description: "`error.code` is `expired_or_reused`: the token was already consumed (by a prior success OR a prior failed attempt), or it simply expired."
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
+        "429":
+          $ref: '#/components/responses/RateLimited'
+        "5XX":
+          $ref: '#/components/responses/ServerError'
+
+  /d/{token}:
+    get:
+      operationId: resolveDelegationSession
+      tags: [delegation]
+      summary: "PLANNED (WP4.15) - resolve a delegation session"
+      description: |-
+        PLANNED - NOT YET DEPLOYED. This endpoint does not exist on any deployed vet platform yet;
+        see docs/DELEGATION.md for the full model this is a piece of.
+
+        The secondary owner's app scans the vet's delegation-session QR
+        (`https://<vet>/d/<32hex>`, see `specs/qr-formats.md`) and calls this to fetch the
+        session's display context before doing anything else: `clinicName`/`petName` and a masked
+        form of the target client's name are shown to the secondary owner ("is this you?"),
+        `dogTagIdField`/`registrationId`/`issuedAt`/`blockNumber`/`deadline` are folded verbatim
+        into the `DelegationClaim` struct the app will sign (docs/DELEGATION.md section 4.3 step 4
+        has the canonical, ordered type list).
+
+        **No raw client PII is ever returned here** - `maskedTargetName` only (first letter per
+        word, asterisks for the rest), mirroring `WalletRegistrationChallengeResponse`'s own trust
+        model.
+
+        **Non-consuming**: calling this does not burn the token - `POST /d/{token}/complete` is the
+        consuming action. Fixed 600-second TTL from creation, not extended by resolving, matching
+        the wallet-registration/export/import sessions rather than the mint session's
+        TTL-extension-on-first-resolve.
+      parameters:
+        - $ref: '#/components/parameters/DelegationSessionToken'
+      responses:
+        "200":
+          description: Session resolved.
+          headers: *rateLimitHeaders
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DelegationSessionChallengeResponse'
+        "404":
+          description: Token unknown or malformed.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
+        "410":
+          description: Token already consumed (successfully or not - there is no retry for a delegation session) or naturally expired.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
+        "429":
+          $ref: '#/components/responses/RateLimited'
+        "5XX":
+          $ref: '#/components/responses/ServerError'
+
+  /d/{token}/complete:
+    post:
+      operationId: postDelegationSessionComplete
+      tags: [delegation]
+      summary: "PLANNED (WP4.15) - submit the signed EIP-712 DelegationClaim (consumes the token)"
+      description: |-
+        PLANNED - NOT YET DEPLOYED. See the note on `GET /d/{token}` above.
+
+        The secondary owner's app has derived its own per-tag BabyJubJub consent key and delegate
+        secret (docs/DELEGATION.md section 4.1, from the app's OWN wallet seed - never the primary
+        owner's), computed `commitment = Poseidon2(Ax, Ay)` over that key, and built the
+        `DelegationClaim` EIP-712 message under domain `{name: "DogTagDelegationClaim", version:
+        "1", chainId, verifyingContract: <this clinic's VetIssuer clone>}` - the canonical, ordered
+        type list is docs/DELEGATION.md section 4.3 step 4's
+        `DelegationClaim(address clinic,uint256 dogTagIdField,bytes32 commitment,bytes32 registrationId,address wallet,uint64 issuedAt,uint64 blockNumber,uint64 deadline)`
+        (no spaces: this is the exact `encodeType` string whose keccak256 is the typeHash).
+        `clinic`/`dogTagIdField`/`registrationId`/`issuedAt`/`blockNumber`/`deadline` all come
+        verbatim from what `GET /d/{token}` returned; `commitment` and `wallet` are the app's own.
+        The app signs with its already-`/w`-registered wallet and posts `{commitment, wallet,
+        signature}`.
+
+        The server independently rebuilds the exact same domain/message from its own server-trusted
+        session state plus the request's claimed `commitment`/`wallet`, recovers the signer
+        (`recoverTypedDataAddress`), and requires **two** things: the recovered signer equals the
+        claimed `wallet` (signature integrity), and that `wallet` is among the target client's
+        already-registered wallets (authorization - `/w` itself has no analogous check, since
+        registering a wallet is what `/w` exists to do; delegation's own precondition requires the
+        wallet to already be registered before this ceremony starts).
+
+        On success, the delegation session moves to `claimed` and an already-whitelisted operator
+        wallet asynchronously submits `VetIssuer.addSecondaryOwner(dogTagIdField, commitment)`
+        (`onlyActiveOperator refundsGas`, gas-sponsored by the clinic's own clone) - poll
+        `GET /d/{token}/status` for on-chain confirmation. **No ZK consent from the primary owner is
+        required for this call**: the clinic's attestation, with the primary present, is sufficient
+        (docs/DELEGATION.md section 4.3).
+
+        **Consumes the token**, including on a FAILED verification: a signature that does not
+        recover to the claimed wallet, or a claimed wallet that is not the target client's
+        registered one, still burns the token (`error.code: signature_invalid`, deliberately one
+        code for both so a caller cannot probe which check failed) - there is no retry endpoint for
+        this flow. A second call against an already-consumed token - whether the first call
+        succeeded or failed - returns `410`.
+      parameters:
+        - $ref: '#/components/parameters/DelegationSessionToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DelegationSessionCompleteRequest'
+      responses:
+        "200":
+          description: Claim accepted; the on-chain add is now in progress (poll `status`).
+          headers: *rateLimitHeaders
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DelegationSessionCompleteResponse'
+        "400":
+          description: "`error.code` is `signature_invalid`: malformed request body, the recovered signer does not equal the claimed `wallet`, or that `wallet` is not among the target client's already-registered wallets - deliberately one code for all three, so a caller cannot probe which check failed."
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
+        "404":
+          description: Token unknown or malformed.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
+        "409":
+          description: "`error.code` is `already_secondary`: this commitment, or this client, is already an active secondary owner of this tag."
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
+        "410":
+          description: "`error.code` is `expired_or_reused`: the token was already consumed (by a prior success OR a prior failed attempt), or it simply expired."
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
+        "429":
+          $ref: '#/components/responses/RateLimited'
+        "5XX":
+          $ref: '#/components/responses/ServerError'
+
+  /d/{token}/status:
+    get:
+      operationId: getDelegationSessionStatus
+      tags: [delegation]
+      summary: "PLANNED (WP4.15) - poll a delegation session's on-chain add status"
+      description: |-
+        PLANNED - NOT YET DEPLOYED. See the note on `GET /d/{token}` above.
+
+        Device-safe sentences only in `reason` - never a raw error, stack trace, or internal
+        identifier. This endpoint keeps answering for a grace period after the token is consumed by
+        `complete` (so the secondary owner's app can keep polling the same token through on-chain
+        confirmation), then starts returning `410` once the grace period elapses.
+
+        Once (and only once) `status` reaches `added`, the response also carries `bundle` - the
+        co-owner bundle (`specs/qr-formats.md` "The co-owner bundle",
+        `#/components/schemas/DelegationCoOwnerBundle`) the secondary owner's device needs for
+        view-only custody. The bundle cannot appear any earlier, because its contents do not exist
+        until the on-chain write this status tracks actually confirms.
+      parameters:
+        - $ref: '#/components/parameters/DelegationSessionToken'
+      responses:
+        "200":
+          description: Current status.
+          headers: *rateLimitHeaders
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DelegationSessionStatusResponse'
+        "404":
+          description: Token unknown or malformed.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
+        "410":
+          description: Token never claimed and expired, or past the post-add grace period.
           content:
             application/json:
               schema: {$ref: '#/components/schemas/Error'}
@@ -905,6 +1089,14 @@ components:
       required: true
       description: The 32-lowercase-hex tag-data import session token (see `specs/qr-formats.md`).
       schema: {$ref: '#/components/schemas/Hex32Token'}
+    DelegationSessionToken:
+      name: token
+      in: path
+      required: true
+      description: |-
+        PLANNED (WP4.15) - the 32-lowercase-hex delegation-session token (see
+        `specs/qr-formats.md`). Not yet issued by any deployed vet platform.
+      schema: {$ref: '#/components/schemas/Hex32Token'}
     AppointmentToken:
       name: token
       in: query
@@ -1359,6 +1551,181 @@ components:
           description: The registered wallet address, lowercased.
         receiptHash:
           $ref: '#/components/schemas/Hex32'
+
+    DelegationSessionStatus:
+      type: string
+      enum: [pending, claimed, adding, added, error]
+      description: |-
+        PLANNED (WP4.15). `pending` (session open, not yet claimed) -> `claimed` (the signed
+        `DelegationClaim` was accepted; the on-chain write has not been submitted yet) -> `adding`
+        (an operator wallet submitted `addSecondaryOwner`; awaiting chain confirmation) -> `added`
+        (confirmed - `bundle` is now present on `DelegationSessionStatusResponse`), or `error` at
+        any point after `claimed`. Mirrors `MintSessionStatusResponse`'s `status` enum shape one
+        step further, since a delegation session's payload does not exist until `added`.
+
+    DelegationSessionChallengeResponse:
+      type: object
+      required: [clinicName, clone, chainId, dogTagIdField, petName, maskedTargetName, registrationId, issuedAt, blockNumber, deadline, ttlSecs]
+      description: PLANNED (WP4.15). Response of `GET /d/{token}` - see that operation's description.
+      properties:
+        clinicName:
+          type: string
+          description: This clinic's configured display name - shown on the consent screen so the secondary owner knows which clinic is adding them.
+        clone:
+          type: string
+          description: This clinic's `VetIssuer` clone address - the EIP-712 domain's `verifyingContract` AND the struct's in-message `clinic` field (redundantly, mirroring `WalletRegistrationChallengeResponse`'s own `clone`).
+        chainId:
+          type: integer
+          description: The ROAX chain id, as configured server-side - the EIP-712 domain's `chainId`.
+        dogTagIdField:
+          type: string
+          description: The canonical on-chain dogTagId as a decimal uint256 string, never the clinic's raw decimal handle - the struct's `dogTagIdField` field, and what `addSecondaryOwner` will be called with.
+        petName:
+          type: string
+          description: The pet's current display name at this clinic - read live, not snapshotted at session creation.
+        maskedTargetName:
+          type: string
+          description: "The target client's name, masked: first letter per word, asterisks for the rest (e.g. `J***** A******`). NEVER the raw name - mirrors `WalletRegistrationChallengeResponse.maskedClientName`."
+        registrationId:
+          type: string
+          description: The session's UUID v4, in standard dashed string form (right-padded to a bytes32 only inside the signed struct itself) - the struct's `registrationId`.
+        issuedAt:
+          type: integer
+          description: Unix seconds, server-stamped at session creation - the struct's `issuedAt` (mirrors `WalletRegistrationChallengeResponse.issuedAt`).
+        blockNumber:
+          type: integer
+          description: The ROAX head block number at session creation, server-fetched (session creation fails closed if the RPC was unreachable) - the struct's `blockNumber` (mirrors `WalletRegistrationChallengeResponse.blockNumber`).
+        deadline:
+          type: integer
+          description: Unix seconds after which `POST /d/{token}/complete` no longer accepts this token - the struct's `deadline`.
+        ttlSecs:
+          type: integer
+          minimum: 0
+          description: Seconds remaining before this session expires. Not extended by resolving.
+
+    DelegationSessionCompleteRequest:
+      type: object
+      required: [commitment, wallet, signature]
+      description: |-
+        PLANNED (WP4.15). Request body of `POST /d/{token}/complete`. Six of the `DelegationClaim`'s
+        eight fields - `clinic`, `dogTagIdField`, `registrationId`, `issuedAt`, `blockNumber`,
+        `deadline` (docs/DELEGATION.md section 4.3 step 4 has the canonical, ordered type list) -
+        are already fixed by the server-trusted session, so only the values the secondary owner's
+        device alone can produce, plus the wallet it is signing with, are posted here: one field
+        larger than `WalletRegistrationCompleteRequest`, because delegation also needs the phone's
+        freshly-generated `commitment`, which registration has no analogue of.
+      properties:
+        commitment:
+          $ref: '#/components/schemas/Hex32'
+          description: "`Poseidon2(Ax, Ay)` over the secondary owner's own per-tag BabyJubJub consent public key (docs/DELEGATION.md section 4.2) - folded into the signed struct's `commitment` field; this is the value `addSecondaryOwner` will record on chain."
+        wallet:
+          type: string
+          pattern: "^0x[0-9a-fA-F]{40}$"
+          description: The wallet signing this claim - folded into the signed struct's `wallet` field. The recovered signer MUST equal this, AND this address MUST already be one of the target client's registered wallets (`docs/DELEGATION.md` section 4.3 step 5) - unlike `WalletRegistrationCompleteRequest.wallet`, which is being registered by that very call, this wallet must already be registered before the ceremony starts.
+        signature:
+          type: string
+          pattern: "^0x[0-9a-fA-F]{130}$"
+          description: 65-byte `r||s||v` ECDSA signature over the `DelegationClaim` EIP-712 message, by the wallet named above.
+
+    DelegationSessionCompleteResponse:
+      type: object
+      required: [ok, commitment, status]
+      description: PLANNED (WP4.15). Response of `POST /d/{token}/complete` on success.
+      properties:
+        ok: {type: boolean}
+        commitment:
+          $ref: '#/components/schemas/Hex32'
+        status:
+          $ref: '#/components/schemas/DelegationSessionStatus'
+          description: Always `claimed` immediately after a successful `complete` call - poll `GET /d/{token}/status` for what happens next.
+
+    DelegationSessionStatusResponse:
+      type: object
+      required: [status, dogTagIdField]
+      description: PLANNED (WP4.15). Response of `GET /d/{token}/status` - see that operation's description.
+      properties:
+        status:
+          $ref: '#/components/schemas/DelegationSessionStatus'
+        dogTagIdField:
+          type: string
+          description: The canonical on-chain dogTagId as a decimal uint256 string, never the clinic's raw decimal handle.
+        reason:
+          type: string
+          description: A device-safe sentence explaining `error` status. Absent for every other status.
+        bundle:
+          $ref: '#/components/schemas/DelegationCoOwnerBundle'
+          description: Present if and only if `status` is `added`. See `specs/qr-formats.md` "The co-owner bundle".
+
+    DelegationCoOwnerBundle:
+      type: object
+      required: [protocolVersion, dogTagIdField, root, disclosed, obfuscatedLeafHashes, reservedLeafHashes, delegationLeaves, issuerClone, chainId, petName, clinicName]
+      description: |-
+        PLANNED (WP4.15). Public data only, handed to a newly-added secondary owner's device so it
+        can act as a view-only co-owner (docs/DELEGATION.md section 4.2, section 7 "The co-owner
+        bundle carries only public data"). NEVER carries the primary owner's `ownerSecret`, either
+        owner's consent private key or wallet seed, or either owner's `ownerSalt`/`secretSalt` - none
+        of that material is a field of this schema, by construction, not merely by convention.
+        `disclosed`/`obfuscatedLeafHashes`/`reservedLeafHashes` recompute `root` via
+        `verifyRedactedArtifact`, the same check `ArtifactExportResponse` already needs and for the
+        same reason - a masked tag (WP4.10V partial custody) must stay verifiable by a device that
+        never sees the masked openings.
+      properties:
+        protocolVersion:
+          type: string
+          description: "The leaf-commitment protocol version this artifact was verified under, e.g. `dogtag-v2/1` - matches `ArtifactExportResponse.protocolVersion`'s own convention."
+        dogTagIdField:
+          type: string
+          description: The canonical on-chain dogTagId as a decimal uint256 string - matches `ArtifactExportResponse.dogTagIdField`'s own convention.
+        dogTagIdDec:
+          type: string
+          description: The issuing clinic's own off-chain decimal handle, when known - matches `ArtifactExportResponse.dogTagIdDec`'s own convention, including its optionality; `dogTagIdField(dogTagIdDec)` from `packages/dogtag-standard-ts`.
+        root:
+          $ref: '#/components/schemas/Hex32'
+          description: "`R` - the tag's profile-tree root."
+        disclosed:
+          type: array
+          description: Fully opened attribute leaves for display, the same `OpenedLeaf` shape `ArtifactExportResponse.disclosed` already uses.
+          items: {$ref: '#/components/schemas/OpenedLeaf'}
+        obfuscatedLeafHashes:
+          type: array
+          description: Hashes of any attribute leaves staff chose to mask before this ceremony (WP4.10V partial custody), opaque - never their openings. Empty when nothing is masked, matching `ArtifactExportResponse.obfuscatedLeafHashes`'s own convention exactly.
+          items: {$ref: '#/components/schemas/Hex32'}
+        reservedLeafHashes:
+          type: array
+          minItems: 3
+          maxItems: 3
+          description: The three reserved owner-control leaf hashes, opaque - never their openings.
+          items: {$ref: '#/components/schemas/Hex32'}
+        delegationLeaves:
+          type: array
+          minItems: 16
+          maxItems: 16
+          description: |-
+            All 16 current values of this tag's depth-4 delegation tree's leaves, holding a
+            delegate's `Poseidon2(Ax, Ay)` commitment or the all-zero `Hex32` value for an empty or
+            revoked slot (docs/DELEGATION.md section 4.2; plan section 11.2 item B1: revoke zeroes the
+            slot; the empty root is the published fold-of-16-zeros constant, never 0). `delegationRoot` folds these 16 values via this codebase's
+            own `buildMerkle` (`packages/dogtag-standard-ts/src/merkle.ts`): sort all 16 ascending,
+            then fold bottom-up with the commutative `hashNode` pair hash - so a surviving delegate
+            recomputes their own sibling path locally by replaying that same sort-and-fold over this
+            array, not by trusting any particular array position as their "slot"
+            (docs/DELEGATION.md section 4.2 explains why position is not load-bearing here). All 16
+            values, including the zeros, are required: folding fewer than 16 produces a different
+            tree than the one `delegationRoot` actually commits to. Reveals only which of the 16
+            slots are occupied and their opaque commitments, never who any delegate is.
+          items: {$ref: '#/components/schemas/Hex32'}
+        issuerClone:
+          type: string
+          description: The `VetIssuer` clone address that issued this tag's root, as indexed by the factory.
+        chainId:
+          type: integer
+          description: The ROAX chain id, as configured server-side.
+        petName:
+          type: string
+          description: The pet's current display name at this clinic - read live, not snapshotted.
+        clinicName:
+          type: string
+          description: This clinic's configured display name.
 
     VerifySessionResolveResponse:
       type: object
