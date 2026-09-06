@@ -138,6 +138,28 @@ The owner-assigns-it path (`StaffSection`'s "Practitioner profiles") is unchange
 It is shown and edited in Settings alone - never on the public booking wire (`GET /v1/booking/availability` maps a practitioner down to exactly `{id, name}`), the calendar, ICS, or emails.
 Whether it (and the title) should ever become public is an open question left for Kenneth; the current behavior treats the title as public (part of the name line) and the accreditation number as private.
 
+## Pet profile: optional leaves (color, government registration id, authority)
+
+Kenneth's ask (issue 2): "add some optional fields such as local government registered id, color to the dogtag fields that form the merkle root."
+
+**Fields.**
+Three flat, optional strings under `credentialSubject.*` in the protocol's dog-profile schema: `color` (free-text coat color, e.g. "brown"), `registrationId` (a local government registration or licence id), and `registrationAuthority` (who issued `registrationId`, e.g. "AVS Singapore", so an id is never ambiguous across jurisdictions).
+All three are registry-declared additions - `protocol/specs/schemas/dogtag.dog-profile.v1.schema.json` and `leaf-dictionary.v1.json` both ticked their informational `version` 1.0.0 -> 1.1.0 (same `$id`, no `leaf-dictionary.v2.json`, no protocol version bump - see that README's own versioning-rules section for why an additive keyPath is always just a minor tick).
+
+**Where they are entered.**
+`/tags/issue`'s "4. Pet profile" section (`TagIssueWizard.tsx`) gains the three inputs alongside species/breed/etc.; selecting an EXISTING pet prefills them from that pet's own CRM record (species/breed/etc. are deliberately not prefilled - unchanged, pre-existing wizard behavior).
+The Pet CRM record (`PetForm.tsx`, under "Basics") carries the same three fields independently of any tag, so the vet portal's own record and a freshly issued tag's attested profile agree from the start - unlike `breedVbo`/`neuterStatus`, which exist only inside a mint session's own profile and are never mirrored onto `Pet`.
+
+**Write-once root: already-issued tags never retroactively gain these fields.**
+A `DogTag`'s profile Merkle root is fixed the moment its owner's device binds it - like every other attribute leaf, `color`/`registrationId`/`registrationAuthority` can only ever be added to a tag being minted (or re-minted via the replace flow) for the FIRST time, never edited into a tag that already has a root.
+Editing the value on the Pet CRM record after issuance changes the CRM record only; it has no effect on any tag already bound, and staff should not expect the phone's own Tag data card to change without a fresh issuance.
+
+**Import-back mapping.**
+`lib/tags/verifier.ts`'s `mapVerifiedLeavesToPetAttributes` reads the three keyPaths the exact same way as every other string attribute; `lib/tags/importFlow.ts`'s fill-empty-only merge (`mergeVerifiedAttributes`) treats them identically to `species`/`breed`/`dateOfBirth` - an empty field on the target pet is filled from the verified claim, a differing value is kept and surfaced as a conflict, never silently overwritten.
+
+**Not extended: the WP4.4 mobile-booking external-pet path.**
+`lib/booking/postBooking.ts`'s `CreateExternalPetInput` (the provisional pet record created when a mobile booking claims a foreign clinic's tag) does not carry these three fields, even though the shared `mapVerifiedLeavesToPetAttributes` computes them - a deliberate scope decision, not an oversight: those provisional records are already excluded from every vet CRM/issuance surface (`Pet.dogTag.external`), so there is no vet-facing display that would ever show them there.
+
 ## Design decisions
 
 ### Invoice PDF library: pdfkit
