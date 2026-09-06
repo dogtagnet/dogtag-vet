@@ -36,11 +36,15 @@ interface CacheEntry {
 /**
  * Module-level in-memory cache - same documented single-process tradeoff as `priceFeed.ts`'s own
  * cache (this app targets one process per clinic; a restart just re-fetches on next use).
- * Deliberately SHORT, unlike `priceFeed.ts`'s 10 minutes: the event that changes this answer - an
- * owner's `addOperator`/`removeOperator` transaction confirming - happens from a BROWSER wallet
- * this server has no way to be pushed a notification about, so a long-lived cache would keep
- * telling a vet they are not whitelisted for a while after an owner just fixed it (this is exactly
- * what WP4.7C item 4's e2e flow exercises: grant operator, reload, expect the status to flip).
+ * Deliberately SHORT, unlike `priceFeed.ts`'s 10 minutes: the event that changes this answer - the
+ * DogTag protocol admin's `addOperator`/`removeOperator` transaction confirming - happens from a
+ * BROWSER wallet this server has no way to be pushed a notification about, so a long-lived cache
+ * would keep telling a vet they are not whitelisted for a while after the admin just fixed it
+ * (this is exactly what WP4.7C item 4's e2e flow exercises: simulate the admin's grant, reload,
+ * expect the status to flip). WP4.16 moved WHO submits that transaction (the DogTag protocol
+ * admin's own wallet, approving an application filed in the admin portal - never this app, and
+ * never an owner's wallet, both of which `VetIssuer`'s `onlyFactoryAdmin` guard always rejected)
+ * but changed nothing about the shape of this cache or why it stays short.
  * Only a SUCCESSFUL read is ever cached (see the catch branch below) - an `unreadable` result is
  * never cached, so a transient RPC hiccup can never outlive its own cause.
  */

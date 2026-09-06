@@ -22,8 +22,12 @@ export type StaffRole = "owner" | "staff" | "vet";
  *
  * WP4.7 adds `vet`: whitelisted (app-side gate, `requireVetSession` in `staffApi.ts`) to reach the
  * DogTag issuance surfaces alongside `owner`. The actual authority is on-chain (`VetIssuer`'s own
- * `operators` whitelist, granted per the vet's personal wallet - see `wp4.7-vet-role-practitioner-
- * availability.md` D4); this app-side role is UX plus defense in depth, never the source of truth.
+ * `operators` whitelist) - see `wp4.7-vet-role-practitioner-availability.md` D4; this app-side role
+ * is UX plus defense in depth, never the source of truth. WP4.16 moved who can change that
+ * whitelist off this app entirely: `VetIssuer.addOperator`/`removeOperator` are `onlyFactoryAdmin`,
+ * so only the DogTag protocol admin's own wallet may ever call them - granted by an application a
+ * clinic files in the DogTag admin portal and the admin approves there, never by this app writing
+ * to the chain itself (see `wp4.16-operator-whitelisting.md`).
  * `vet` is also a practitioner-eligible role for per-practitioner availability (D2) - see
  * `Staff.bookable` below.
  *
@@ -80,11 +84,14 @@ export interface StaffDoc {
    * the calendar, ICS, emails) must never read this field. See `plans/wp4.13-practitioner-
    * profile.md` section 6 for the open question to Kenneth on whether this should become public. */
   accreditationNumber?: string;
-  /** WP4.7 D4: this staff member's own wallet, recorded so the Settings "Issuance operators"
-   * panel can read its on-chain `operators(address)` status and submit `addOperator`/
-   * `removeOperator` for it. Always lowercased on write (`schemas/staff.ts`'s
-   * `lowercaseHexAddress`) - this app's own canonical casing for a field it compares by exact
-   * string equality, unlike `ClinicSettings`'s checksum-preserving address fields. */
+  /** WP4.7 D4: this staff member's own wallet, recorded so the Settings "Issuance operators" panel
+   * can read its on-chain `operators(address)` status. WP4.16: this app no longer submits
+   * `addOperator`/`removeOperator` for it at all - that authority moved to the DogTag protocol
+   * admin, applied for in the admin portal and approved there (see
+   * `wp4.16-operator-whitelisting.md`); this panel is read-only. Always lowercased on write
+   * (`schemas/staff.ts`'s `lowercaseHexAddress`) - this app's own canonical casing for a field it
+   * compares by exact string equality, unlike `ClinicSettings`'s checksum-preserving address
+   * fields. */
   walletAddress?: string;
   createdAt: Date;
   updatedAt: Date;

@@ -99,10 +99,15 @@ let lastSendTransaction: Record<string, unknown> | null = null;
  * through a REAL browser wallet write it did not choose the hash for: click the write button,
  * poll `getLastSentTxHash()` until the app's own request has actually landed here, THEN
  * `setRpcReceipt(thatHash, "success")` so the app's `useWaitForTransactionReceipt` polling picks
- * it up on its next tick - exactly the operator Add/Remove flow (`OperatorsSection.tsx`) needs to
- * observe its own UI update after a write, which no existing e2e spec needed before (the one
- * browser-driven write test, mint-issue-revert.spec.ts's gas-headroom assertion, only asserts on
- * the SENT params and deliberately never carries the round trip through to a mined receipt). */
+ * it up on its next tick. WP4.16 removed this file's original example of that pattern
+ * (`OperatorsSection.tsx`'s owner-signed Add/Remove buttons - `VetIssuer.addOperator`/
+ * `removeOperator` are `onlyFactoryAdmin`, so that write always reverted on a real chain and only
+ * this stub's never-executes-a-real-EVM behavior ever masked it; see
+ * `wp4.16-operator-whitelisting.md`), so no current spec calls `getLastSentTxHash()` - kept as
+ * general-purpose e2e infrastructure for the next browser-driven write flow that needs the full
+ * round trip, the same way `getLastSendTransaction` below stays available for asserting on SENT
+ * params alone (mint-issue-revert.spec.ts's gas-headroom check) without ever carrying the round
+ * trip through to a mined receipt. */
 let lastSentTxHash: string | null = null;
 
 function fakeTxHash(): Hex {

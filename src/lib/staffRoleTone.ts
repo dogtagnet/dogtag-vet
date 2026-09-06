@@ -183,7 +183,7 @@ export function operatorStatusExplanation(status: OperatorStatus): string {
     case "whitelisted":
       return "This address is whitelisted on the clinic's clone - you can issue DogTags with it.";
     case "not-whitelisted":
-      return "You are a vet/owner but this address is not whitelisted on the clinic clone - you cannot issue DogTags until an owner adds it under Issuance operators.";
+      return "You are a vet/owner but this address is not whitelisted on the clinic clone - you cannot issue DogTags until the DogTag admin approves an operator request for it in the admin portal.";
     case "no-address":
       return "No wallet address is on file for you yet, so this app cannot confirm whether you can issue DogTags on chain. Record one above, or ask an owner to assign one in Practitioner profiles.";
     case "not-configured":
