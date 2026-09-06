@@ -7,6 +7,20 @@ Synced by: WP4.14V builder (targeted re-mirror from a FEATURE BRANCH, not mainli
 This supersedes the prior header (WP4.12V, mainline commit `70d8078`, 2026-09-06T13:43:36Z) for the files this sync touched.
 See git history on this file for that sync's own full note.
 
+**Grade round 1 D6 (NIT, accuracy)**: this header's own "Source commit" line above names `bd1874c`,
+but two files under `specs/` have since been re-vendored past that point and no longer match it:
+`specs/qr-formats.md` and `specs/vet-public-api.yaml` were re-vendored by V7 (vet commit `705aeca`,
+protocol commit `0173d71`), its follow-up (vet `074c24a`, protocol `8ac6299`), and again by FIX ROUND
+1's D1 + biometric-sentence work (vet `6830508`, protocol `cfc0835`) - those two files now mirror
+protocol tip `cfc0835e98e24a4f35c5cbb87b4c2d69f94b281d`, not `bd1874c`. `specs/leaf-commitment.md`
+was ALSO re-vendored by that same fix-round-1 commit (D1's new validity states) and now mirrors
+`cfc0835` too. Every other file this document lists below - the vendored TS package's `src/`/`test/`
+and every other spec file - is still genuinely at `bd1874c`, confirmed by `cmp` against that commit
+each time a re-vendor has touched only the files named above. `packages/dogtag-standard-ts/dist/` is
+excluded from this commit-pinning discussion by its own nature: it is a rebuilt artifact of
+whatever `src/` currently is (see "Rebuilt via `pnpm --filter @dogtag/standard build`" below), not a
+byte-for-byte vendored copy pinned to one commit the way every file listed above is.
+
 ## Do not edit these files
 
 Everything under this `protocol/` directory is a vendored copy.

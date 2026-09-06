@@ -74,8 +74,16 @@ interface LeafSpec {
  * Pure derivation of WHICH leaves this record carries and their (tag, value) - no salts yet.
  * Exported so a test can assert the exact field derivation without caring about the per-call
  * randomness `saltRecordLeaves` introduces. Order: the seven non-maskable leaves first (context-
- * derived, always present - see below), then the optional context-derived leaves, then the
- * clinical/FHIR-aligned leaves in `specs/schemas/leaf-dictionary.v1.json`'s own declared order.
+ * derived, always present - see below), then the optional context-derived leaves
+ * (`issuer.name`/`issuer.domain`/`authorizedVet`, each only if set), then the clinical fields in
+ * FORM order (`targetDisease` through `vaccineExpirationDate` as declared in this function's own
+ * body) - NOT `specs/schemas/leaf-dictionary.v1.json`'s own declared order, which interleaves
+ * `validFrom` earlier and lists `targetDisease`/`series` later (grade round 1 D4: a prior version
+ * of this comment claimed dictionary order; it never matched what the code below actually does).
+ * `buildMerkle` sorts its leaves ascending before folding (`packages/dogtag-standard-ts/src/
+ * merkle.ts`), so this array's own order is never load-bearing for `root` either way - reordering
+ * it to match the dictionary would be pure diff noise, not a correctness fix, which is why this
+ * comment was corrected in place rather than the leaves reordered to match it.
  *
  * The seven keyPaths `RECORD_NON_MASKABLE_KEY_PATHS` (`@dogtag/standard`) names are ALWAYS present
  * here, by construction - every one of them is derived from `context`, never from the (optional)

@@ -29,6 +29,21 @@ interface ExportSessionResponse {
 
 type ActionKind = "download" | "qr" | "copy";
 
+/** A plain padlock outline - decorative only (`aria-hidden`), since the row's own text and the
+ * "Always disclosed (locked)" heading above it already say everything the icon reinforces. No new
+ * dependency: a hand-drawn generic closed-padlock shape, not any particular icon set's glyph. */
+function LockGlyph() {
+  return (
+    <svg className="h-4 w-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" aria-hidden="true">
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H6.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z"
+      />
+    </svg>
+  );
+}
+
 /**
  * Plan section 11.2 V5 - "Export to the phone" for a vaccination record, reusing the WP4.10V export
  * UI pattern (`MaskedExportPanel.tsx`) exactly: a field picker over the record's own disclosed
@@ -36,12 +51,20 @@ type ActionKind = "download" | "qr" | "copy";
  * SAME `RecordArtifact`-shaped payload for the currently-checked mask.
  *
  * THE ONE REAL DIFFERENCE FROM THE TAG PANEL: a record HAS a non-maskable set (seven keyPaths,
- * `ExportableRecordFieldWire.locked`) - locked fields render as an unchecked, disabled checkbox
- * (never maskable, never a choice) rather than the tag panel's "everything is equally maskable, just
- * grouped for display" model. This is the export UI's own half of the plan's non-negotiable ("the
- * non-maskable set ... is locked in the export UI AND enforced server-side" - the server-side half
- * is `lib/records/exportMask.ts`'s `validateRecordExportMask`, which would refuse a locked keyPath
- * even if this UI somehow let one through).
+ * `ExportableRecordFieldWire.locked`) - locked fields render with a lock glyph, never a checkbox at
+ * all (never maskable, never a choice), rather than the tag panel's "everything is equally maskable,
+ * just grouped for display" model. This is the export UI's own half of the plan's non-negotiable
+ * ("the non-maskable set ... is locked in the export UI AND enforced server-side" - the server-side
+ * half is `lib/records/exportMask.ts`'s `validateRecordExportMask`, which would refuse a locked
+ * keyPath even if this UI somehow let one through).
+ *
+ * Grade round 1 D5: an earlier version of this panel gave locked rows a `checked disabled`
+ * checkbox, contradicting an even earlier comment here that (wrongly) described it as unchecked.
+ * Worse, within this ONE panel "checked" meant two OPPOSITE things: the Maskable list below binds
+ * `checked={masked.has(...)}` (checked means HIDDEN), while a locked row's `checked` meant ALWAYS
+ * SHOWN - the exact inversion of its sibling list's own meaning, and a real, if narrow, ambiguity a
+ * screen-reader user relying on checkbox state would hit and a sighted user would not. A lock glyph
+ * has no such collision to have: it names what it identifies.
  *
  * NEVER imports `@dogtag/standard` - same cold-client-build reason `MaskedExportPanel.tsx`'s own
  * header names; every leaf hash here is precomputed server-side (`GET .../export/fields`).
@@ -183,12 +206,10 @@ export function MaskedRecordExportPanel({petId, recordId, onClose}: {petId: stri
               <h5 className="mb-1.5 text-caption font-medium uppercase tracking-wide text-ink-faint">Always disclosed (locked)</h5>
               <ul className="space-y-1.5">
                 {lockedFields.map((f) => (
-                  <li key={f.keyPath}>
-                    <label className="flex items-center gap-2 text-body text-ink opacity-70">
-                      <input type="checkbox" checked disabled />
-                      <span className="text-ink-muted">{recordLeafLabel(f.keyPath)}</span>
-                      <span className="text-ink-faint">{f.value}</span>
-                    </label>
+                  <li key={f.keyPath} className="flex items-center gap-2 text-body text-ink opacity-70">
+                    <LockGlyph />
+                    <span className="text-ink-muted">{recordLeafLabel(f.keyPath)}</span>
+                    <span className="text-ink-faint">{f.value}</span>
                   </li>
                 ))}
               </ul>

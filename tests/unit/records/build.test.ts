@@ -171,6 +171,17 @@ describe("computeRecordRoot - reproduces specs/leaf-commitment-vectors.json's re
     expect(computeRecordRoot(leaves)).toBe(vector.root_hex);
   });
 
+  // Grade round 1 D4: deriveRecordLeafSpecs' own array order is NOT "dictionary order" (its doc
+  // comment used to falsely claim it was) - pins the reason that divergence is harmless rather than
+  // a defect: buildMerkle sorts its leaves ascending before folding, so computeRecordRoot cannot
+  // possibly depend on the order leaves arrive in. Reversing the entire array is the strongest
+  // single case ("some order changed") rather than a narrower swap of two adjacent leaves.
+  it("leaf array ORDER never affects the root - buildMerkle sorts ascending before folding", () => {
+    const vector = recordVectors.find((v) => v.name === "record_full_artifact")!;
+    const leaves = vector.disclosed.map((d) => ({keyPath: d.keyPath, saltHex: d.saltHex, tag: d.tag, value: d.value}));
+    expect(computeRecordRoot(leaves)).toBe(computeRecordRoot([...leaves].reverse()));
+  });
+
   it("verifyRecordArtifact (the vendored verifier) also accepts that same vector, end to end", () => {
     const vector = recordVectors.find((v) => v.name === "record_full_artifact")!;
     const artifact: RecordArtifact = {
