@@ -303,14 +303,38 @@ async function setTheme(page: Page, theme: "Light" | "Dark") {
 /** Builds a genuine (leaves, reservedLeafHashes, root) triple the real `verifyLeafCommitment`
  * accepts - mirrors `dogtag-standard-ts/test/profile_bind.test.ts`'s own pattern (hashLeaf +
  * buildMerkle, the exact primitives verifyLeafCommitment itself recomputes with), never a
- * hand-rolled parallel encoding. */
-function buildVerifiablePetProfile(species: string, breedLabel: string) {
+ * hand-rolled parallel encoding.
+ *
+ * `extra` (WP4.12V fix round 2, R1) optionally adds color/registrationId/registrationAuthority
+ * leaves on top of the species/breedLabel pair every existing call site already relies on - a
+ * purely additive, default-valued parameter mirroring
+ * `tests/unit/models/importSession.integration.test.ts`'s own `buildVerifiableFixture` extension,
+ * so every pre-existing call site (all three, today) is unaffected. */
+function buildVerifiablePetProfile(
+  species: string,
+  breedLabel: string,
+  extra: {color?: string; registrationId?: string; registrationAuthority?: string} = {},
+) {
   const salt = (n: number) => new Uint8Array(16).fill(n);
   const saltHexOf = (n: number) => ("0x" + Array.from(salt(n)).map((b) => b.toString(16).padStart(2, "0")).join("")) as `0x${string}`;
   const leaves: OpenedLeaf[] = [
     {keyPath: "credentialSubject.species", saltHex: saltHexOf(11), tag: TypeTag.String, value: species},
     {keyPath: "credentialSubject.breedLabel", saltHex: saltHexOf(12), tag: TypeTag.String, value: breedLabel},
   ];
+  if (extra.color !== undefined) {
+    leaves.push({keyPath: "credentialSubject.color", saltHex: saltHexOf(13), tag: TypeTag.String, value: extra.color});
+  }
+  if (extra.registrationId !== undefined) {
+    leaves.push({keyPath: "credentialSubject.registrationId", saltHex: saltHexOf(14), tag: TypeTag.String, value: extra.registrationId});
+  }
+  if (extra.registrationAuthority !== undefined) {
+    leaves.push({
+      keyPath: "credentialSubject.registrationAuthority",
+      saltHex: saltHexOf(15),
+      tag: TypeTag.String,
+      value: extra.registrationAuthority,
+    });
+  }
   const reservedLeafHashes = [
     toHex32(hashLeaf("owner.address", salt(201), {tag: TypeTag.Bytes, value: new Uint8Array([1])} as TypedScalar)),
     toHex32(hashLeaf("owner.consentKey", salt(202), {tag: TypeTag.Bytes, value: new Uint8Array([2])} as TypedScalar)),
@@ -806,7 +830,11 @@ test.describe("section 3: tag-claim tiers", () => {
   test("tier 4 (external, Q3 verified import): imports a provisional pet, then dedupes a second booking onto the SAME pet", async ({page}) => {
     const dogTagIdDec = "555005";
     const fieldDec = dogTagIdField(dogTagIdDec).toString(10);
-    const {leaves, reservedLeafHashes, root} = buildVerifiablePetProfile("dog", "Beagle");
+    const {leaves, reservedLeafHashes, root} = buildVerifiablePetProfile("dog", "Beagle", {
+      color: "brown",
+      registrationId: "SGP-DOG-0042",
+      registrationAuthority: "AVS Singapore",
+    });
     await setRpcScenario("profileRoot", SBT_ADDRESS, [fieldDec], root);
     await setRpcScenario("rootIssuer", FACTORY_ADDRESS, [root], FOREIGN_CLONE);
     await setRpcScenario("isValid", FOREIGN_CLONE, [root], true);
@@ -830,6 +858,13 @@ test.describe("section 3: tag-claim tiers", () => {
     const importedPet = await petRes.json();
     expect(importedPet.species).toBe("dog");
     expect(importedPet.breed).toBe("Beagle");
+    // WP4.12V fix round 2 (R1): the shared verifier already computes these whenever the foreign
+    // clinic discloses them (mapVerifiedLeavesToPetAttributes) - this reads the REAL persisted
+    // document back through GET /api/pets/:id, so it exercises mobileMongoAdapters.ts's
+    // createExternalPet write itself, not the postBooking.ts mock the unit test pins.
+    expect(importedPet.color).toBe("brown");
+    expect(importedPet.registrationId).toBe("SGP-DOG-0042");
+    expect(importedPet.registrationAuthority).toBe("AVS Singapore");
     expect(importedPet.dogTag.external).toBe(true);
     expect(importedPet.dogTag.cloneAddress).toBe(FOREIGN_CLONE);
 
