@@ -90,7 +90,17 @@ class MockChain implements RpcAdapter {
   rootIssuers = new Map<string, string>();
   isValidMap = new Map<string, boolean>();
   issuedByMap = new Map<string, string>();
+  /** WP4.14S: the v2 `recordTypeOf(root)` PRIMARY answer, keyed by clone addr (this mock ignores
+   * root for simplicity - no test here needs two different roots on the same clone to disagree). */
   recordTypes = new Map<string, string>();
+  /** WP4.14S: the v1 `recordType()` FALLBACK answer, keyed by clone addr - a SEPARATE map from
+   * `recordTypes` so a fallback test can prove the resolved value genuinely came from THIS call,
+   * not merely from a coincidentally-shared source. `MockChain.genuine()` sets both to the same
+   * value so every pre-existing test keeps passing regardless of which path actually executes. */
+  legacyRecordTypes = new Map<string, string>();
+  /** Addresses whose `issuerRecordTypeOfRoot` call itself throws - simulates a pre-v2 clone whose
+   * bytecode has no `recordTypeOf` mapping at all, forcing the fallback to `issuerRecordType`. */
+  recordTypeOfRootFails = new Set<string>();
   governingRegistry = new Map<string, string>();
   grants = new Map<string, GrantEvent[]>();
   rootIssuedAt = new Map<string, LogPoint>();
@@ -108,6 +118,7 @@ class MockChain implements RpcAdapter {
     c.isValidMap.set(`${CLONE.toLowerCase()}|${root}`, true);
     c.issuedByMap.set(`${CLONE.toLowerCase()}|${root}`, SIGNER.toLowerCase());
     c.recordTypes.set(CLONE.toLowerCase(), rt);
+    c.legacyRecordTypes.set(CLONE.toLowerCase(), rt);
     c.governingRegistry.set(CLONE.toLowerCase(), REGISTRY.toLowerCase());
     c.rootIssuedAt.set(`${CLONE.toLowerCase()}|${root}`, ANCHORED_AT);
     c.grants.set(`${REGISTRY.toLowerCase()}|${CLONE.toLowerCase()}|${SIGNER.toLowerCase()}`, [
@@ -126,6 +137,15 @@ class MockChain implements RpcAdapter {
     this.isValidMap.set(key, isValid);
     this.issuedByMap.set(key, issuedBy.toLowerCase());
     this.recordTypes.set(addr.toLowerCase(), recordTypeKey("VACCINATION"));
+    this.legacyRecordTypes.set(addr.toLowerCase(), recordTypeKey("VACCINATION"));
+    return this;
+  }
+
+  /** WP4.14S: mark `addr` as a pre-v2 clone - its `issuerRecordTypeOfRoot` call itself throws
+   * (no such function on that clone's bytecode), forcing the whitelist pillar to fall back to
+   * `issuerRecordType`. */
+  withPreV2Clone(addr: string): this {
+    this.recordTypeOfRootFails.add(addr.toLowerCase());
     return this;
   }
 
@@ -197,9 +217,21 @@ class MockChain implements RpcAdapter {
     return this.issuedByMap.get(`${addr.toLowerCase()}|${root.toLowerCase()}`) ?? null;
   }
 
+  /** WP4.14S PRIMARY: v2's per-root `recordTypeOf(root)`. Throws for an address marked
+   * `withPreV2Clone` - the exact failure mode that should trigger the `issuerRecordType` fallback. */
+  async issuerRecordTypeOfRoot(addr: string, _root: string): Promise<string | null> {
+    this.check("issuerRecordTypeOfRoot");
+    if (this.recordTypeOfRootFails.has(addr.toLowerCase())) {
+      throw new Error("recordTypeOf: no such function (pre-v2 clone)");
+    }
+    return this.recordTypes.get(addr.toLowerCase()) ?? null;
+  }
+
+  /** WP4.14S FALLBACK ONLY: v1's per-clone `recordType()`. Reads `legacyRecordTypes`, a map
+   * deliberately separate from `recordTypes` above - see that field's own doc comment. */
   async issuerRecordType(addr: string): Promise<string | null> {
     this.check("issuerRecordType");
-    return this.recordTypes.get(addr.toLowerCase()) ?? null;
+    return this.legacyRecordTypes.get(addr.toLowerCase()) ?? null;
   }
 
   /** Composed from the pieces a real adapter reads - the governing registry off the clone, the
@@ -371,6 +403,48 @@ describe("verify() - the forged-issuer sweep", () => {
     doc.issuer.recordType = "TRAVEL_CLEARANCE"; // free: recordType is outside R
     const v = await thirdParty(doc, chain);
     expect(v.issuerWhitelist).toBe("FAILED");
+    expect(v.valid).toBe(false);
+  });
+
+  it("TERM 4b (WP4.14S): a pre-v2 clone (recordTypeOf(root) itself throws) falls back to recordType() and still resolves PASSED", async () => {
+    const doc = validDoc();
+    const chain = MockChain.genuine(doc).withPreV2Clone(CLONE);
+    const v = await thirdParty(doc, chain);
+    expect(v.issuerWhitelist).toBe("PASSED");
+    expect(v.valid).toBe(true);
+  });
+
+  it("TERM 4c (WP4.14S): the fallback genuinely reads from recordType(), not merely a coincidentally-shared value", async () => {
+    const doc = validDoc();
+    const chain = MockChain.genuine(doc).withPreV2Clone(CLONE);
+    // Wipe the v2 map entirely - if the code under test somehow still consulted it (or a shared
+    // source) instead of genuinely falling back to issuerRecordType(), this would now resolve
+    // UNRESOLVED (recordTypes.get(...) ?? null -> null) instead of PASSED.
+    chain.recordTypes.clear();
+    const v = await thirdParty(doc, chain);
+    expect(v.issuerWhitelist).toBe("PASSED");
+    expect(v.valid).toBe(true);
+  });
+
+  it("TERM 4d (WP4.14S): when BOTH recordTypeOf(root) and recordType() fail, UNRESOLVED - never a pass", async () => {
+    const doc = validDoc();
+    const chain = MockChain.genuine(doc).withPreV2Clone(CLONE);
+    chain.legacyRecordTypes.clear(); // the v1 fallback now also has nothing to answer with
+    const v = await thirdParty(doc, chain);
+    expect(v.issuerWhitelist).toBe("UNRESOLVED");
+    expect(v.valid).toBe(false);
+  });
+
+  it("TERM 4e (WP4.14S): recordTypeOf(root) SUCCEEDING with the zero word is UNRESOLVED and never falls back to recordType() - a successful call's null result is not a trigger", async () => {
+    const doc = validDoc();
+    const chain = MockChain.genuine(doc);
+    chain.recordTypes.clear(); // v2 call succeeds, returns null (uninitialized on this clone)
+    // The v1 fallback map is still genuinely populated (from MockChain.genuine) - if the code
+    // under test incorrectly fell back on a successful-but-null v2 read, this would resolve PASSED
+    // instead of UNRESOLVED.
+    expect(chain.legacyRecordTypes.get(CLONE.toLowerCase())).toBeDefined();
+    const v = await thirdParty(doc, chain);
+    expect(v.issuerWhitelist).toBe("UNRESOLVED");
     expect(v.valid).toBe(false);
   });
 

@@ -104,8 +104,23 @@ An export with no mask chosen is this format's degenerate case: nothing withheld
 The QR shape, token grammar, one-time semantics, and TTL above are all unchanged by masking.
 The scanning app still recomputes and independently verifies (`verifyRedactedArtifact`) before trusting or storing anything, exactly as it would for a fully-disclosed export.
 
-TODO(WP4.10): `specs/vet-public-api.yaml` in this repo still documents `ArtifactExportResponse`'s pre-masking `leaves` field.
-Resync it once the masked-export endpoint schema lands here from the vendored copy.
+### `artifactType`: tag or record (WP4.14)
+
+The same `/e` QR ceremony, the same token grammar, and the same one-time/TTL semantics above also deliver a pet's issued RECORDS (vaccination records and future record types - `specs/leaf-commitment.md` section 16), reusing the ceremony rather than adding a new route (Kenneth round 2 item 9, confirmed round 2: "same QR").
+`ArtifactExportResponse` (`specs/vet-public-api.yaml`) gains an `artifactType` field, `"tag"` or `"record"`, naming which of the two sibling wire shapes the rest of the payload is:
+
+- `artifactType: "tag"` (or the field absent entirely, for a response predating WP4.14) - everything "Masked export" above already describes: a `RedactedTagArtifact`, `reservedLeafHashes` always exactly 3, verified with `verifyRedactedArtifact`.
+- `artifactType: "record"` - a `RecordArtifact` (`specs/leaf-commitment.md` section 16, `specs/schemas/dogtag.record-artifact.v1.schema.json`): `reservedLeafHashes` always empty, the seven non-maskable leaves (`credentialSubject.dogTagId`, `recordType`, `credentialSchema.id`/`credentialSchema.version`, `issuer.chainId`/`issuer.contract`/`issuer.operator`) always present in `disclosed`, and an accompanying UNCOMMITTED block (`conformsTo`/`anchoring`/`presentation`) carried beside the artifact, never hashed. Verified with `verifyRecordArtifact`, never `verifyRedactedArtifact` - the two verifiers are not interchangeable (different reserved-count rule, different non-maskable set, no 64-leaf cap on the record side).
+
+### Record share steps
+
+Staff pick which of a pet's ISSUED RECORDS to share (a pet may have many, one per issuance - WP4.14 plan section 4, unlike a tag artifact's single active-per-pet model) before generating the export QR, then optionally mask a subset of that record's MASKABLE leaves (never one of the seven non-maskable ones - the vet portal's own mask picker refuses that choice before a session is ever created, and `verifyRecordArtifact` refuses it again on the wire regardless).
+Everything else about the ceremony is identical to a tag export: `GET /e/{token}` resolves and atomically consumes the token in one call, the response's `root` is fixed at session-creation time, and the same `404`/`410` error states apply.
+
+On a successful scan, the app shows a confirm screen (clinic name, record type, e.g. "Vaccination record") before doing anything with the data.
+Only after the owner confirms does it rebuild the record's leaf set, recompute `root` from the disclosed leaves via `verifyRecordArtifact`, and independently cross-check the on-chain binding rules `specs/leaf-commitment.md` section 16 states (`rootIssuer[root] == issuer.contract`, `recordTypeOf(root) == keccak256(recordType)`, `isValid(root)`, `issuedBy(root) == issuer.operator`, `issuer.chainId` equals the chain the app is actually connected to) before writing anything to local storage - there is no `profileRoot(dogTagId) == root` check for a record the way there is for a tag, since the chain stores no record-to-dog association at all (the `credentialSubject.dogTagId` leaf is the record's only binding to a dog, and that binding is exactly what a non-maskable, hash-checked leaf inside an already-verified `root` gives a reader - never an independent on-chain lookup).
+The `conformsTo`/`anchoring`/`presentation` block, when present, is stored and displayed alongside the verified artifact but plays no role in whether the record is trusted.
+Unchanged by `artifactType` either way: the token grammar, one-time consumption, and TTL rules below apply identically to a tag share and a record share.
 
 ### Parsing rules
 

@@ -1,6 +1,6 @@
 {
-  "_comment": "Leaf-level (post-flatten) dictionary for the DogTag credential schemas in this registry. Maps every keyPath a schema.ts-valid credential's flatten() walk can produce to {tags, requirement, notes}. This is a DIFFERENT altitude from the JSON Schema files beside it: those validate the pre-wrap plain-JSON credential (the shape validateSchema checks); this dictionary describes the post-flatten typed-scalar leaves specs/leaf-commitment.md's hashLeaf actually commits to. See specs/schemas/README.md for how the two relate and for versioning rules. WP4.10S NOTE: this dictionary's 'credentialSubject.dogTagId': required entry describes ONLY that flatten() pipeline (a WrappedDoc-shaped credential's leaves) - it is NOT a claim about a device-built profile tree's attribute leaves (specs/leaf-commitment.md section 15's RedactedTagArtifact, dogtag.redacted-tag-artifact.v1.schema.json), which never contains a credentialSubject.dogTagId leaf at all (build_profile_tree takes dogTagId as a bare key-derivation input, never an attribute leaf) and has no non-maskable keyPath of its own; this dictionary is not extended for that leaf space because verifyRedactedArtifact never consults it (its disclosed[].keyPath values are checked cryptographically, never against a keyPath allow-list).",
-  "version": "1.1.0",
+  "_comment": "Leaf-level (post-flatten) dictionary for the DogTag credential schemas in this registry. Maps every keyPath a schema.ts-valid credential's flatten() walk can produce to {tags, requirement, notes}, PLUS (WP4.14S) the keyPath space dogtag.vaccination.v1.schema.json describes - see the note on that below. This is a DIFFERENT altitude from the JSON Schema files beside it: those validate the pre-wrap plain-JSON credential (the shape validateSchema checks, where it exists); this dictionary describes the post-flatten typed-scalar leaves specs/leaf-commitment.md's hashLeaf actually commits to. See specs/schemas/README.md for how the two relate and for versioning rules. WP4.10S NOTE: this dictionary's 'credentialSubject.dogTagId': required entry describes ONLY the flatten()-shaped keyPath space (a WrappedDoc credential's leaves, or - WP4.14S - a RecordArtifact's leaves, which use the identical keyPath grammar without going through wrap.ts/schema.ts at all) - it is NOT a claim about a device-built profile tree's attribute leaves (specs/leaf-commitment.md section 15's RedactedTagArtifact, dogtag.redacted-tag-artifact.v1.schema.json), which never contains a credentialSubject.dogTagId leaf at all (build_profile_tree takes dogTagId as a bare key-derivation input, never an attribute leaf) and has no non-maskable keyPath of its own; this dictionary is not extended for that leaf space because verifyRedactedArtifact never consults it (its disclosed[].keyPath values are checked cryptographically, never against a keyPath allow-list). WP4.14S NOTE: dogtag.vaccination.v1.schema.json's keyPaths (recordType == VACCINATION) are entered here even though that schema has no schema.ts/validateSchema counterpart - flatten() itself is a generic nested-JSON-to-keyPath walker, independent of whether validateSchema ever ran, so a RecordArtifact built by hashing a vaccination-shaped credential's flattened leaves directly (specs/leaf-commitment.md section 16) lands at the SAME keyPaths this dictionary already uses for the rabies-shaped fields it reuses (vaccineProductName and siblings) or newly introduces (targetDisease and siblings). Unlike the schema.ts-validated five, 'required' below for a VACCINATION-only keyPath means 'this exact wave's own verifyRecordArtifact non-maskable-set check requires it disclosed', not 'schema.ts's validateSchema rejects its absence' - noted per entry.",
+  "version": "1.2.0",
   "wildcardConvention": "A segment written [*] is a DICTIONARY PATTERN standing for any concrete array index (weightHistory[*].value matches weightHistory[0].value, weightHistory[1].value, ...). [*] is NOT valid F2a keyPath syntax and must never be hashed literally - it exists only so this dictionary does not need one entry per array position.",
   "requirementLegend": {
     "required": "Always present with a non-null value in every schema.ts-valid credential the entry's scope applies to.",
@@ -22,12 +22,47 @@
     "issuer": {
       "tags": ["String"],
       "requirement": "required",
-      "notes": "schema.ts's reqPresent enforces only non-null presence, not a string shape - every existing fixture and this dictionary's String tag covers the DID-string case actually in use. A future W3C-VC-legal object-shaped issuer ({id, ...}) would flatten into issuer.id / issuer.* leaves instead of one issuer leaf; not covered here because no fixture in this repository uses that shape yet."
+      "notes": "schema.ts's reqPresent enforces only non-null presence, not a string shape - every existing fixture and this dictionary's String tag covers the DID-string case actually in use. A future W3C-VC-legal object-shaped issuer ({id, ...}) would flatten into issuer.id / issuer.* leaves instead of one issuer leaf; not covered here because no fixture in this repository uses that shape yet. WP4.14S materializes exactly this anticipated shape for VACCINATION record artifacts - see issuer.chainId/contract/operator/name/domain/address below; a bare 'issuer' leaf and the issuer.* leaves are mutually exclusive per credential (F2a: a scalar value produces a leaf at its own path, an object recurses into children instead)."
+    },
+    "issuer.chainId": {
+      "tags": ["Integer"],
+      "requirement": "optional",
+      "notes": "WP4.14S, VACCINATION record artifacts only. The ROAX chain id this root was (or will be) anchored on. Non-maskable: verifyRecordArtifact's non-maskable-set check requires it disclosed. The on-chain binding rule cross-checks it against the chain the verifier is actually running against (specs/leaf-commitment.md section 16)."
+    },
+    "issuer.contract": {
+      "tags": ["String"],
+      "requirement": "optional",
+      "notes": "WP4.14S, VACCINATION record artifacts only. The VetIssuer clone address (0x..) this root was issued against. Non-maskable. The on-chain binding rule cross-checks rootIssuer(root) == this value."
+    },
+    "issuer.operator": {
+      "tags": ["String"],
+      "requirement": "optional",
+      "notes": "WP4.14S, VACCINATION record artifacts only. The vet's whitelisted wallet address that called issueRecord. Non-maskable. The on-chain binding rule cross-checks issuedBy(root) == this value."
+    },
+    "issuer.name": {
+      "tags": ["String"],
+      "requirement": "optional",
+      "notes": "WP4.14S, VACCINATION record artifacts only. Clinic display name. Maskable - not part of the non-maskable set."
+    },
+    "issuer.domain": {
+      "tags": ["String"],
+      "requirement": "optional",
+      "notes": "WP4.14S, VACCINATION record artifacts only. Clinic domain. Maskable."
+    },
+    "issuer.address": {
+      "tags": ["String"],
+      "requirement": "optional",
+      "notes": "WP4.14S, VACCINATION record artifacts only. Clinic postal address of record. Maskable - distinct from issuer.contract (the on-chain address) and from authorizedVet (the practitioner)."
     },
     "validFrom": {"tags": ["String"], "requirement": "required"},
     "description": {"tags": ["String"], "requirement": "optional"},
     "credentialSchema.id": {"tags": ["String"], "requirement": "required"},
     "credentialSchema.type": {"tags": ["String"], "requirement": "required"},
+    "credentialSchema.version": {
+      "tags": ["String"],
+      "requirement": "optional",
+      "notes": "WP4.14S. Absent for the five original VC record types (their credentialSchema is the plain W3C {id, type} shape, no version sub-field). Non-maskable and required-in-practice for a VACCINATION record artifact (specs/leaf-commitment.md section 16, dogtag.vaccination.v1.schema.json) - verifyRecordArtifact's non-maskable-set check requires it disclosed."
+    },
     "credentialStatus.id": {"tags": ["String"], "requirement": "required"},
     "credentialStatus.type": {"tags": ["String"], "requirement": "required"},
     "attestationType": {"tags": ["String"], "requirement": "required"},
@@ -131,18 +166,48 @@
       "notes": "Authority that issued registrationId, e.g. AVS Singapore, so the id stays unambiguous across jurisdictions."
     },
 
-    "vaccineProductCode": {"tags": ["String"], "requirement": "optional", "notes": "Required when type includes RabiesVaccinationCertificate."},
-    "vaccineProductName": {"tags": ["String"], "requirement": "optional", "notes": "Required for RabiesVaccinationCertificate."},
-    "vaccineManufacturer": {"tags": ["String"], "requirement": "optional", "notes": "Required for RabiesVaccinationCertificate."},
-    "batchLotNumber": {"tags": ["String"], "requirement": "optional", "notes": "Required for RabiesVaccinationCertificate."},
-    "vaccinationDate": {"tags": ["String"], "requirement": "optional", "notes": "Required for RabiesVaccinationCertificate."},
-    "validUntil": {"tags": ["String"], "requirement": "optional", "notes": "Required for RabiesVaccinationCertificate."},
-    "nextDueDate": {"tags": ["String"], "requirement": "optional", "notes": "Required for RabiesVaccinationCertificate."},
-    "authorizedVet": {"tags": ["String"], "requirement": "optional", "notes": "Required for RabiesVaccinationCertificate."},
+    "vaccineProductCode": {"tags": ["String"], "requirement": "optional", "notes": "Required when type includes RabiesVaccinationCertificate. Also usable (optional, maskable) by a WP4.14S VACCINATION record artifact - dogtag.vaccination.v1.schema.json keeps this keyPath name for interop."},
+    "vaccineProductName": {"tags": ["String"], "requirement": "optional", "notes": "Required for RabiesVaccinationCertificate. Also usable (optional, maskable) by a WP4.14S VACCINATION record artifact."},
+    "vaccineManufacturer": {"tags": ["String"], "requirement": "optional", "notes": "Required for RabiesVaccinationCertificate. Also usable (optional, maskable) by a WP4.14S VACCINATION record artifact."},
+    "batchLotNumber": {"tags": ["String"], "requirement": "optional", "notes": "Required for RabiesVaccinationCertificate. Also usable (optional, maskable) by a WP4.14S VACCINATION record artifact."},
+    "vaccinationDate": {"tags": ["String"], "requirement": "optional", "notes": "Required for RabiesVaccinationCertificate. Also usable (optional, maskable) by a WP4.14S VACCINATION record artifact - the clinical date leaf; block number/chain time are uncommitted anchoring metadata, never a leaf (specs/leaf-commitment.md section 16)."},
+    "validUntil": {"tags": ["String"], "requirement": "optional", "notes": "Required for RabiesVaccinationCertificate. Also usable (optional, maskable) by a WP4.14S VACCINATION record artifact."},
+    "nextDueDate": {"tags": ["String"], "requirement": "optional", "notes": "Required for RabiesVaccinationCertificate. Also usable (optional, maskable) by a WP4.14S VACCINATION record artifact."},
+    "authorizedVet": {"tags": ["String"], "requirement": "optional", "notes": "Required for RabiesVaccinationCertificate. Also usable (optional, maskable) by a WP4.14S VACCINATION record artifact - the certifying practitioner's name/title, distinct from issuer.operator (wallet) and issuer.contract (clinic contract)."},
     "series": {
       "tags": ["String"],
       "requirement": "optional",
-      "notes": "Required for RabiesVaccinationCertificate. One of primary | booster."
+      "notes": "Required for RabiesVaccinationCertificate. One of primary | booster. Also usable (optional, maskable) by a WP4.14S VACCINATION record artifact."
+    },
+    "targetDisease": {
+      "tags": ["String"],
+      "requirement": "optional",
+      "notes": "WP4.14S, VACCINATION record artifacts only. The disease this vaccination protects against, e.g. \"rabies\" (FHIR Immunization.protocolApplied.targetDisease - specs/standards/hl7-fhir-immunization/r4.yaml). Maskable. A rabies-specific credential may keep using dogtag.rabies-vaccination.v1's type-array gate instead, which has no targetDisease leaf of its own."
+    },
+    "targetDiseaseCode": {
+      "tags": ["String"],
+      "requirement": "optional",
+      "notes": "WP4.14S, VACCINATION record artifacts only. Optional coded form of targetDisease (SNOMED CT Veterinary Extension or VeNom - specs/standards/README.md). Maskable."
+    },
+    "route": {
+      "tags": ["String"],
+      "requirement": "optional",
+      "notes": "WP4.14S, VACCINATION record artifacts only. Route of administration, e.g. subcutaneous (FHIR Immunization.route). Maskable."
+    },
+    "site": {
+      "tags": ["String"],
+      "requirement": "optional",
+      "notes": "WP4.14S, VACCINATION record artifacts only. Body site the vaccine was administered at (FHIR Immunization.site). Maskable."
+    },
+    "doseQuantity": {
+      "tags": ["Decimal"],
+      "requirement": "optional",
+      "notes": "WP4.14S, VACCINATION record artifacts only. Amount of vaccine administered, canonical Decimal-string (never a float - specs/leaf-commitment.md section 1). Maskable."
+    },
+    "vaccineExpirationDate": {
+      "tags": ["String"],
+      "requirement": "optional",
+      "notes": "WP4.14S, VACCINATION record artifacts only. The administered dose's own shelf-life expiration date (FHIR Immunization.expirationDate) - distinct from validUntil (the animal's protection window). Maskable."
     },
     "titer.resultIUml": {
       "tags": ["Decimal"],

@@ -1,0 +1,90 @@
+# specs/standards/eu-pet-passport/577-2013-annex-iii-v.yaml
+#
+# EU pet passport model - Commission Implementing Regulation (EU) No 577/2013, Annex III. Section V
+# (anti-rabies vaccination) is this file's primary subject; Section IV (transponder/microchip
+# identification) fields are included too, since a vaccination certificate is issued against an
+# already-identified animal. Descriptive metadata only (specs/standards/README.md) - not parsed or
+# enforced by any code in this repository.
+id: eu-pet-passport
+version: 577-2013-annex-iii-v
+name: "EU Pet Passport - Regulation (EU) 577/2013, Annex III, Section V (+ Section IV transponder fields)"
+authority: "European Commission"
+sourceUrl: "https://eur-lex.europa.eu/legal-content/EN/TXT/?uri=CELEX:32013R0577"
+notes: |-
+  A newer EU Regulation on the welfare and traceability of dogs and cats (adopted 28 Apr 2026) will
+  require an EU-wide interoperable pet-database index and mandates the EU passport for travel from
+  1 Jan 2028 (WP4.14 plan section 8) - this file describes the CURRENTLY IN FORCE 577/2013 Annex III
+  model, the one existing clinics issue against today. A future version of this standard entry should
+  be added (a new file alongside this one, per specs/standards/README.md's versioning note) once the
+  2026 Regulation's own implementing act publishes its field set, rather than mutating this file.
+
+fields:
+  - name: "Transponder alpha-numeric code"
+    type: string
+    required: true
+    description: "Section IV. The microchip/transponder's own code, read by a scanner."
+  - name: "Date of application or reading of the transponder"
+    type: date
+    required: true
+    description: "Section IV. When the microchip was implanted (or, for a pre-existing chip, read and confirmed)."
+  - name: "Location of the transponder"
+    type: string
+    required: false
+    description: "Section IV. Anatomical location the chip was implanted at."
+  - name: "Name of vaccine"
+    type: string
+    required: true
+    description: "Section V. The rabies vaccine's trade/product name."
+  - name: "Manufacturer"
+    type: string
+    required: true
+    description: "Section V. The vaccine's manufacturer."
+  - name: "Batch number"
+    type: string
+    required: true
+    description: "Section V. The administered dose's batch/lot number."
+  - name: "Date of vaccination"
+    type: date
+    required: true
+    description: "Section V. When the rabies vaccine was administered."
+  - name: "Valid from"
+    type: date
+    required: true
+    description: "Section V. The date the vaccination's legal protection window begins (for travel purposes)."
+  - name: "Valid until"
+    type: date
+    required: true
+    description: "Section V. The date the vaccination's legal protection window ends."
+  - name: "Name, address and signature/stamp of authorised veterinarian"
+    type: string
+    required: true
+    description: "Section V. The certifying veterinarian's identification, and the clinic's own stamp or the vet's signature."
+
+mapping:
+  - keyPath: credentialSubject.microchip.code
+    field: "Transponder alpha-numeric code"
+    transform: "Direct 1:1 copy, from the shared envelope microchip object (specs/schemas/dogtag.envelope.v1.schema.json#/$defs/microchip)."
+  - keyPath: credentialSubject.microchip.implantDate
+    field: "Date of application or reading of the transponder"
+    transform: "Direct 1:1 date copy."
+  - keyPath: vaccineProductName
+    field: "Name of vaccine"
+    transform: "Direct 1:1 string copy."
+  - keyPath: vaccineManufacturer
+    field: Manufacturer
+    transform: "Direct 1:1 string copy."
+  - keyPath: batchLotNumber
+    field: "Batch number"
+    transform: "Direct 1:1 string copy."
+  - keyPath: vaccinationDate
+    field: "Date of vaccination"
+    transform: "Direct 1:1 date copy."
+  - keyPath: validFrom
+    field: "Valid from"
+    transform: "Direct 1:1 date copy - this is the one standard in this registry whose own field names match DogTag's validFrom/validUntil keyPaths exactly, which is precisely why this protocol adopted those names (WP4.14 plan section 8)."
+  - keyPath: validUntil
+    field: "Valid until"
+    transform: "Direct 1:1 date copy."
+  - keyPath: authorizedVet
+    field: "Name, address and signature/stamp of authorised veterinarian"
+    transform: "DogTag's authorizedVet carries a name/title string only; the passport additionally wants a postal address and a wet signature or stamp, neither committed as a DogTag leaf (this protocol's own equivalent binding is the on-chain issuer.operator/issuer.contract leaves, per specs/leaf-commitment.md section 16)."

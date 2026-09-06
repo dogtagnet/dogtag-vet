@@ -1,0 +1,106 @@
+{
+  "$id": "https://dogtag.io/schemas/vaccination/v1",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "DogTag generic vaccination record v1",
+  "description": "recordType == VACCINATION. Unlike every schema beside this file, there is NO schema.ts/validateSchema counterpart for this record type at all (schema.ts's only vaccination branch is isRabies, gated on type containing RabiesVaccinationCertificate, which is dogtag.rabies-vaccination.v1's schema, kept as-is for interop - WP4.14 plan section 7 item 1). This credential is instead carried as a RecordArtifact (specs/leaf-commitment.md section 16), an opened-leaf artifact hashed directly, never run through wrap.ts/schema.ts's validateSchema pipeline. ALTITUDE NOTE (FIX ROUND 1 D5): this schema describes the shape of the PRE-HASH CREDENTIAL DOCUMENT; no code validates that document shape directly (specs/schemas/README.md line 91 states this plainly). The required/const/type constraints below on recordType, credentialSubject.dogTagId, credentialSchema.id/version, and issuer.chainId/contract/operator are enforced one altitude DOWN from the document: flatten() maps each of those seven document paths 1:1 onto a leaf, and verifyRecordArtifact's non-maskable-set check requires every one of those seven leaves disclosed on any RecordArtifact built from a document missing one of them - so a document missing a required field here cannot produce a verifiable artifact, even though no code rejects the DOCUMENT itself. Every clinical/FHIR field is description-only, since no code at either altitude validates it (WP4.14S BUILD note: this is a deliberate narrowing of plan section 11.1 S2's literal required-field list, which named several clinical fields too - logged as a deviation in plans/orchestration/wp4.14S-progress.md).",
+  "version": "1.0.0",
+  "x-validationRules": [],
+  "type": "object",
+  "allOf": [{"$ref": "https://dogtag.io/schemas/envelope/v1"}],
+  "required": ["recordType"],
+  "properties": {
+    "recordType": {
+      "const": "VACCINATION",
+      "description": "Enforced one altitude down (see this schema's top-level description): flatten() maps this document field 1:1 onto a recordType leaf, and verifyRecordArtifact's non-maskable set requires that leaf disclosed on the RecordArtifact built from this document (specs/leaf-commitment.md section 16) - no code validates this schema's own pre-hash document shape directly. The on-chain binding rule additionally checks recordTypeOf(root) == keccak256(this value)."
+    },
+    "credentialSchema": {
+      "type": "object",
+      "description": "Envelope already requires credentialSchema to be present and non-null; this schema additionally requires the id/version sub-fields specifically, since verifyRecordArtifact's non-maskable set requires both disclosed as leaves.",
+      "required": ["id", "version"],
+      "properties": {
+        "id": {
+          "const": "https://dogtag.io/schemas/vaccination/v1",
+          "description": "Self-referential: a credential validating against this schema file must name this exact $id (specs/schemas/README.md's credentialSchema section). JUSTIFICATION (FIX ROUND 1 D5): this is the only self-referential $id const in the registry, and no code enforces it (verifyRecordArtifact step 3b only cross-checks the top-level schemaId against this same leaf, never either against the registry) - so it is, deliberately, the one place this schema is stricter than any code. It is safe under the registry's own never-stricter-than-code rule specifically BECAUSE the $id is stable across an additive minor version tick (this is exactly why the sibling `version` field below is deliberately NOT const-pinned): a legitimately-issued vaccination document's credentialSchema.id can never change out from under this const as the schema itself evolves additively, so the const can never reject a document that was validly issued against this schema family. It exists to catch a different, real error - a document mislabeling itself as validating against this schema while actually shaped for another (e.g. dogtag.rabies-vaccination.v1) - which no code elsewhere in the repository checks at all."
+        },
+        "version": {
+          "not": {"type": "null"},
+          "description": "This schema's own informational version an issued credential was built against - not const-pinned to \"1.0.0\" specifically, since an ADDITIVE minor tick (a new optional keyPath) keeps the same $id and is still valid against this file per specs/schemas/README.md's versioning rule."
+        }
+      }
+    },
+    "issuer": {
+      "type": "object",
+      "description": "Envelope already requires issuer to be present and non-null (and, for the five VC record types, often just a DID string); THIS record type shapes it as an object carrying the three chain-anchor leaves verifyRecordArtifact's non-maskable set requires disclosed, per Kenneth round 2 item 3 (the leaves make the record self-describing offline: the phone cross-checks issuer.contract/issuer.operator/issuer.chainId against rootIssuer(root)/issuedBy(root) and the chain it is actually running against).",
+      "required": ["chainId", "contract", "operator"],
+      "properties": {
+        "chainId": {
+          "not": {"type": "null"},
+          "description": "The ROAX chain id this root was anchored on. leaf-dictionary.v1.json tags this leaf's TypeTag as Integer (informational convention; not code-enforced at this shape layer - see that dictionary's own note)."
+        },
+        "contract": {
+          "not": {"type": "null"},
+          "description": "The VetIssuer clone address (0x..) this root was issued against - the on-chain binding rule checks rootIssuer(root) == this value."
+        },
+        "operator": {
+          "not": {"type": "null"},
+          "description": "The vet's whitelisted wallet address that called issueRecord - the on-chain binding rule checks issuedBy(root) == this value."
+        },
+        "name": {"description": "Clinic display name. Optional, maskable leaf - not part of the non-maskable set."},
+        "domain": {"description": "Clinic domain. Optional, maskable leaf."},
+        "address": {"description": "Clinic postal address of record. Optional, maskable leaf - distinct from issuer.contract (the on-chain address) and from authorizedVet (the practitioner)."}
+      }
+    },
+    "targetDisease": {
+      "description": "The disease this vaccination protects against, e.g. \"rabies\" (FHIR Immunization.protocolApplied.targetDisease - specs/standards/hl7-fhir-immunization/r4.yaml). Free text; rabies-specific records may keep using dogtag.rabies-vaccination.v1 instead (its own type-array-gated schema, unchanged)."
+    },
+    "targetDiseaseCode": {
+      "description": "Optional coded form of targetDisease (e.g. a SNOMED CT Veterinary Extension or VeNom code - specs/standards/README.md)."
+    },
+    "vaccineProductName": {
+      "description": "The vaccine's trade/product name. Same keyPath name as dogtag.rabies-vaccination.v1's field, kept for interop (WP4.14 plan section 7 item 1)."
+    },
+    "vaccineProductCode": {
+      "description": "A vaccine product identifier, e.g. a USDA product/license code (dogtag.rabies-vaccination.v1's own convention). Optional here (rabies keeps its own required-shape schema unchanged)."
+    },
+    "vaccineManufacturer": {
+      "description": "The vaccine's manufacturer."
+    },
+    "batchLotNumber": {
+      "description": "The administered dose's manufacturer lot/batch number."
+    },
+    "vaccinationDate": {
+      "description": "The calendar date the vaccine was administered (specs/leaf-commitment.md section 16: dates, not block numbers, are the leaf; block/chain time are uncommitted anchoring metadata)."
+    },
+    "validFrom": {
+      "description": "The calendar date this vaccination's protection window begins."
+    },
+    "validUntil": {
+      "description": "The calendar date this vaccination's protection window ends. Readers compute Valid/Expired from this against their own clock; records are never auto-revoked."
+    },
+    "nextDueDate": {
+      "description": "The calendar date the next dose in this vaccine's schedule is recommended."
+    },
+    "series": {
+      "description": "primary | booster, following dogtag.rabies-vaccination.v1's own enum values (kept description-only here since no code enforces the enum for this record type)."
+    },
+    "authorizedVet": {
+      "description": "The certifying practitioner's name/title/accreditation (WP4.13's vet display-name split), distinct from issuer.operator (the wallet address) and issuer.contract (the clinic's on-chain contract)."
+    },
+    "route": {
+      "description": "Route of administration, e.g. subcutaneous (FHIR Immunization.route)."
+    },
+    "site": {
+      "description": "Body site the vaccine was administered at (FHIR Immunization.site)."
+    },
+    "doseQuantity": {
+      "description": "The amount of vaccine administered, as a canonical Decimal-string value (specs/leaf-commitment.md section 1 - never a float). leaf-dictionary.v1.json tags this leaf's TypeTag as Decimal."
+    },
+    "vaccineExpirationDate": {
+      "description": "The administered dose's own shelf-life expiration date (FHIR Immunization.expirationDate) - distinct from validUntil (the animal's protection window)."
+    },
+    "credentialSubject": {
+      "type": "object",
+      "description": "Envelope already requires credentialSubject.dogTagId (non-null) at the document altitude; one altitude down, flatten() maps it onto a leaf verifyRecordArtifact's non-maskable set also requires disclosed (see this schema's top-level description). Unlike a profile tree (specs/leaf-commitment.md section 15), a RecordArtifact's credentialSubject.dogTagId IS a leaf: the chain stores no record-to-dog association, so this leaf is the record's only binding to a dog (WP4.14 plan section 3/4)."
+    }
+  }
+}

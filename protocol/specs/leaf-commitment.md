@@ -380,12 +380,13 @@ A third-language implementation has no dependency on either existing codebase: t
 As of WP4.10S fix round 1, `redactedArtifactVectors` isolates seven of `verifyRedactedArtifact`'s structural rejection paths one at a time: the exactly-3-reserved-hashes count check (`negative_reserved_relabeled_as_obfuscated`), the overlap check's obfuscated-half and reserved-half comparisons, the duplicate-keyPath guard, the 64-leaf cap, and both hex32-shape checks (reserved and obfuscated).
 Each such vector's `root`/`root_hex` is the genuine Merkle root of that vector's own exact leaf multiset, so the named check is the ONLY one able to reject it - a conformant implementation cannot silently omit any one of those seven checks and still reproduce that vector's `valid: false` outcome.
 See section 15's worked examples for exactly which vector isolates which check.
+The same `true`/`false` discipline applies equally to `recordArtifactVectors` (section 16, added WP4.14S): reproducing every vector's `valid` outcome, negatives included, is part of conformance for `verifyRecordArtifact` exactly as it is for `verifyRedactedArtifact`, and every negative in that set is likewise constructed so its posted root is the genuine root of its own exact leaf multiset - the non-maskable-set check, the reserved-must-be-empty check, and the overlap check are each the ONLY reason their respective vector is rejected, never an incidental root mismatch.
 
 ## 14. Test vectors
 
 `specs/leaf-commitment-vectors.json` is the vectors file this specification's conformance clause (section 13) refers to.
 Every value in it was produced by calling the existing `packages/dogtag-standard-ts` implementation directly (never hand-computed), and it is re-verified by `packages/dogtag-standard-ts/test/spec_vectors.test.ts` on every test run.
-Its five top-level sections:
+Its six top-level sections:
 
 - `leafHashVectors` - one `hashLeaf` vector per `TypeTag` (Null, Bool, String, Integer, Decimal, Bytes), plus the NFC-alias pair and the decimal-canonicalization pair discussed in section 6.
 - `merkleVectors` - the odd-count, promotion-exercising three-leaf tree from section 7's worked example (`size_3_pet_profile_promotion`), carrying every opening, every leaf hash, and the root; plus a five-leaf tree (`size_5_multi_level_fold`) carrying every intermediate fold level in addition to the openings, leaf hashes, and root - five is the smallest leaf count at which a per-level re-sort of the fold (the error section 7 used to describe) produces a different root than the one this specification's actual `buildMerkle` rule produces, so this vector is what makes section 7's no-re-sort rule falsifiable rather than merely asserted.
@@ -393,6 +394,8 @@ Its five top-level sections:
 - `dogTagIdFieldVectors` - the section 11 worked example plus two boundary handles (`"0"`, `"1"`), all three cross-checked against the pre-existing TS/Rust parity fixture in `test/profile_bind.test.ts`.
 - `redactedArtifactVectors` (section 15) - the section 7 three-leaf tree, extended with the three reserved owner-control hashes every real profile tree carries, disclosed in full (`profile_tree_base_full_artifact`) and then masked in increasing degree - one leaf (`masked_variant_species_obfuscated`), then all three (`masked_variant_fully_obfuscated`) - with the root proven unchanged at every step; plus two negatives, an overlap (`negative_overlap`: a leaf claimed as both disclosed and separately obfuscated) and a reserved hash relabeled as obfuscated (`negative_reserved_relabeled_as_obfuscated`: the root is bit-identical to `masked_variant_species_obfuscated`'s, so only the exactly-3-reserved-hashes count check rejects it).
   Six more isolating negatives, promoted from `packages/dogtag-standard-ts/testvectors.json` by `packages/dogtag-standard-ts/scripts/promote-spec-vectors.ts` (never hand-copied: every hash is recomputed and every artifact is re-verified against the real `verifyRedactedArtifact` before being written), extend this to the seven checks section 13 now names: `negative_overlap_root_preserving_duplicate_leaf` and `negative_overlap_reserved_half_matches_disclosed` isolate the overlap check's two halves, `negative_duplicate_pet_keypath_no_identity_oracle` isolates the duplicate-keyPath guard, `negative_65_leaves_genuine_root_over_cap` isolates the 64-leaf cap, and `negative_hex32_shape_reserved_missing_0x_prefix`/`negative_hex32_shape_obfuscated_missing_0x_prefix` isolate the two hex32-shape checks - every one of these six carries the genuine root of its own exact leaf multiset, so only the named check can be the reason `verifyRedactedArtifact` rejects it.
+- `recordArtifactVectors` (section 16, WP4.14S) - the `RecordArtifact` sibling of `redactedArtifactVectors` above, over a tree with NO reserved leaves: a full artifact disclosing all seven non-maskable leaves plus two ordinary clinical leaves (`record_full_artifact`), a masked variant withholding one clinical (maskable) leaf with the root proven unchanged (`record_masked_clinical_leaf`), and a variant masking every leaf EXCEPT the seven-member non-maskable set (`record_masked_except_non_maskable`) - the falsifiable demonstration that the non-maskable set, unlike `redactedArtifactVectors`' empty one, is real; plus three root-preserving negatives, each isolating exactly one check the same way section 15's own promoted negatives do: `record_negative_masked_dogtagid` (the `credentialSubject.dogTagId` leaf's hash moved to `obfuscatedLeafHashes`, root unchanged, isolating the non-maskable-set check), `record_negative_reserved_present` (a hash placed in `reservedLeafHashes` and folded into the posted root, isolating the reserved-must-be-empty check), and `record_negative_overlap` (a genuinely duplicated clinical leaf, one copy disclosed and the other copy's hash obfuscated, isolating the overlap check - the same construction as `negative_overlap_root_preserving_duplicate_leaf`, not the non-isolating `negative_overlap` shape section 15 itself warns against).
+  Generated the same way as `redactedArtifactVectors`'s promoted entries: computed directly via the real `hashLeaf`/`buildMerkle`/`verifyRecordArtifact`, never hand-typed, by `packages/dogtag-standard-ts/scripts/promote-spec-vectors.ts`.
 
 This repository ALSO carries a larger, older vectors file, `packages/dogtag-standard-ts/testvectors.json` (cross-language TS/Rust/Swift parity fixtures, asserted by `test/parity.test.ts` and `test/sdk.test.ts`).
 That file remains the day-to-day cross-language parity gate for this repository's own implementations; `specs/leaf-commitment-vectors.json` is the smaller, curated, PUBLIC conformance set this specification itself defines, chosen for readability and worked-example value rather than exhaustive coverage.
@@ -498,3 +501,128 @@ Four more promoted vectors (WP4.10S fix round 1) each isolate one further check 
 `negative_duplicate_pet_keypath_no_identity_oracle` isolates step 2's duplicate-keyPath guard: `credentialSubject.name` is disclosed twice, with different salts, and both openings genuinely fold into the posted root, so only the duplicate-keyPath check - never the root comparison - can reject it.
 `negative_65_leaves_genuine_root_over_cap` isolates step 1's 64-leaf cap: it posts 65 total leaf hashes (3 reserved plus 62 disclosed attribute leaves, one more than section 10's cap allows) carrying their own genuine root, so only the total-leaf-count check can reject it; the vector is necessarily large, since 65 is the smallest leaf count that both exceeds the cap and still recomputes a self-consistent root.
 `negative_hex32_shape_reserved_missing_0x_prefix` and `negative_hex32_shape_obfuscated_missing_0x_prefix` isolate step 1's hex32-shape checks: each posts one `reservedLeafHashes`/`obfuscatedLeafHashes` entry with its `"0x"` prefix stripped - still the correct field element once decoded, since the parser folding it into the root treats the prefix as optional - so only the shape check itself, which requires the literal prefix, can reject it.
+
+## 16. Record artifacts (WP4.14)
+
+Section 15 describes `RedactedTagArtifact`, an opened-leaf tree built over a device's PROFILE tree - a tree that always folds in the three reserved owner-control leaves (section 9), and whose identity anchor (`dogTagIdField`) lives OUTSIDE the tree entirely because the chain binds it separately (`profileRoot(dogTagIdField) == root`).
+This section describes a second, sibling opened-leaf format, `RecordArtifact` (WP4.14, vaccination records and future record types alike), built over a DIFFERENT kind of tree: one with NO reserved leaves at all, whose on-chain anchor is `issueRecord(recordType, root)` - a root-keyed anchor with no owner-control material folded into it, ever.
+The two formats share every hashing and tree-construction rule (this document introduces no new primitive here either); they differ only in POLICY, enumerated below.
+
+### The wire format
+
+```
+RecordArtifact = {
+  protocolVersion, artifactType: "record", schemaId?,
+  root,
+  disclosed: [{keyPath, saltHex, tag, value}, ...],
+  obfuscatedLeafHashes: [0x.. x N],
+  reservedLeafHashes: [],
+}
+```
+
+`artifactType` is a WIRE-FORMAT discriminator a receiver reads before deciding which verifier and which policy to apply - `"record"` here, contrasted with a `RedactedTagArtifact`'s implicit `"tag"` (a legacy wire payload from before this field existed carries no `artifactType` at all, and is treated as `"tag"` by omission).
+It is not itself a leaf and not a claim this document's cryptography checks; it is exactly as load-bearing as a tagged union's discriminant field always is, no more.
+
+Unlike `RedactedTagArtifact`, a `RecordArtifact` carries no top-level `dogTagIdField`/`dogTagIdDec`, no top-level `issuerClone`, and no top-level `recordType` field.
+This is a deliberate consequence of the non-maskable set below, not an oversight: `credentialSubject.dogTagId`, `issuer.contract`, and `recordType` are each themselves NON-MASKABLE DISCLOSED LEAVES on every valid `RecordArtifact` (never absent, by construction, once `verifyRecordArtifact` has accepted the artifact), so a second, top-level, UNCHECKED copy of any of them would only invite the value shown to a reader to drift from the value the root actually commits to - exactly the class of risk section 15's own overlap-check finding is a worked example of (two copies of a fact, only one of them actually checked, is worse than one copy).
+A caller that wants any of these three values reads it straight out of `disclosed` once `verifyRecordArtifact` has returned `true`; there is nothing to mirror at the top level in the first place.
+
+`schemaId` (optional) is the one top-level field this format keeps despite that reasoning, and it is treated differently from the three dropped above precisely because its own committed counterpart, `credentialSchema.id`, is ALSO always a non-maskable disclosed leaf: `verifyRecordArtifact` cross-checks it - when present, `schemaId` MUST equal the disclosed `credentialSchema.id` leaf's value exactly, and an artifact whose two copies disagree is rejected outright, closing the identical drift risk the paragraph above describes rather than accepting it for this one field.
+Contrast `RedactedTagArtifact`'s own `schemaId` (section 15), which has no committed leaf counterpart in a profile tree to diverge from at all, and so is never cross-checked - the two fields share a name and a wire position, not a verification rule.
+
+### Relation between a record's registry schema and its leaves
+
+A per-record-type registry schema (`specs/schemas/dogtag.vaccination.v1.schema.json` for `VACCINATION`) describes the shape of the PRE-HASH CREDENTIAL DOCUMENT `credentialSchema.id` names - the same JSON object a fixture in `packages/dogtag-standard-ts/test/vaccination_schema.test.ts` validates directly against it - and NOT the shape of a `RecordArtifact`'s `disclosed` array, which is that same document's FLATTENED leaf image (`flatten()`'s keyPath/value pairs, each independently salted and hashed), of which a masked artifact legitimately discloses only a subset (the seven non-maskable keyPaths at minimum, per below).
+`recordArtifactVectors` (`specs/leaf-commitment-vectors.json`, sections 13-14) are deliberately MINIMAL illustrations of this relationship - the seven non-maskable leaves plus two ordinary clinical ones, never a complete credential satisfying every envelope-required field (`@context`, `credentialStatus`, `signatureTrustTier`, and so on) - because a vector's job is to prove the Merkle mechanics `verifyRecordArtifact` checks, not registry-schema conformance, which `vaccination_schema.test.ts` proves separately, directly against the registry schema itself, over a fixture built for that purpose.
+
+### The non-maskable set: exactly seven keyPaths, by decision
+
+Section 15 found `RedactedTagArtifact`'s non-maskable set to be NONE, by evidence: no leaf in a profile tree is structurally special in a way that would justify refusing to let it be masked.
+`RecordArtifact`'s non-maskable set is the opposite finding, by DECISION (Kenneth, WP4.14 plan section 10, confirmed round 2 item 5 and round 3): exactly these seven keyPaths MUST be present, fully opened, in `disclosed` on every valid record artifact -
+
+```
+credentialSubject.dogTagId
+recordType
+credentialSchema.id
+credentialSchema.version
+issuer.chainId
+issuer.contract
+issuer.operator
+```
+
+`verifyRecordArtifact` rejects an artifact where any of the seven is missing from `disclosed` entirely, or named only by its hash in `obfuscatedLeafHashes` - moving one of these seven from `disclosed` to `obfuscatedLeafHashes` is caught by this check even though it leaves the recomputed `root` bit-for-bit unchanged (the identical "which array names a hash" bookkeeping distinction section 15's `negative_reserved_relabeled_as_obfuscated` worked example already demonstrates for a different pair of arrays).
+Presence is checked the same NFC-normalized, field-level way section 9's rejection rule and section 15 step 2's duplicate-keyPath guard already compare keyPaths - never a bare string `===`, so no NFC-alias spelling of one of the seven can evade the check by construction, the identical reasoning section 9 states for its own prefix guard.
+
+Why each of the seven is on this list:
+
+- `credentialSubject.dogTagId` - the chain stores no record-to-dog association at all (unlike a profile tree, whose `dogTagId` is bound on-chain by `profileRoot`); this leaf is a record's ONLY link to a dog, so masking it would produce an artifact that verifies perfectly while proving nothing about which pet it is for.
+- `recordType` - the value the on-chain binding rule below checks against `recordTypeOf(root)`; without it disclosed, a verifier has a root and no way to ask the chain the one question (which record type is this?) needed to interpret it.
+- `credentialSchema.id` / `credentialSchema.version` - which DogTag registry schema (`specs/schemas/`) this record's field set was actually issued against; independent of, and never to be confused with, the record's separate UNCOMMITTED `conformsTo[]` claim about which EXTERNAL standards (FHIR, NASPHV, the EU passport model) the same data also happens to satisfy (below) - `specs/schemas/README.md` already states credential SHAPE and leaf ENCODING are independent axes, and this is the identical independence applied to "which registry schema" versus "which external standard".
+- `issuer.chainId` / `issuer.contract` / `issuer.operator` - together these make a record self-describing OFFLINE (Kenneth round 2 item 3): a phone holding nothing but this one JSON blob can still name which chain, which contract, and which signer to ask, without any other stored context, before making a single RPC call.
+
+Owner data - a pet owner's identity or wallet - is never a member of this set, and under the WP4.14 leaf list (plan section 4) never appears in a record's leaf set AT ALL: a record artifact carries no `owner.*`-namespaced leaf of any kind, maskable or not, unlike a profile tree's three ALWAYS-opaque reserved leaves (below).
+
+### Reserved leaves: always empty, never present
+
+`reservedLeafHashes` MUST be the empty array on every `RecordArtifact` - contra section 15's `RedactedTagArtifact`, which requires EXACTLY three.
+A record's tree never had a reserved leaf to begin with: `issueRecord(recordType, root)` (`contracts/src/VetIssuer.sol`) anchors a root directly, with no owner-control material folded into it, so there is no legitimate construction under which a genuinely record-shaped tree contains one.
+`verifyRecordArtifact` rejects any artifact whose `reservedLeafHashes` is non-empty, unconditionally - this is the mirror image of section 15's exactly-3 count check, and exists for the identical reason: without it, the meaning of "this array is always empty" would be unenforceable, and a hash smuggled into `reservedLeafHashes` would fold into `root` identically to one honestly placed in `obfuscatedLeafHashes` (`buildMerkle` does not care which array a hash came from), making the two indistinguishable from the root alone.
+
+### The 64-leaf cap does not apply
+
+Section 10 is explicit that its 64-leaf cap is a POLICY the CONSENT-BIND path layers on top of `buildMerkle`, driven entirely by the frozen depth-6 consent circuit's fixed witness shape (`circuits/consent.circom`, `component main = DogTagConsent(6)`) - it is not a property of `buildMerkle`/`verifyInclusion` themselves, and section 10 says plainly that the general primitive "accepts a tree of any positive leaf count, with no padding and no fixed depth."
+A record artifact is never consent-proven: there is no reserved triple for `DogTagConsent` to prove membership of, and `issueRecord`'s own on-chain guard is `onlyActiveOperator`, unrelated to the ZK consent circuit entirely.
+`verifyRecordArtifact` therefore places NO upper bound on `disclosed.length + obfuscatedLeafHashes.length` - a real difference from `verifyRedactedArtifact`, not an oversight, and `dogtag.record-artifact.v1.schema.json` correspondingly declares no `maxItems` bounding the two arrays together.
+
+### The verification algorithm
+
+`verifyRecordArtifact(artifact)` is, like `verifyRedactedArtifact`, a pure composition of `hashLeaf` and `buildMerkle` plus section 9's owner-namespace guard - with the non-maskable-set and always-empty-reserved rules above replacing section 15's differing rules, and with no expected-identity-leaves option (a record carries no owner identity leaves for such an oracle to check against in the first place):
+
+1. `reservedLeafHashes` is exactly the empty array; every `obfuscatedLeafHashes` entry is a well-formed 32-byte hex string; `root` is a well-formed 32-byte hex string. (No total-leaf-count bound - see above.)
+2. No `disclosed` entry's keyPath falls inside the reserved owner-control namespace (`owner.*` outside `owner.identity.*`, section 9's rejection rule, applied here defensively even though a genuinely-built record tree never has one to begin with); no two `disclosed` entries recompute to the same keyPath field.
+3. Every one of the seven non-maskable keyPaths is present among `disclosed`'s (NFC-normalized, field-compared) keyPaths.
+   **This check MUST run before step 5's Merkle fold.** It is what guarantees `disclosed` is never empty by the time `buildMerkle` is called: an artifact posting all three arrays empty (`disclosed: []`, `obfuscatedLeafHashes: []`, `reservedLeafHashes: []`) is rejected HERE, before `buildMerkle` ever sees it - `build_merkle` panics on an empty input in the Rust reference implementation, and a `RecordArtifact` has no reserved-triple floor the way a `RedactedTagArtifact` always does (section 15's own `build_merkle` call is safe only because the exactly-3-reserved check ahead of it guarantees a non-empty input by construction; the equivalent guarantee here comes from THIS check instead, since `reservedLeafHashes` contributes nothing).
+   **Step 3b (schemaId cross-check):** if the top-level `schemaId` is present, it MUST equal the disclosed `credentialSchema.id` leaf's value exactly - safe to check here since step 3 above already guarantees that leaf is disclosed (see "The wire format" above for why this one top-level field is cross-checked where the three dropped ones simply do not exist).
+4. Every `disclosed` leaf's hash is RECOMPUTED from its opening via `hashLeaf` - never trusted as posted - and rejected if it equals any `obfuscatedLeafHashes` entry (section 15's overlap rule, minus the reserved half, since a record artifact never has one).
+5. `buildMerkle` over the union of the recomputed disclosed hashes and the obfuscated hashes (reserved contributes nothing) equals `root` exactly.
+
+A caller binds the result on-chain via the rules below, deliberately not this pure function's job - exactly as section 15's own step 5 is a caller's job for a profile tree.
+
+### On-chain binding rules
+
+Where a `RedactedTagArtifact` binds via `profileRoot(dogTagIdField) == root` (section 15), a `RecordArtifact` binds via the root itself, cross-checked against the non-maskable leaves already disclosed on it:
+
+1. `rootIssuer[root] == issuer.contract` - factory-anchored resolution: ask the verifier's OWN configured factory which clone issued this root; never trust a clone address the artifact or its sender names outside this cross-check (the same anti-substitution reasoning `packages/dogtag-standard-ts/src/verify.ts`'s `RpcAdapter.rootIssuer` already documents for every other artifact type this protocol verifies).
+2. `recordTypeOf(root) == keccak256(recordType)`, read against the clone resolved in step 1 - `contracts/src/VetIssuer.sol`'s `mapping(bytes32 => bytes32) public recordTypeOf`, populated both by the original tag-issuance path and by `issueRecord(recordType, root)`.
+   `keccak256` here is the EXACT SAME hash `packages/dogtag-standard-ts/src/verify.ts`'s `recordTypeKey` and `crates/dogtag-standard-rs/src/verify.rs`'s `record_type_key` already compute for the issuer-whitelist pillar (section 6 below extends those two functions' own on-chain read; this binding rule reuses the identical hash, not a new one).
+3. `isValid(root)` on the clone resolved in step 1 - the same liveness/non-revocation check every other artifact type in this protocol already performs before trusting a root.
+4. `issuedBy(root) == issuer.operator`, read against the clone resolved in step 1 - the wallet that actually called `issueRecord`, cross-checked against the leaf's own claim (the identical "resolve independently, then compare against the document's claim" pattern `verify.ts`'s `issuedBy`/whitelist pillar already uses).
+5. the `issuer.chainId` leaf equals the chain ID the verifier is actually connected to - a trivial equality with no contract read at all, stated explicitly because skipping it would let an artifact genuinely anchored on one chain be replayed as if anchored on a different chain whose contract addresses happen to collide with the first's.
+
+Every one of these five reads a NON-MASKABLE leaf's disclosed value, never a top-level envelope field (there is none to read - see "The wire format" above) - a verifier that has already passed the pure structural check knows all five values it needs are present and hash-consistent with `root` before making a single RPC call.
+
+### The uncommitted block: never hashed
+
+A record is carried on the wire ALONGSIDE (never inside) its `RecordArtifact`, as a separate, UNCOMMITTED envelope block (WP4.14 plan sections 9-10, Kenneth round 3):
+
+```
+{
+  conformsTo: [{standard, version}, ...],
+  anchoring: {chainId, contract, txHash, blockNumber, blockTime},
+  presentation: { ... },
+}
+```
+
+None of `conformsTo`, `anchoring`, or `presentation` is ever a leaf, ever folded into `root`, or ever consulted by `verifyRecordArtifact` - each carries zero cryptographic weight, by design, and an implementation is free to omit, re-derive, or update any of them after the fact (for example, `anchoring.blockTime` maturing from pending to a confirmed timestamp as the transaction gets more confirmations) without invalidating `root` or requiring re-issuance, a flexibility no committed leaf could ever offer.
+
+- `conformsTo` names zero or more `(standard, version)` pairs from `specs/standards/index.yaml` (`specs/standards/README.md`) that this record's data ALSO happens to satisfy - a claim independent of, and never a substitute for, the committed `credentialSchema.id`/`credentialSchema.version` leaves above, which name the DogTag registry schema the record was actually issued against.
+- `anchoring` restates, for display convenience, facts the on-chain binding rules above independently verify (`chainId`/`contract` SHOULD equal the `issuer.chainId`/`issuer.contract` leaves where both exist - a mismatch here is a presentation bug to fix, never itself a verification failure, since a verifier that cares checks the leaves and the chain directly, never this block) plus `txHash`/`blockNumber`/`blockTime`, which have no leaf counterpart at all: the record's clinical `vaccinationDate` leaf is the medically-meaningful date, while the block number and chain time the `RecordIssued` receipt carries are anchoring metadata about WHEN THE CHAIN LEARNED ABOUT IT, a related but distinct fact (WP4.14 plan section 4).
+- `presentation` is free-form rendering guidance (for example, WP4.11's dynamic renderer hints) with no normative content this document defines.
+
+### Relation to redacted (tag) artifacts
+
+A `RecordArtifact` and a `RedactedTagArtifact` (section 15) share every hashing and tree-construction primitive, and the identical masking mechanic - move a leaf's hash from `disclosed` to `obfuscatedLeafHashes`, its opening dropped and only the hash retained, the root unchanged either way.
+Every difference between them is POLICY, never cryptography: which leaves are reserved (always exactly three, vs always none), which are non-maskable (none, by evidence, vs exactly seven, by decision), whether the 64-leaf cap applies (yes, a consent-bindable artifact, vs no), and how the root binds on-chain (`profileRoot(dogTagIdField) == root` vs `rootIssuer`/`recordTypeOf`/`issuedBy` read directly off `root` and the disclosed non-maskable leaves).
+`artifactType` is the wire-level discriminator a receiver reads to know which policy - and which verifier - applies before it ever inspects a single leaf.
+
+`impl:` `packages/dogtag-standard-ts/src/recordArtifact.ts` (`RecordArtifact`, `verifyRecordArtifact`), `crates/dogtag-standard-rs/src/record_artifact.rs` (`RecordArtifact`, `verify_record_artifact`).

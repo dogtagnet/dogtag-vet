@@ -1117,5 +1117,470 @@
       "root_hex": "0x07f14f47fabc05671d9ba009ac178dab16838f35ec9f1fdd576caf3843c0a2ed",
       "valid": false
     }
+  ],
+  "recordArtifactVectors": [
+    {
+      "name": "record_full_artifact",
+      "notes": "The seven non-maskable leaves (specs/leaf-commitment.md section 16) plus two ordinary clinical leaves (vaccineProductName, batchLotNumber), nothing masked: obfuscatedLeafHashes and reservedLeafHashes are both empty. This is the reference root the masked variants below must reproduce exactly.",
+      "disclosed": [
+        {
+          "keyPath": "credentialSubject.dogTagId",
+          "saltHex": "11111111111111111111111111111111",
+          "tag": 2,
+          "tagName": "String",
+          "value": "424242",
+          "expected_leaf_hex": "0x0118491e3aaff2591c1c799da72341a6168046cd3be0d4c74e2150291847ed20"
+        },
+        {
+          "keyPath": "recordType",
+          "saltHex": "22222222222222222222222222222222",
+          "tag": 2,
+          "tagName": "String",
+          "value": "VACCINATION",
+          "expected_leaf_hex": "0x24e37dc68ebcb0613d2f79725e2912b0d7cee00415dbd2c800f3139a1095fb0c"
+        },
+        {
+          "keyPath": "credentialSchema.id",
+          "saltHex": "33333333333333333333333333333333",
+          "tag": 2,
+          "tagName": "String",
+          "value": "https://dogtag.io/schemas/vaccination/v1",
+          "expected_leaf_hex": "0x0a8ea1709b979c6e6966e52d5e1dc498a2dfac49b44bbb4e9f057948557d348d"
+        },
+        {
+          "keyPath": "credentialSchema.version",
+          "saltHex": "44444444444444444444444444444444",
+          "tag": 2,
+          "tagName": "String",
+          "value": "1.0.0",
+          "expected_leaf_hex": "0x0ad40940126ae8cdf00dc53327a328be70d0ec27d4c88d05cc255769fd7df09b"
+        },
+        {
+          "keyPath": "issuer.chainId",
+          "saltHex": "55555555555555555555555555555555",
+          "tag": 3,
+          "tagName": "Integer",
+          "value": "135",
+          "expected_leaf_hex": "0x03317ea51bbfdbcdd317894da5be7f4200b35f53aea060e069411d1a5113c0f9"
+        },
+        {
+          "keyPath": "issuer.contract",
+          "saltHex": "66666666666666666666666666666666",
+          "tag": 2,
+          "tagName": "String",
+          "value": "0x86d9ac6c094783e6a27d3bdbb6ef868060256c75",
+          "expected_leaf_hex": "0x15f206897b5ee67ec6266b49bd3338438287877bbd7325c08610e128b9db08d1"
+        },
+        {
+          "keyPath": "issuer.operator",
+          "saltHex": "77777777777777777777777777777777",
+          "tag": 2,
+          "tagName": "String",
+          "value": "0x15759c525000000000000000000000000000cda",
+          "expected_leaf_hex": "0x1ea5974aeec4331dc1ab93520771865c5f59c5918ad5bdaa546f4c99da095c4d"
+        },
+        {
+          "keyPath": "vaccineProductName",
+          "saltHex": "88888888888888888888888888888888",
+          "tag": 2,
+          "tagName": "String",
+          "value": "Rabvac 3",
+          "expected_leaf_hex": "0x2cf537d31071bb3c884456b3f921ad537ee01d969524f76f61864707f589d8b4"
+        },
+        {
+          "keyPath": "batchLotNumber",
+          "saltHex": "99999999999999999999999999999999",
+          "tag": 2,
+          "tagName": "String",
+          "value": "LOT-998",
+          "expected_leaf_hex": "0x13b00ea09b084c02834fdf55c635b8d4f06eb5a77b0f8bb153d1620966625778"
+        }
+      ],
+      "obfuscatedLeafHashes": [],
+      "reservedLeafHashes": [],
+      "root_hex": "0x2aa074ef82a1158400311ed2c9573ce52886bbe349b4b08440dc42d30f0597d0",
+      "valid": true
+    },
+    {
+      "name": "record_masked_clinical_leaf",
+      "notes": "Masks batchLotNumber (a maskable clinical leaf, NOT in the non-maskable set) - moves its hash into obfuscatedLeafHashes and drops its opening from disclosed. Reproduces record_full_artifact's identical root: buildMerkle folds the same 9 leaf hashes either way, so which array names each one is invisible to the root.",
+      "disclosed": [
+        {
+          "keyPath": "credentialSubject.dogTagId",
+          "saltHex": "11111111111111111111111111111111",
+          "tag": 2,
+          "tagName": "String",
+          "value": "424242",
+          "expected_leaf_hex": "0x0118491e3aaff2591c1c799da72341a6168046cd3be0d4c74e2150291847ed20"
+        },
+        {
+          "keyPath": "recordType",
+          "saltHex": "22222222222222222222222222222222",
+          "tag": 2,
+          "tagName": "String",
+          "value": "VACCINATION",
+          "expected_leaf_hex": "0x24e37dc68ebcb0613d2f79725e2912b0d7cee00415dbd2c800f3139a1095fb0c"
+        },
+        {
+          "keyPath": "credentialSchema.id",
+          "saltHex": "33333333333333333333333333333333",
+          "tag": 2,
+          "tagName": "String",
+          "value": "https://dogtag.io/schemas/vaccination/v1",
+          "expected_leaf_hex": "0x0a8ea1709b979c6e6966e52d5e1dc498a2dfac49b44bbb4e9f057948557d348d"
+        },
+        {
+          "keyPath": "credentialSchema.version",
+          "saltHex": "44444444444444444444444444444444",
+          "tag": 2,
+          "tagName": "String",
+          "value": "1.0.0",
+          "expected_leaf_hex": "0x0ad40940126ae8cdf00dc53327a328be70d0ec27d4c88d05cc255769fd7df09b"
+        },
+        {
+          "keyPath": "issuer.chainId",
+          "saltHex": "55555555555555555555555555555555",
+          "tag": 3,
+          "tagName": "Integer",
+          "value": "135",
+          "expected_leaf_hex": "0x03317ea51bbfdbcdd317894da5be7f4200b35f53aea060e069411d1a5113c0f9"
+        },
+        {
+          "keyPath": "issuer.contract",
+          "saltHex": "66666666666666666666666666666666",
+          "tag": 2,
+          "tagName": "String",
+          "value": "0x86d9ac6c094783e6a27d3bdbb6ef868060256c75",
+          "expected_leaf_hex": "0x15f206897b5ee67ec6266b49bd3338438287877bbd7325c08610e128b9db08d1"
+        },
+        {
+          "keyPath": "issuer.operator",
+          "saltHex": "77777777777777777777777777777777",
+          "tag": 2,
+          "tagName": "String",
+          "value": "0x15759c525000000000000000000000000000cda",
+          "expected_leaf_hex": "0x1ea5974aeec4331dc1ab93520771865c5f59c5918ad5bdaa546f4c99da095c4d"
+        },
+        {
+          "keyPath": "vaccineProductName",
+          "saltHex": "88888888888888888888888888888888",
+          "tag": 2,
+          "tagName": "String",
+          "value": "Rabvac 3",
+          "expected_leaf_hex": "0x2cf537d31071bb3c884456b3f921ad537ee01d969524f76f61864707f589d8b4"
+        }
+      ],
+      "obfuscatedLeafHashes": [
+        "0x13b00ea09b084c02834fdf55c635b8d4f06eb5a77b0f8bb153d1620966625778"
+      ],
+      "reservedLeafHashes": [],
+      "root_hex": "0x2aa074ef82a1158400311ed2c9573ce52886bbe349b4b08440dc42d30f0597d0",
+      "valid": true
+    },
+    {
+      "name": "record_masked_except_non_maskable",
+      "notes": "Masks EVERY clinical leaf (vaccineProductName and batchLotNumber both moved to obfuscatedLeafHashes), disclosing only the seven non-maskable leaves - the falsifiable demonstration that the non-maskable set is real: masking down to exactly this set still verifies (unlike a RedactedTagArtifact, where the non-maskable set is empty and masking down to nothing at all still verifies - specs/leaf-commitment.md section 15). Reproduces record_full_artifact's identical root.",
+      "disclosed": [
+        {
+          "keyPath": "credentialSubject.dogTagId",
+          "saltHex": "11111111111111111111111111111111",
+          "tag": 2,
+          "tagName": "String",
+          "value": "424242",
+          "expected_leaf_hex": "0x0118491e3aaff2591c1c799da72341a6168046cd3be0d4c74e2150291847ed20"
+        },
+        {
+          "keyPath": "recordType",
+          "saltHex": "22222222222222222222222222222222",
+          "tag": 2,
+          "tagName": "String",
+          "value": "VACCINATION",
+          "expected_leaf_hex": "0x24e37dc68ebcb0613d2f79725e2912b0d7cee00415dbd2c800f3139a1095fb0c"
+        },
+        {
+          "keyPath": "credentialSchema.id",
+          "saltHex": "33333333333333333333333333333333",
+          "tag": 2,
+          "tagName": "String",
+          "value": "https://dogtag.io/schemas/vaccination/v1",
+          "expected_leaf_hex": "0x0a8ea1709b979c6e6966e52d5e1dc498a2dfac49b44bbb4e9f057948557d348d"
+        },
+        {
+          "keyPath": "credentialSchema.version",
+          "saltHex": "44444444444444444444444444444444",
+          "tag": 2,
+          "tagName": "String",
+          "value": "1.0.0",
+          "expected_leaf_hex": "0x0ad40940126ae8cdf00dc53327a328be70d0ec27d4c88d05cc255769fd7df09b"
+        },
+        {
+          "keyPath": "issuer.chainId",
+          "saltHex": "55555555555555555555555555555555",
+          "tag": 3,
+          "tagName": "Integer",
+          "value": "135",
+          "expected_leaf_hex": "0x03317ea51bbfdbcdd317894da5be7f4200b35f53aea060e069411d1a5113c0f9"
+        },
+        {
+          "keyPath": "issuer.contract",
+          "saltHex": "66666666666666666666666666666666",
+          "tag": 2,
+          "tagName": "String",
+          "value": "0x86d9ac6c094783e6a27d3bdbb6ef868060256c75",
+          "expected_leaf_hex": "0x15f206897b5ee67ec6266b49bd3338438287877bbd7325c08610e128b9db08d1"
+        },
+        {
+          "keyPath": "issuer.operator",
+          "saltHex": "77777777777777777777777777777777",
+          "tag": 2,
+          "tagName": "String",
+          "value": "0x15759c525000000000000000000000000000cda",
+          "expected_leaf_hex": "0x1ea5974aeec4331dc1ab93520771865c5f59c5918ad5bdaa546f4c99da095c4d"
+        }
+      ],
+      "obfuscatedLeafHashes": [
+        "0x2cf537d31071bb3c884456b3f921ad537ee01d969524f76f61864707f589d8b4",
+        "0x13b00ea09b084c02834fdf55c635b8d4f06eb5a77b0f8bb153d1620966625778"
+      ],
+      "reservedLeafHashes": [],
+      "root_hex": "0x2aa074ef82a1158400311ed2c9573ce52886bbe349b4b08440dc42d30f0597d0",
+      "valid": true
+    },
+    {
+      "name": "record_negative_masked_dogtagid",
+      "notes": "Moves credentialSubject.dogTagId's hash into obfuscatedLeafHashes instead of disclosed - the same 9-hash multiset as record_full_artifact, just repartitioned, so root_hex is bit-identical to it and step 4's root comparison alone cannot reject this. Only the non-maskable-set-must-be-disclosed check (specs/leaf-commitment.md section 16) rejects it, since dogTagId - one of the seven required keyPaths - is no longer found among disclosed's keyPaths.",
+      "disclosed": [
+        {
+          "keyPath": "recordType",
+          "saltHex": "22222222222222222222222222222222",
+          "tag": 2,
+          "tagName": "String",
+          "value": "VACCINATION",
+          "expected_leaf_hex": "0x24e37dc68ebcb0613d2f79725e2912b0d7cee00415dbd2c800f3139a1095fb0c"
+        },
+        {
+          "keyPath": "credentialSchema.id",
+          "saltHex": "33333333333333333333333333333333",
+          "tag": 2,
+          "tagName": "String",
+          "value": "https://dogtag.io/schemas/vaccination/v1",
+          "expected_leaf_hex": "0x0a8ea1709b979c6e6966e52d5e1dc498a2dfac49b44bbb4e9f057948557d348d"
+        },
+        {
+          "keyPath": "credentialSchema.version",
+          "saltHex": "44444444444444444444444444444444",
+          "tag": 2,
+          "tagName": "String",
+          "value": "1.0.0",
+          "expected_leaf_hex": "0x0ad40940126ae8cdf00dc53327a328be70d0ec27d4c88d05cc255769fd7df09b"
+        },
+        {
+          "keyPath": "issuer.chainId",
+          "saltHex": "55555555555555555555555555555555",
+          "tag": 3,
+          "tagName": "Integer",
+          "value": "135",
+          "expected_leaf_hex": "0x03317ea51bbfdbcdd317894da5be7f4200b35f53aea060e069411d1a5113c0f9"
+        },
+        {
+          "keyPath": "issuer.contract",
+          "saltHex": "66666666666666666666666666666666",
+          "tag": 2,
+          "tagName": "String",
+          "value": "0x86d9ac6c094783e6a27d3bdbb6ef868060256c75",
+          "expected_leaf_hex": "0x15f206897b5ee67ec6266b49bd3338438287877bbd7325c08610e128b9db08d1"
+        },
+        {
+          "keyPath": "issuer.operator",
+          "saltHex": "77777777777777777777777777777777",
+          "tag": 2,
+          "tagName": "String",
+          "value": "0x15759c525000000000000000000000000000cda",
+          "expected_leaf_hex": "0x1ea5974aeec4331dc1ab93520771865c5f59c5918ad5bdaa546f4c99da095c4d"
+        },
+        {
+          "keyPath": "vaccineProductName",
+          "saltHex": "88888888888888888888888888888888",
+          "tag": 2,
+          "tagName": "String",
+          "value": "Rabvac 3",
+          "expected_leaf_hex": "0x2cf537d31071bb3c884456b3f921ad537ee01d969524f76f61864707f589d8b4"
+        },
+        {
+          "keyPath": "batchLotNumber",
+          "saltHex": "99999999999999999999999999999999",
+          "tag": 2,
+          "tagName": "String",
+          "value": "LOT-998",
+          "expected_leaf_hex": "0x13b00ea09b084c02834fdf55c635b8d4f06eb5a77b0f8bb153d1620966625778"
+        }
+      ],
+      "obfuscatedLeafHashes": [
+        "0x0118491e3aaff2591c1c799da72341a6168046cd3be0d4c74e2150291847ed20"
+      ],
+      "reservedLeafHashes": [],
+      "root_hex": "0x2aa074ef82a1158400311ed2c9573ce52886bbe349b4b08440dc42d30f0597d0",
+      "valid": false
+    },
+    {
+      "name": "record_negative_reserved_present",
+      "notes": "Carries one entry in reservedLeafHashes (an arbitrary field element, not a genuine owner-control hash - a record artifact never has one to begin with) and FOLDS it into root_hex, so the posted root is the genuine root of this exact 10-hash multiset and the root comparison alone cannot reject it. Every other check passes (all seven non-maskable leaves are disclosed; no overlap). Only the reserved-must-be-empty check rejects this.",
+      "disclosed": [
+        {
+          "keyPath": "credentialSubject.dogTagId",
+          "saltHex": "11111111111111111111111111111111",
+          "tag": 2,
+          "tagName": "String",
+          "value": "424242",
+          "expected_leaf_hex": "0x0118491e3aaff2591c1c799da72341a6168046cd3be0d4c74e2150291847ed20"
+        },
+        {
+          "keyPath": "recordType",
+          "saltHex": "22222222222222222222222222222222",
+          "tag": 2,
+          "tagName": "String",
+          "value": "VACCINATION",
+          "expected_leaf_hex": "0x24e37dc68ebcb0613d2f79725e2912b0d7cee00415dbd2c800f3139a1095fb0c"
+        },
+        {
+          "keyPath": "credentialSchema.id",
+          "saltHex": "33333333333333333333333333333333",
+          "tag": 2,
+          "tagName": "String",
+          "value": "https://dogtag.io/schemas/vaccination/v1",
+          "expected_leaf_hex": "0x0a8ea1709b979c6e6966e52d5e1dc498a2dfac49b44bbb4e9f057948557d348d"
+        },
+        {
+          "keyPath": "credentialSchema.version",
+          "saltHex": "44444444444444444444444444444444",
+          "tag": 2,
+          "tagName": "String",
+          "value": "1.0.0",
+          "expected_leaf_hex": "0x0ad40940126ae8cdf00dc53327a328be70d0ec27d4c88d05cc255769fd7df09b"
+        },
+        {
+          "keyPath": "issuer.chainId",
+          "saltHex": "55555555555555555555555555555555",
+          "tag": 3,
+          "tagName": "Integer",
+          "value": "135",
+          "expected_leaf_hex": "0x03317ea51bbfdbcdd317894da5be7f4200b35f53aea060e069411d1a5113c0f9"
+        },
+        {
+          "keyPath": "issuer.contract",
+          "saltHex": "66666666666666666666666666666666",
+          "tag": 2,
+          "tagName": "String",
+          "value": "0x86d9ac6c094783e6a27d3bdbb6ef868060256c75",
+          "expected_leaf_hex": "0x15f206897b5ee67ec6266b49bd3338438287877bbd7325c08610e128b9db08d1"
+        },
+        {
+          "keyPath": "issuer.operator",
+          "saltHex": "77777777777777777777777777777777",
+          "tag": 2,
+          "tagName": "String",
+          "value": "0x15759c525000000000000000000000000000cda",
+          "expected_leaf_hex": "0x1ea5974aeec4331dc1ab93520771865c5f59c5918ad5bdaa546f4c99da095c4d"
+        },
+        {
+          "keyPath": "vaccineProductName",
+          "saltHex": "88888888888888888888888888888888",
+          "tag": 2,
+          "tagName": "String",
+          "value": "Rabvac 3",
+          "expected_leaf_hex": "0x2cf537d31071bb3c884456b3f921ad537ee01d969524f76f61864707f589d8b4"
+        },
+        {
+          "keyPath": "batchLotNumber",
+          "saltHex": "99999999999999999999999999999999",
+          "tag": 2,
+          "tagName": "String",
+          "value": "LOT-998",
+          "expected_leaf_hex": "0x13b00ea09b084c02834fdf55c635b8d4f06eb5a77b0f8bb153d1620966625778"
+        }
+      ],
+      "obfuscatedLeafHashes": [],
+      "reservedLeafHashes": [
+        "0x0000000000000000000000000000000000000000000000000000000000000001"
+      ],
+      "root_hex": "0x2af5be9a2c5f6d3d437094f09b21e6b9eca4bd016baea1a34a60f0efcae02fbf",
+      "valid": false
+    },
+    {
+      "name": "record_negative_overlap",
+      "notes": "vaccineProductName's leaf hash is genuinely committed TWICE in this tree (a record tree, like a profile tree, enforces no cross-leaf uniqueness among ordinary attribute leaves) - one copy is disclosed normally, the other copy's hash is separately listed in obfuscatedLeafHashes. root_hex is the genuine Merkle root over this exact 9-hash multiset (7 non-maskable plus the duplicated vaccineProductName hash twice), so the root comparison cannot tell this apart from a genuine artifact; only the overlap check rejects it.",
+      "disclosed": [
+        {
+          "keyPath": "credentialSubject.dogTagId",
+          "saltHex": "11111111111111111111111111111111",
+          "tag": 2,
+          "tagName": "String",
+          "value": "424242",
+          "expected_leaf_hex": "0x0118491e3aaff2591c1c799da72341a6168046cd3be0d4c74e2150291847ed20"
+        },
+        {
+          "keyPath": "recordType",
+          "saltHex": "22222222222222222222222222222222",
+          "tag": 2,
+          "tagName": "String",
+          "value": "VACCINATION",
+          "expected_leaf_hex": "0x24e37dc68ebcb0613d2f79725e2912b0d7cee00415dbd2c800f3139a1095fb0c"
+        },
+        {
+          "keyPath": "credentialSchema.id",
+          "saltHex": "33333333333333333333333333333333",
+          "tag": 2,
+          "tagName": "String",
+          "value": "https://dogtag.io/schemas/vaccination/v1",
+          "expected_leaf_hex": "0x0a8ea1709b979c6e6966e52d5e1dc498a2dfac49b44bbb4e9f057948557d348d"
+        },
+        {
+          "keyPath": "credentialSchema.version",
+          "saltHex": "44444444444444444444444444444444",
+          "tag": 2,
+          "tagName": "String",
+          "value": "1.0.0",
+          "expected_leaf_hex": "0x0ad40940126ae8cdf00dc53327a328be70d0ec27d4c88d05cc255769fd7df09b"
+        },
+        {
+          "keyPath": "issuer.chainId",
+          "saltHex": "55555555555555555555555555555555",
+          "tag": 3,
+          "tagName": "Integer",
+          "value": "135",
+          "expected_leaf_hex": "0x03317ea51bbfdbcdd317894da5be7f4200b35f53aea060e069411d1a5113c0f9"
+        },
+        {
+          "keyPath": "issuer.contract",
+          "saltHex": "66666666666666666666666666666666",
+          "tag": 2,
+          "tagName": "String",
+          "value": "0x86d9ac6c094783e6a27d3bdbb6ef868060256c75",
+          "expected_leaf_hex": "0x15f206897b5ee67ec6266b49bd3338438287877bbd7325c08610e128b9db08d1"
+        },
+        {
+          "keyPath": "issuer.operator",
+          "saltHex": "77777777777777777777777777777777",
+          "tag": 2,
+          "tagName": "String",
+          "value": "0x15759c525000000000000000000000000000cda",
+          "expected_leaf_hex": "0x1ea5974aeec4331dc1ab93520771865c5f59c5918ad5bdaa546f4c99da095c4d"
+        },
+        {
+          "keyPath": "vaccineProductName",
+          "saltHex": "88888888888888888888888888888888",
+          "tag": 2,
+          "tagName": "String",
+          "value": "Rabvac 3",
+          "expected_leaf_hex": "0x2cf537d31071bb3c884456b3f921ad537ee01d969524f76f61864707f589d8b4"
+        }
+      ],
+      "obfuscatedLeafHashes": [
+        "0x2cf537d31071bb3c884456b3f921ad537ee01d969524f76f61864707f589d8b4"
+      ],
+      "reservedLeafHashes": [],
+      "root_hex": "0x154264086589a3c6e43474f7e393f6cb78ded6b584bbbdb1844ceee81d2bce19",
+      "valid": false
+    }
   ]
 }

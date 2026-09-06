@@ -24,6 +24,15 @@
 // apps actually import from this module today. Round 2 fixed a fail-open gap in it (see the function's
 // own doc comment): a malformed packed leaf or an out-of-field/non-hex `targetHash`/`merkleRoot` used
 // to throw past this function and out of `verify()` entirely; both now resolve to INVALID instead.
+//
+// WP4.14S: a FIFTH new required RpcAdapter method, `issuerRecordTypeOfRoot` - v2 clones store the
+// whitelist pillar's record-type key per ROOT (`recordTypeOf(root)`, populated by both tag issuance
+// and the new `issueRecord`), not per CLONE the way `issuerRecordType`'s `recordType()` did. Every
+// v2 clone this pillar checks was returning UNRESOLVED before this change, because `issuerRecordType`
+// alone called a getter that no longer exists on the deployed contract (WP4.14 plan section 3's
+// blocker; contracts/src/VetIssuer.sol has no `function recordType()` at all). `issuerRecordType`
+// itself is UNCHANGED in shape - it is now the FALLBACK path only, tried when `issuerRecordTypeOfRoot`
+// itself fails (see that method's own doc comment for exactly which failure mode triggers it).
 import {buildMerkle} from "./merkle.js";
 import {flattenData, leafFromPacked} from "./wrap.js";
 import {fromHex32, type Field} from "./field.js";
@@ -70,9 +79,29 @@ export interface RpcAdapter {
    */
   issuedBy(issuerAddr: string, merkleRoot: string): Promise<string | null>;
   /**
-   * `DogTagIssuer.recordType()` - the clone's own immutable record-type key, or `null` for the zero
-   * word (uninitialized / not a clone). Read from the RESOLVED clone so the whitelist question is
-   * asked about the record type the CHAIN says this root belongs to, never the one the envelope claims.
+   * `DogTagIssuer.recordTypeOf(root)` (WP4.14) - a v2 clone's PER-ROOT record-type mapping
+   * (`contracts/src/VetIssuer.sol`'s `mapping(bytes32 => bytes32) public recordTypeOf`, populated by
+   * BOTH the original tag-issuance path and by `issueRecord(recordType, root)`), or `null` for the
+   * zero word (this root was never issued through the mapping on this clone - uninitialized, not a
+   * failure). Read from the RESOLVED clone, about THIS root, so the whitelist question is asked about
+   * the record type the CHAIN says this SPECIFIC root belongs to, never the one the envelope claims.
+   *
+   * This is the PRIMARY read (`resolveIssuerWhitelist` tries it first); {@link issuerRecordType} is
+   * the fallback used only when THIS call itself throws (specs/leaf-commitment.md section 16's
+   * on-chain binding rules; WP4.14 plan section 3's "SDK whitelist pillar still calls v1 recordType()
+   * ... v2 has recordTypeOf(root)" blocker). A v2 clone legitimately returning the zero word is NOT a
+   * signal to fall back - it means "not found on this clone", exactly like `issuerRecordType`
+   * returning `null` today; the fallback triggers on the CALL failing (no such function on this
+   * clone's bytecode at all - a pre-v2 clone), never on a successful call's result.
+   */
+  issuerRecordTypeOfRoot(issuerAddr: string, merkleRoot: string): Promise<string | null>;
+  /**
+   * `DogTagIssuer.recordType()` - the clone's own immutable, per-CLONE record-type key (the pre-WP4.14
+   * v1 shape), or `null` for the zero word (uninitialized / not a clone). FALLBACK ONLY, tried when
+   * {@link issuerRecordTypeOfRoot}'s call itself fails (a clone whose bytecode predates `recordTypeOf`
+   * entirely) - not a v2 clone's primary read. Read from the RESOLVED clone so the whitelist question
+   * is asked about the record type the CHAIN says this clone belongs to, never the one the envelope
+   * claims.
    */
   issuerRecordType(issuerAddr: string): Promise<string | null>;
   /**
@@ -249,9 +278,19 @@ async function resolveIssuerWhitelist(
 
   let chainRtKey: string | null;
   try {
-    chainRtKey = await rpc.issuerRecordType(resolvedClone);
+    // v2 PRIMARY: per-root recordTypeOf(root) - see issuerRecordTypeOfRoot's own doc comment.
+    chainRtKey = await rpc.issuerRecordTypeOfRoot(resolvedClone, root);
   } catch {
-    return {state: "UNRESOLVED", onchainSigner: signer};
+    // recordTypeOf(root) itself failed - most likely a pre-v2 clone whose bytecode has no such
+    // mapping at all (WP4.14 plan section 3's blocker). Fall back to the v1 per-clone recordType().
+    // A v2 clone's recordTypeOf SUCCEEDING with the zero word is handled below, NOT here - that is
+    // not a signal to fall back, it is "not found on this clone", the identical case issuerRecordType
+    // returning null already was.
+    try {
+      chainRtKey = await rpc.issuerRecordType(resolvedClone);
+    } catch {
+      return {state: "UNRESOLVED", onchainSigner: signer};
+    }
   }
   if (chainRtKey === null) {
     return {state: "UNRESOLVED", onchainSigner: signer}; // uninitialized, or not a clone at all
