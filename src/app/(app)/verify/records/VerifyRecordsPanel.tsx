@@ -167,6 +167,13 @@ export function VerifyRecordsPanel() {
                       <li key={keyPath}>{recordLeafLabel(keyPath)}</li>
                     ))}
                   </ul>
+                  {typeof session.result.hiddenCount === "number" && (
+                    // Plan section 11.2 V6's own explicit ask - the same singular/plural idiom
+                    // VerifyRedactedPanel.tsx's own "N field(s) masked" caption already uses.
+                    <p className="mt-2 text-caption text-ink-faint">
+                      {session.result.hiddenCount} field{session.result.hiddenCount === 1 ? "" : "s"} hidden (masked by the presenting device, not disclosed).
+                    </p>
+                  )}
                 </div>
               )}
               <div>

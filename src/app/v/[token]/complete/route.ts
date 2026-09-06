@@ -47,12 +47,13 @@ function toStoredResult(stage: RecordVerifyStage): RecordVerifyStoredResult {
  * configured factory/chain - never trusting the artifact's own claimed issuer without cross-checking
  * it, exactly the on-chain binding rules `specs/leaf-commitment.md` section 16 state.
  *
- * The stored result keeps `disclosedKeyPaths` (an array of keyPath strings) only - never the leaf
- * *values* - even though this endpoint is unauthenticated and the resulting `RecordVerifySession`
- * document is later polled by any staff member. Storing values would put a stranger's pet/medical
- * data in the vet's own database off the back of an anonymous POST; storing only which fields were
- * disclosed is enough for the staff-facing panel to label what it's looking at without retaining
- * the content itself.
+ * The stored result keeps `disclosedKeyPaths` (an array of keyPath strings) and `hiddenCount` (a
+ * plain integer, `obfuscatedLeafHashes.length`) only - never the leaf *values* - even though this
+ * endpoint is unauthenticated and the resulting `RecordVerifySession` document is later polled by
+ * any staff member. Storing values would put a stranger's pet/medical data in the vet's own
+ * database off the back of an anonymous POST; storing only which fields were disclosed, and how
+ * many were not, is enough for the staff-facing panel to label what it's looking at without
+ * retaining the content itself.
  */
 export async function POST(request: Request, {params}: {params: Promise<{token: string}>}) {
   const rateLimit = enforceRateLimit(request, "record-verify-complete", 30, 60_000);
@@ -119,6 +120,11 @@ export async function POST(request: Request, {params}: {params: Promise<{token: 
 
   const result = toStoredResult(stage);
   result.disclosedKeyPaths = parsedArtifact.data.disclosed.map((l) => l.keyPath);
+  // Plan section 11.2 V6's own explicit ask ("disclosed fields, hidden count") - directly off the
+  // presented artifact's own already-shape-validated obfuscatedLeafHashes, never a diff against the
+  // record type's full schema field set (which would fabricate a number for fields the issuer simply
+  // never populated). Set unconditionally, like disclosedKeyPaths above, regardless of stage.
+  result.hiddenCount = parsedArtifact.data.obfuscatedLeafHashes.length;
   await RecordVerifySession.updateOne({token: parsedToken.data}, {$set: {result}});
 
   return jsonWithHeaders({result}, {headers: rateLimit.headers});

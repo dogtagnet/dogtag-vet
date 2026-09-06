@@ -3,7 +3,7 @@ import {randomUUID} from "node:crypto";
 import mongoose from "mongoose";
 import {recordTypeKey} from "@dogtag/standard";
 import {startEphemeralMongod, stopEphemeralMongod, type EphemeralMongod} from "../helpers/ephemeralMongod";
-import {buildVaccinationRecord} from "@/lib/records/build";
+import {buildVaccinationRecord, recomputeRecordLeafHash} from "@/lib/records/build";
 import {roax} from "@/lib/chains";
 
 /**
@@ -172,7 +172,44 @@ describe("records verify mode (plan section 11.2 V6)", () => {
       recordType: "VACCINATION",
       validity: "revoked",
       disclosedKeyPaths: expect.any(Array),
+      hiddenCount: 0,
     });
+  });
+
+  it("hiddenCount reflects a genuinely masked presentment - plan section 11.2 V6's own explicit ask ('disclosed fields, hidden count')", async () => {
+    await withStaffSession();
+    const startRes = await startPOST(new Request("https://vet.example.com/api/verify/records/start", {method: "POST"}));
+    const {token} = (await startRes.json()) as {token: string};
+
+    vi.mocked(chainRead.readRootIssuer).mockResolvedValue(CLONE);
+    vi.mocked(chainRead.readRecordTypeOf).mockResolvedValue(recordTypeKey("VACCINATION"));
+    vi.mocked(chainRead.readIsValidRoot).mockResolvedValue(true);
+    vi.mocked(chainRead.readIssuedBy).mockResolvedValue(OPERATOR);
+
+    // Same fixture as buildPresentableArtifact, but MASK two genuinely-maskable leaves
+    // (vaccineManufacturer, batchLotNumber - neither is one of the seven non-maskable keyPaths) by
+    // moving their openings out of `disclosed` and into `obfuscatedLeafHashes` - `root` is unchanged
+    // since masking never touches the tree, only which openings are handed over.
+    const full = buildPresentableArtifact();
+    const maskedKeyPaths = new Set(["vaccineManufacturer", "batchLotNumber"]);
+    const disclosed = full.disclosed.filter((l) => !maskedKeyPaths.has(l.keyPath));
+    const obfuscatedLeafHashes = full.disclosed.filter((l) => maskedKeyPaths.has(l.keyPath)).map((l) => recomputeRecordLeafHash(l));
+    const maskedArtifact = {...full, disclosed, obfuscatedLeafHashes};
+
+    const completeRes = await completePOST(
+      new Request(`https://vet.example.com/v/${token}/complete`, {
+        method: "POST",
+        headers: {"content-type": "application/json"},
+        body: JSON.stringify({artifact: maskedArtifact}),
+      }),
+      tokenParams(token),
+    );
+    expect(completeRes.status).toBe(200);
+    const body = await completeRes.json();
+    expect(body.result.stage).toBe("verified");
+    expect(body.result.hiddenCount).toBe(2);
+    expect(body.result.disclosedKeyPaths).not.toContain("vaccineManufacturer");
+    expect(body.result.disclosedKeyPaths).not.toContain("batchLotNumber");
   });
 
   it("a malformed artifact body is refused (400) before any chain read", async () => {

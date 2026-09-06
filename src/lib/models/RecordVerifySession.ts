@@ -31,6 +31,14 @@ export interface RecordVerifyStoredResult {
   recordType?: string;
   validity?: "valid" | "expired" | "revoked";
   disclosedKeyPaths?: string[];
+  /** Plan section 11.2 V6's own explicit ask: "disclosed fields, hidden count". Set unconditionally
+   * alongside `disclosedKeyPaths` regardless of `stage` (same reasoning: even a `crypto_failed` or
+   * `not_anchored` presentment still structurally names how many leaves it withheld), computed as
+   * `obfuscatedLeafHashes.length` directly off the presented artifact - never a diff against the
+   * record type's full schema field set, which would fabricate a number for fields the issuer simply
+   * never populated. Zero new trust: `recordArtifactWireSchema` has already shape-validated
+   * `obfuscatedLeafHashes` before this is read. */
+  hiddenCount?: number;
 }
 
 export interface RecordVerifySessionDoc {
@@ -56,6 +64,7 @@ const recordVerifyStoredResultSchema = new Schema<RecordVerifyStoredResult>(
     recordType: String,
     validity: {type: String, enum: ["valid", "expired", "revoked"]},
     disclosedKeyPaths: [String],
+    hiddenCount: Number,
   },
   {_id: false},
 );
