@@ -101,7 +101,7 @@ Kenneth's ask (K2): a vet or owner should be able to register their own wallet a
 
 **Self-service (`/settings`'s "My issuance wallet" card, any vet/owner session).**
 `PATCH /api/settings/staff/me/wallet` (`src/app/api/settings/staff/me/wallet/route.ts`) lets a vet or owner set or clear THEIR OWN `Staff.walletAddress` - `requireVetSession` supplies the target `staffId` from the session itself, so the request body can only ever be `{walletAddress: string | null}` and can never touch another row or the caller's own role.
-The card's "Use connected wallet" button fills the field from the same wagmi connected account the issuance wizard and `OperatorsSection` already use.
+The card's "Use connected wallet" button fills the field from the same wagmi connected account the issuance wizard already uses.
 A manual field plus Save/Clear cover the rest.
 The owner-assigns-it path (`StaffSection`'s "Practitioner profiles") is unchanged - an owner can still set or clear any vet's wallet, including their own.
 

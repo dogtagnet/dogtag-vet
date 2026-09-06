@@ -10,9 +10,12 @@ import {SnackbarProvider} from "@/components/ui/Snackbar";
 
 /** The only routes anything reads `useAccount()`/`useConnect()` at all
  * (`TagIssueWizard`/`TagsTable` under `/tags`, `VerifySessionPanel` under `/verify`,
- * `SetupWizard` under `/setup`, WP4.7 D4's `OperatorsSection` under `/settings`) - see
- * `E2EMockWalletAutoConnect`'s own doc comment on why the auto-connect effect is scoped to exactly
- * these instead of running on every page. */
+ * `SetupWizard` under `/setup`, `MyWalletSection`'s "Use connected wallet" button under
+ * `/settings`) - see `E2EMockWalletAutoConnect`'s own doc comment on why the auto-connect effect
+ * is scoped to exactly these instead of running on every page. WP4.16: `/settings`'s OTHER wallet
+ * surface, `OperatorsSection`, reads on-chain operator status with a bare `useReadContract` and
+ * has needed no connected account of its own since that wave removed its Add/Remove write - it
+ * stays off this list on its own merits, not merely left out. */
 function isWalletGatedPath(pathname: string): boolean {
   return pathname === "/setup" || pathname === "/verify" || pathname === "/settings" || pathname.startsWith("/tags");
 }
