@@ -13,6 +13,9 @@ export default defineConfig({
   testMatch: /.*\.spec\.ts/,
   fullyParallel: false,
   workers: 1,
+  // Per-test budget. Cold Next.js route compiles under machine load routinely exceed Playwright's
+  // 30s default; five specs already override to 60s individually (WP4.13 grade rounds 1-2).
+  timeout: 60_000,
   retries: process.env.CI ? 1 : 0,
   reporter: [["list"]],
   globalSetup: "./e2e/global-setup.ts",
