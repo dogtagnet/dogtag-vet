@@ -112,6 +112,32 @@ The same helper, same short (5s) cache, backs three surfaces so they can never d
 `no-address` deliberately never claims "you cannot issue" - the chain only cares about whichever wallet is actually connected at issuance time, never this app's own record of one - that stronger claim is reserved for `not-whitelisted`, where the chain was actually asked and answered.
 See `docs/DEPLOY.md`'s "Vet role, issuance operators, and per-practitioner scheduling" section for the operational procedure an owner follows to grant a vet's recorded wallet operator status on a real chain.
 
+## Practitioner profile: first/last name, title, government accreditation
+
+Kenneth's ask (issue 3): split a practitioner's name into first and last name, add a qualification/title field (e.g. "DVM"), and add a government accreditation number, with a UI placeholder example of "USDA accreditation number".
+
+**Fields (`Staff.ts`).**
+`firstName`, `lastName`, `title`, and `accreditationNumber` are all optional strings, each independently clearable by sending `null` (`Staff.setStaffProfile`'s `$unset` contract) - the same fix also makes the pre-existing `displayName` field clearable for the first time.
+`displayName` itself is now a DEPRECATED fallback tier: legacy rows keep resolving through it until someone enters a first and last name, and there is deliberately no backfill (a whitespace split of a free-text legacy name would be a guess, and a guess written to the live database is worse than falling back to the unsplit text).
+
+**Composition (`practitionerDisplayName` in `src/lib/staffRoleTone.ts`) - the ONE point every surface shares.**
+Tier 1: `firstName`/`lastName` (either or both), with `, Title` appended when `title` is also set - e.g. "Jane Smith, DVM".
+Tier 2: the deprecated `displayName`, never with a title appended (a title only ever pairs with tier 1's real name fields).
+Tier 3: the email's local part - the fallback two e2e specs (`practitioner-mode.spec.ts`, `vet-wallet-status.spec.ts`) depend on for a practitioner nobody has named yet.
+
+**Initials (`practitionerInitials`, same file) - derived from the SAME raw fields, never from tier 1's composed output.**
+Splitting a composed "Jane Smith, DVM" line on whitespace picks up the title's own initial instead of the practitioner's actual last-name one - a real trap, not a hypothetical one, since `CalendarView.tsx` used to do exactly that before this WP.
+`practitionerInitials` instead reads `firstName`/`lastName` directly when either is set, or falls back to the same tier-2/3 name `practitionerDisplayName` would show (with any accidentally-embedded ", trailing text" from a legacy free-text `displayName` stripped first).
+`PractitionerSummary` (`src/lib/booking/queries.ts`) carries this as `initials`, computed once in `listBookablePractitioners` rather than re-derived by each UI consumer.
+
+**Self-service (`/settings`'s "My profile" card, any vet/owner session).**
+`PATCH /api/settings/staff/me/profile` (`src/app/api/settings/staff/me/profile/route.ts`) lets a vet or owner set or clear THEIR OWN first/last name, title, and accreditation number - modelled on the sibling `/me/wallet` route (`requireVetSession` supplies `staffId` from the session, `.strict()` schema with no `role`/`disabled`/`bookable`/`walletAddress` key at all).
+The owner-assigns-it path (`StaffSection`'s "Practitioner profiles") is unchanged - an owner can still set or clear any vet's fields, including their own, and also sees a "Clear legacy name" action once a first/last name replaces an old `displayName`.
+
+**The accreditation number is INTERNAL ONLY.**
+It is shown and edited in Settings alone - never on the public booking wire (`GET /v1/booking/availability` maps a practitioner down to exactly `{id, name}`), the calendar, ICS, or emails.
+Whether it (and the title) should ever become public is an open question left for Kenneth; the current behavior treats the title as public (part of the name line) and the accreditation number as private.
+
 ## Design decisions
 
 ### Invoice PDF library: pdfkit
