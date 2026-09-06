@@ -2,7 +2,7 @@ import "server-only";
 import {createPublicClient, http, keccak256, toBytes, TransactionReceiptNotFoundError, type Address, type Hex} from "viem";
 import {roax} from "@/lib/chains";
 import {getServerEnv} from "@/lib/env";
-import {vetIssuerAbi, vetIssuerFactoryAbi, entityRegistryAbi, dogTagSBTConsentAbi, verificationRegistryConsentAbi} from "@/lib/abi";
+import {vetIssuerAbi, vetIssuerFactoryAbi, entityRegistryAbi, dogTagSBTConsentAbi, verificationRegistryConsentAbi, delegationRegistryAbi} from "@/lib/abi";
 
 /**
  * Server-side read-only ROAX client. This repo never holds a private key server-side (wp4-vet.md's
@@ -57,6 +57,27 @@ export async function readIsValidRoot(cloneAddress: Address, root: string): Prom
     functionName: "isValid",
     args: [root as `0x${string}`],
   })) as boolean;
+}
+
+/** `DogTagSBTConsent.status(dogTagIdField)` - the tag's own lifecycle status (0 Active, 1 Lost,
+ * 2 TransferPending, 3 Deceased, 4 Revoked). WP4.15's own `DelegationRegistry.add`/`revoke`
+ * deliberately do NOT check this on chain (`DelegationRegistry.sol`'s doc comment: "the
+ * terminal-status rule is therefore enforced entirely by consumers... not by this contract" -
+ * `docs/DELEGATION.md` section 4.6 leaves it an open implementation choice since Stage A's
+ * ceremony has no ZK consent check for the future delegate-proof registry to enforce it at
+ * either). Kenneth's decision (plan section 9 item 7: "Terminal tags: YES - survive Lost/
+ * TransferPending, frozen on Deceased/Revoked") is therefore enforced HERE, at the app layer, as
+ * this repo's own defense-in-depth precondition on the add/revoke ceremony - see
+ * `isTerminalSbtStatus` below and its call sites in `src/lib/delegation/`. */
+export async function readSbtStatus(sbtAddress: Address, dogTagIdFieldDec: string): Promise<number> {
+  return Number(
+    await roaxPublicClient().readContract({
+      address: sbtAddress,
+      abi: dogTagSBTConsentAbi,
+      functionName: "status",
+      args: [BigInt(dogTagIdFieldDec)],
+    }),
+  );
 }
 
 /** `VetIssuerFactory.rootIssuer(root)` - the clone address that indexed `root` via
@@ -179,6 +200,69 @@ export async function readIssuedBy(cloneAddress: Address, root: `0x${string}`): 
     functionName: "issuedBy",
     args: [root],
   })) as Address;
+}
+
+/**
+ * WP4.15 multi-owner (PLANNED - `DelegationRegistry` is not deployed on any real chain yet). Four
+ * reads against the registry itself, never the clone (`addSecondaryOwner`/`revokeSecondaryOwner`
+ * are clone functions that call INTO the registry - see `chainWrite.ts` - but every read of "what
+ * is this tag's delegate set right now" goes straight to the registry, the single source of truth
+ * `docs/DELEGATION.md` section 4.2 describes). All four are fail-closed like every other reader in
+ * this file - an unreadable chain throws, never resolves to a guessed answer.
+ */
+
+/** `DelegationRegistry.isSecondary(dogTagId, commitment)` - is `commitment` a CURRENTLY active
+ * secondary owner of `dogTagIdFieldDec`? The decisive confirm-time check (V3): a concurrent,
+ * unrelated add/revoke on the same tag can move `secondaryCount`/`delegationRoot` for reasons that
+ * have nothing to do with THIS write, but `isSecondary` for the specific commitment this write
+ * just added or removed can only flip because of it. */
+export async function readIsSecondary(delegationRegistryAddress: Address, dogTagIdFieldDec: string, commitment: Hex): Promise<boolean> {
+  return (await roaxPublicClient().readContract({
+    address: delegationRegistryAddress,
+    abi: delegationRegistryAbi,
+    functionName: "isSecondary",
+    args: [BigInt(dogTagIdFieldDec), commitment],
+  })) as boolean;
+}
+
+/** `DelegationRegistry.secondaryCount(dogTagId)` - count of CURRENTLY active secondaries. The
+ * session-start cap pre-check (`checkDelegationCapNotReached`) and part of the confirm-time audit
+ * trail (never the decisive confirm check on its own - see `readIsSecondary`'s doc comment). */
+export async function readSecondaryCount(delegationRegistryAddress: Address, dogTagIdFieldDec: string): Promise<number> {
+  const count = (await roaxPublicClient().readContract({
+    address: delegationRegistryAddress,
+    abi: delegationRegistryAbi,
+    functionName: "secondaryCount",
+    args: [BigInt(dogTagIdFieldDec)],
+  })) as bigint;
+  return Number(count);
+}
+
+/** `DelegationRegistry.delegationRoot(dogTagId)` - part of the confirm-time audit trail only
+ * (`docs/DELEGATION.md` section 4.2: emptiness is `secondaryCount == 0`, never a root comparison -
+ * this value is recorded for display/logging, never branched on for correctness). */
+export async function readDelegationRoot(delegationRegistryAddress: Address, dogTagIdFieldDec: string): Promise<Hex> {
+  return (await roaxPublicClient().readContract({
+    address: delegationRegistryAddress,
+    abi: delegationRegistryAbi,
+    functionName: "delegationRoot",
+    args: [BigInt(dogTagIdFieldDec)],
+  })) as Hex;
+}
+
+/** `DelegationRegistry.delegationLeaves(dogTagId)` - the tag's current 16 physical tree slots
+ * (`docs/DELEGATION.md` section 4.2), needed in full both for the Owners card's chain-authoritative
+ * active/revoked join (one read, not N `isSecondary` calls) and for `DelegationCoOwnerBundle`'s
+ * own `delegationLeaves` field (V4) - `specs/vet-public-api.yaml`: "folding fewer than 16 values
+ * produces a different tree than the one `delegationRoot` actually commits to", so this must always
+ * be the live, full 16-element chain read, never reconstructed from Mongo. */
+export async function readDelegationLeaves(delegationRegistryAddress: Address, dogTagIdFieldDec: string): Promise<Hex[]> {
+  return (await roaxPublicClient().readContract({
+    address: delegationRegistryAddress,
+    abi: delegationRegistryAbi,
+    functionName: "delegationLeaves",
+    args: [BigInt(dogTagIdFieldDec)],
+  })) as Hex[];
 }
 
 /**

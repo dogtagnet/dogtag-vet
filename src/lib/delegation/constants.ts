@@ -38,3 +38,18 @@ export const DELEGATION_MAX_ACTIVE = 11;
  * 4.2 itself documents having used to produce this exact value.
  */
 export const EMPTY_DELEGATION_ROOT = "0x08cec144526c6d771c4aad65ad4e8054bc21e6f09b8bdf27c13ba39643fa8ddc" as const;
+
+/** `DogTagSBTConsent.Status` enum values (`contracts/src/DogTagSBTConsent.sol`): Active=0, Lost=1,
+ * TransferPending=2, Deceased=3, Revoked=4. */
+export const SBT_STATUS_DECEASED = 3;
+export const SBT_STATUS_REVOKED = 4;
+
+/** Kenneth's decision (plan section 9 item 7): secondary-owner records "survive Lost/
+ * TransferPending, frozen on Deceased/Revoked" - the SAME two terminal values
+ * `VerificationRegistryConsent.recordVerificationZK` already gates every consent proof on
+ * (`STATUS_DECEASED`/`STATUS_REVOKED`). `DelegationRegistry.add`/`revoke` do not check this
+ * on-chain (see `chainRead.ts`'s `readSbtStatus` doc comment) - this app enforces it itself, as a
+ * precondition on starting a delegation ceremony and again immediately before the on-chain write. */
+export function isTerminalSbtStatus(status: number): boolean {
+  return status === SBT_STATUS_DECEASED || status === SBT_STATUS_REVOKED;
+}
