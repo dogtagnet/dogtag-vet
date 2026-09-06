@@ -1,6 +1,6 @@
 {
   "_comment": "Leaf-level (post-flatten) dictionary for the DogTag credential schemas in this registry. Maps every keyPath a schema.ts-valid credential's flatten() walk can produce to {tags, requirement, notes}. This is a DIFFERENT altitude from the JSON Schema files beside it: those validate the pre-wrap plain-JSON credential (the shape validateSchema checks); this dictionary describes the post-flatten typed-scalar leaves specs/leaf-commitment.md's hashLeaf actually commits to. See specs/schemas/README.md for how the two relate and for versioning rules. WP4.10S NOTE: this dictionary's 'credentialSubject.dogTagId': required entry describes ONLY that flatten() pipeline (a WrappedDoc-shaped credential's leaves) - it is NOT a claim about a device-built profile tree's attribute leaves (specs/leaf-commitment.md section 15's RedactedTagArtifact, dogtag.redacted-tag-artifact.v1.schema.json), which never contains a credentialSubject.dogTagId leaf at all (build_profile_tree takes dogTagId as a bare key-derivation input, never an attribute leaf) and has no non-maskable keyPath of its own; this dictionary is not extended for that leaf space because verifyRedactedArtifact never consults it (its disclosed[].keyPath values are checked cryptographically, never against a keyPath allow-list).",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "wildcardConvention": "A segment written [*] is a DICTIONARY PATTERN standing for any concrete array index (weightHistory[*].value matches weightHistory[0].value, weightHistory[1].value, ...). [*] is NOT valid F2a keyPath syntax and must never be hashed literally - it exists only so this dictionary does not need one entry per array position.",
   "requirementLegend": {
     "required": "Always present with a non-null value in every schema.ts-valid credential the entry's scope applies to.",
@@ -114,6 +114,21 @@
       "tags": ["String"],
       "requirement": "optional",
       "notes": "Same presence condition as microchip.code. Used in the rabies implantDate <= vaccinationDate cross-field rule."
+    },
+    "credentialSubject.color": {
+      "tags": ["String"],
+      "requirement": "optional",
+      "notes": "Free-text coat color, e.g. brown."
+    },
+    "credentialSubject.registrationId": {
+      "tags": ["String"],
+      "requirement": "optional",
+      "notes": "Local government registration or licence id."
+    },
+    "credentialSubject.registrationAuthority": {
+      "tags": ["String"],
+      "requirement": "optional",
+      "notes": "Authority that issued registrationId, e.g. AVS Singapore, so the id stays unambiguous across jurisdictions."
     },
 
     "vaccineProductCode": {"tags": ["String"], "requirement": "optional", "notes": "Required when type includes RabiesVaccinationCertificate."},

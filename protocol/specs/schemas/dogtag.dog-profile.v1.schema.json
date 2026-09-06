@@ -3,7 +3,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "DogTag dog-profile credential v1",
   "description": "recordType == DOG_PROFILE. Mirrors the DOG_PROFILE branch of packages/dogtag-standard-ts/src/schema.ts's validateSchema. Every constraint here is fully expressible in JSON Schema; this record type declares no x-validationRules.",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "x-validationRules": [],
   "type": "object",
   "allOf": [{"$ref": "https://dogtag.io/schemas/envelope/v1"}],
@@ -50,6 +50,15 @@
         "microchip": {
           "$ref": "https://dogtag.io/schemas/envelope/v1#/$defs/microchip",
           "description": "Optional for DOG_PROFILE (needsChip is false here unless the credential's top-level cdcPath == \"standard\", a cross-cutting rule this registry structurally enforces only in dogtag.cdc-import-form.v1 - see that schema's notes and specs/schemas/README.md). If present, still fully shape-validated."
+        },
+        "color": {
+          "description": "Free-text coat color, e.g. brown."
+        },
+        "registrationId": {
+          "description": "Local government registration or licence id."
+        },
+        "registrationAuthority": {
+          "description": "Authority that issued registrationId, e.g. AVS Singapore, so the id stays unambiguous across jurisdictions."
         }
       }
     }

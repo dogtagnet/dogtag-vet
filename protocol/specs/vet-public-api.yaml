@@ -1020,6 +1020,15 @@ components:
         weightHistory:
           type: array
           items: {$ref: '#/components/schemas/WeightEntry'}
+        color:
+          type: string
+          description: Free-text coat color, e.g. brown.
+        registrationId:
+          type: string
+          description: Local government registration or licence id.
+        registrationAuthority:
+          type: string
+          description: Authority that issued registrationId, e.g. AVS Singapore, so the id stays unambiguous across jurisdictions.
 
     WeightEntry:
       type: object
