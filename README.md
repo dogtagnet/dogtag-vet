@@ -107,9 +107,13 @@ The owner-assigns-it path (`StaffSection`'s "Practitioner profiles") is unchange
 
 **Whitelist status, everywhere it matters.**
 `src/lib/issuanceOperatorStatus.ts`'s `resolveOperatorStatus` is the ONE server-side answer to "can this wallet actually issue right now" - `whitelisted`, `not-whitelisted` (the chain was asked and said no), `no-address` (nothing recorded to check), `not-configured` (this clinic's clone isn't set up yet), or `unreadable` (the chain read itself failed or timed out).
-The same helper, same short (5s) cache, backs three surfaces so they can never disagree: the "My issuance wallet" card's status badge, a persistent (non-dismissible) warning banner on `/tags` and `/tags/issue` that also flags when the browser's CURRENTLY CONNECTED wallet differs from the recorded one, and `OperatorsSection`'s existing live status column (which gained one small additive "could not verify" state for an unreadable chain read - its "Active"/"Inactive" states and Add/Remove flow are unchanged).
+The same helper, same short (5s) cache, backs three surfaces so they can never disagree: the "My issuance wallet" card's status badge, a persistent (non-dismissible) warning banner on `/tags` and `/tags/issue` that also flags when the browser's CURRENTLY CONNECTED wallet differs from the recorded one, and `OperatorsSection`'s existing live status column (which gained one small additive "could not verify" state for an unreadable chain read).
 `no-address` deliberately never claims "you cannot issue" - the chain only cares about whichever wallet is actually connected at issuance time, never this app's own record of one - that stronger claim is reserved for `not-whitelisted`, where the chain was actually asked and answered.
-See `docs/DEPLOY.md`'s "Vet role, issuance operators, and per-practitioner scheduling" section for the operational procedure an owner follows to grant a vet's recorded wallet operator status on a real chain.
+
+**WP4.16 removed `OperatorsSection`'s Add/Remove buttons entirely.**
+`VetIssuer.addOperator`/`removeOperator` are `onlyFactoryAdmin`, so every owner-signed call this panel used to submit always reverted on a real chain - only the e2e stub (which never executes a real EVM) ever let it appear to work.
+The panel is now read-only, and its own copy points whoever is looking at it to the DogTag admin portal instead.
+See `docs/DEPLOY.md`'s "Vet role, issuance operators, and per-practitioner scheduling" section for the operational procedure a clinic now follows (apply in the DogTag admin portal, the admin approves) to get a vet's recorded wallet whitelisted on a real chain.
 
 ## Practitioner profile: first/last name, title, government accreditation
 
