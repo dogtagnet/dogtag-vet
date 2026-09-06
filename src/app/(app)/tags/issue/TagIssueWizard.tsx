@@ -59,6 +59,10 @@ const initialProfile = {
   neuterStatus: "" as "" | "intact" | "neutered" | "spayed" | "unknown",
   dateOfBirth: "",
   weightHistory: [] as WeightEntry[],
+  // WP4.12 (Kenneth issue 2) - three optional profile leaves.
+  color: "",
+  registrationId: "",
+  registrationAuthority: "",
 };
 
 /**
@@ -84,6 +88,11 @@ export function TagIssueWizard() {
   const [ownerIdentity, setOwnerIdentity] = useState({name: "", countryOfIdentification: "", identification: ""});
   const [profile, setProfile] = useState(initialProfile);
   const [microchipCode, setMicrochipCode] = useState("");
+  // zod's flatten() buckets every `profile.*` issue (mintProfileSchema is nested one level under
+  // startMintSessionSchema) under the single top-level key "profile" - it cannot tell us WHICH
+  // profile field failed, only that one did. Shown once for the whole "Pet profile" section rather
+  // than pinned under a single input, which would be a false precision this API cannot back up.
+  const [profileError, setProfileError] = useState<string | undefined>(undefined);
 
   const [starting, setStarting] = useState(false);
   const [session, setSession] = useState<SessionPoll | null>(null);
@@ -119,6 +128,25 @@ export function TagIssueWizard() {
       .then((r) => (r.ok ? r.json() : []))
       .then((fetchedPets: PetDoc[]) => setPets(fetchedPets.filter((pet) => !pet.dogTag?.external)));
   }, [selectedClient]);
+
+  // WP4.12 (Kenneth issue 2): prefill color/registrationId/registrationAuthority from the selected
+  // EXISTING pet's own CRM record - staff still enters the rest of the profile fresh for every
+  // mint, exactly as before this wave (species/breed/sex/etc. are deliberately NOT prefilled here,
+  // matching this wizard's existing behavior for every other field). Resets to the newly selected
+  // pet's own values (falling back to "") rather than merging with whatever was already typed, so
+  // switching from one existing pet to another never leaves the previous pet's data behind. A "New
+  // pet" selection (`petId` empty) leaves whatever staff already typed untouched.
+  useEffect(() => {
+    if (!petId) return;
+    const selected = pets.find((p) => p.petId === petId);
+    if (!selected) return;
+    setProfile((v) => ({
+      ...v,
+      color: selected.color ?? "",
+      registrationId: selected.registrationId ?? "",
+      registrationAuthority: selected.registrationAuthority ?? "",
+    }));
+  }, [petId, pets]);
 
   function stopPolling() {
     if (pollRef.current) clearInterval(pollRef.current);
@@ -223,6 +251,7 @@ export function TagIssueWizard() {
     }
     const selectedPet = pets.find((p) => p.petId === petId);
     setStarting(true);
+    setProfileError(undefined);
     try {
       const res = await fetch("/api/tags/issue/start", {
         method: "POST",
@@ -244,6 +273,10 @@ export function TagIssueWizard() {
       const body = await res.json();
       if (!res.ok) {
         snackbar.show(body?.error?.message ?? "Could not start issuance", "danger");
+        // zod's flatten() keys nested `profile.*` errors under "profile" (an array of every
+        // message for that whole sub-object, not per-field - see profileError's own comment).
+        const profileFieldErrors = body?.error?.details?.fieldErrors?.profile as string[] | undefined;
+        if (profileFieldErrors?.length) setProfileError(profileFieldErrors.join(" "));
         return;
       }
       const started = body as StartSessionResponse;
@@ -562,6 +595,7 @@ export function TagIssueWizard() {
           </FormSection>
 
           <FormSection title="4. Pet profile">
+            {profileError && <p className="text-caption text-danger">{profileError}</p>}
             <div className="grid grid-cols-2 gap-4">
               <FormField label="Species" htmlFor="species">
                 <Input id="species" value={profile.species} onChange={(e) => setProfile((v) => ({...v, species: e.target.value}))} />
@@ -593,6 +627,33 @@ export function TagIssueWizard() {
               </FormField>
               <FormField label="Microchip code" htmlFor="microchip">
                 <Input id="microchip" value={microchipCode} onChange={(e) => setMicrochipCode(e.target.value)} />
+              </FormField>
+              <FormField label="Color" htmlFor="color" className="min-w-0">
+                <Input
+                  id="color"
+                  maxLength={120}
+                  placeholder="brown"
+                  value={profile.color}
+                  onChange={(e) => setProfile((v) => ({...v, color: e.target.value}))}
+                />
+              </FormField>
+              <FormField label="Government registration id" htmlFor="registration-id" className="min-w-0">
+                <Input
+                  id="registration-id"
+                  maxLength={120}
+                  placeholder="e.g. AVS licence number"
+                  value={profile.registrationId}
+                  onChange={(e) => setProfile((v) => ({...v, registrationId: e.target.value}))}
+                />
+              </FormField>
+              <FormField label="Registration authority" htmlFor="registration-authority" className="min-w-0">
+                <Input
+                  id="registration-authority"
+                  maxLength={120}
+                  placeholder="e.g. AVS Singapore"
+                  value={profile.registrationAuthority}
+                  onChange={(e) => setProfile((v) => ({...v, registrationAuthority: e.target.value}))}
+                />
               </FormField>
             </div>
             <FormField label="Weight history" htmlFor="weights">
