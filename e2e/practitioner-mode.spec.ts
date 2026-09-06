@@ -143,6 +143,9 @@ test.describe.serial("flow 1+2: role gating, wallet, and the D4 operator panel",
     // writes the whitelist itself; the panel names the real authority instead of offering a
     // button for a write that always reverted on a real chain.
     await expect(panel.getByText("Only the DogTag protocol admin can grant or revoke issuance rights.")).toBeVisible();
+    await expect(
+      panel.getByText("Apply for this practitioner in the DogTag admin portal (Issuance operators on your clinic's status page)."),
+    ).toBeVisible();
     await expect(panel.getByRole("button", {name: "Add operator"})).toHaveCount(0);
     await expect(panel.getByRole("button", {name: "Remove operator"})).toHaveCount(0);
 
