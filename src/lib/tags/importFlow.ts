@@ -47,10 +47,14 @@ export interface ExistingPetAttributes {
   breed?: string;
   sex?: PetSex;
   dateOfBirth?: string;
+  // WP4.12 (Kenneth issue 2)
+  color?: string;
+  registrationId?: string;
+  registrationAuthority?: string;
 }
 
 export interface AttributeMergeField {
-  field: "name" | "species" | "breed" | "sex" | "dateOfBirth";
+  field: "name" | "species" | "breed" | "sex" | "dateOfBirth" | "color" | "registrationId" | "registrationAuthority";
   petValue: string;
   verifiedValue: string;
 }
@@ -186,7 +190,7 @@ export function mergeVerifiedAttributes(
   existing: ExistingPetAttributes,
   verified: VerifiedPetAttributes,
 ): {resolved: ExistingPetAttributes; conflicts: AttributeMergeField[]} {
-  const fields = ["name", "species", "breed", "sex", "dateOfBirth"] as const;
+  const fields = ["name", "species", "breed", "sex", "dateOfBirth", "color", "registrationId", "registrationAuthority"] as const;
   const resolved: ExistingPetAttributes = {...existing};
   const conflicts: AttributeMergeField[] = [];
   for (const field of fields) {

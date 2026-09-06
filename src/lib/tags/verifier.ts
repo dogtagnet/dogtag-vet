@@ -39,6 +39,10 @@ export interface VerifiedPetAttributes {
   breed?: string;
   sex?: PetSex;
   dateOfBirth?: string;
+  // WP4.12 (Kenneth issue 2)
+  color?: string;
+  registrationId?: string;
+  registrationAuthority?: string;
 }
 
 /** `credentialSubject.*` is the disclosed-attribute namespace, distinct from `owner.*`/
@@ -50,6 +54,10 @@ const BREED_LABEL_KEY_PATH = "credentialSubject.breedLabel";
 const BREED_VBO_KEY_PATH = "credentialSubject.breedVbo";
 const SEX_KEY_PATH = "credentialSubject.sex";
 const DATE_OF_BIRTH_KEY_PATH = "credentialSubject.dateOfBirth";
+// WP4.12 (Kenneth issue 2) - the three optional profile leaves, import-side.
+const COLOR_KEY_PATH = "credentialSubject.color";
+const REGISTRATION_ID_KEY_PATH = "credentialSubject.registrationId";
+const REGISTRATION_AUTHORITY_KEY_PATH = "credentialSubject.registrationAuthority";
 const VALID_PET_SEXES: readonly PetSex[] = ["male", "female", "unknown"];
 
 /**
@@ -75,6 +83,9 @@ export function mapVerifiedLeavesToPetAttributes(leaves: OpenedLeaf[]): Verified
     breed: get(BREED_LABEL_KEY_PATH) ?? get(BREED_VBO_KEY_PATH),
     sex,
     dateOfBirth: get(DATE_OF_BIRTH_KEY_PATH),
+    color: get(COLOR_KEY_PATH),
+    registrationId: get(REGISTRATION_ID_KEY_PATH),
+    registrationAuthority: get(REGISTRATION_AUTHORITY_KEY_PATH),
   };
   // Strip undefined keys so equality assertions against a plain `{}` (no claims at all) hold -
   // `VerifiedPetAttributes`'s fields are all optional, but an object literal with every value

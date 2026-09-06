@@ -65,9 +65,20 @@ export const mongoImportStore: ImportFlowStore = {
   },
 
   async findExistingPetAttributes(petId): Promise<ExistingPetAttributes | null> {
-    const pet = await Pet.findOne({petId}).lean<Pick<PetDoc, "name" | "species" | "breed" | "sex" | "dateOfBirth">>();
+    const pet = await Pet.findOne({petId}).lean<
+      Pick<PetDoc, "name" | "species" | "breed" | "sex" | "dateOfBirth" | "color" | "registrationId" | "registrationAuthority">
+    >();
     if (!pet) return null;
-    return {name: pet.name, species: pet.species, breed: pet.breed, sex: pet.sex, dateOfBirth: pet.dateOfBirth};
+    return {
+      name: pet.name,
+      species: pet.species,
+      breed: pet.breed,
+      sex: pet.sex,
+      dateOfBirth: pet.dateOfBirth,
+      color: pet.color,
+      registrationId: pet.registrationId,
+      registrationAuthority: pet.registrationAuthority,
+    };
   },
 
   async attachToExistingPet(petId, resolvedAttributes, tag, conflicts, now): Promise<AttachToExistingPetResult> {
@@ -100,6 +111,11 @@ export const mongoImportStore: ImportFlowStore = {
           ...(resolvedAttributes.breed !== undefined ? {breed: resolvedAttributes.breed} : {}),
           ...(resolvedAttributes.sex !== undefined ? {sex: resolvedAttributes.sex} : {}),
           ...(resolvedAttributes.dateOfBirth !== undefined ? {dateOfBirth: resolvedAttributes.dateOfBirth} : {}),
+          ...(resolvedAttributes.color !== undefined ? {color: resolvedAttributes.color} : {}),
+          ...(resolvedAttributes.registrationId !== undefined ? {registrationId: resolvedAttributes.registrationId} : {}),
+          ...(resolvedAttributes.registrationAuthority !== undefined
+            ? {registrationAuthority: resolvedAttributes.registrationAuthority}
+            : {}),
           dogTag: {...dogTagSubdoc(tag), ...(conflictsField ? {importConflicts: conflictsField} : {})},
           searchKey: buildPetSearchKey({
             name: resolvedAttributes.name,
@@ -124,6 +140,9 @@ export const mongoImportStore: ImportFlowStore = {
       breed: attributes.breed,
       sex: attributes.sex,
       dateOfBirth: attributes.dateOfBirth,
+      color: attributes.color,
+      registrationId: attributes.registrationId,
+      registrationAuthority: attributes.registrationAuthority,
       ownerClientIds: [],
       dogTag: dogTagSubdoc(tag),
       searchKey: buildPetSearchKey({name, species: attributes.species, breed: attributes.breed}),
