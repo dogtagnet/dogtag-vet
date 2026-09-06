@@ -136,6 +136,15 @@ async function followOnce(): Promise<void> {
             fromBlock: cursor,
             toBlock,
           })) as DecodedEventLog[];
+          // WP4.15 multi-owner (PLANNED) item V5 - "verification history shows the role (primary/
+          // secondary) once the delegate circuit ships". Today's `Verified` event (the primary
+          // owner's own 7-signal consent proof) carries no role signal at all - `docs/DELEGATION.md`
+          // section 4.4's future delegate consent proof adds `role` as its NINTH public signal, on
+          // a Stage C registry contract that does not exist yet (needs a mainnet-grade ceremony
+          // first). Once it ships, the analogous event on that new contract gains a `role` field
+          // this same fold would decode and `/activity`'s Timeline (`toActivityDoc` above) would
+          // surface it - there is nothing to display before then, so this comment is the "document"
+          // half of V5 rather than a UI stub for a field that cannot exist yet.
           verifyLogs = all.filter((l) => knownDogTagIds.has(String(l.args?.dogTagId)));
         }
       } catch (err) {
