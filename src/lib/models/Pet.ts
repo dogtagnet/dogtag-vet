@@ -85,6 +85,13 @@ export interface PetDoc {
   notes?: string;
   microchip: MicrochipInfo;
   weightHistory: WeightEntry[];
+  /** WP4.12 (Kenneth issue 2) - optional flat `credentialSubject.*` profile leaves, mirrored onto
+   * the CRM record too (unlike breedVbo/neuterStatus, which live only in a mint session's own
+   * profile) so the vet portal and an issued tag's tree agree. Prefilled into the issue wizard when
+   * an existing pet is selected; mapped back on import (fill-empty-only, see importFlow.ts). */
+  color?: string;
+  registrationId?: string;
+  registrationAuthority?: string;
   ownerClientIds: string[];
   dogTag: DogTagInfo;
   photoFileId?: string;
@@ -177,6 +184,9 @@ const petSchema = new Schema<PetDoc>(
     notes: String,
     microchip: {type: microchipSchema, default: () => ({})},
     weightHistory: {type: [weightEntrySchema], default: []},
+    color: String,
+    registrationId: String,
+    registrationAuthority: String,
     ownerClientIds: {type: [String], default: [], index: true},
     dogTag: {type: dogTagSchema, default: () => ({})},
     photoFileId: String,

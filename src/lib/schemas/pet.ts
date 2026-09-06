@@ -23,6 +23,11 @@ export const createPetSchema = z.object({
   notes: z.string().optional(),
   microchip: microchipSchema.optional(),
   weightHistory: z.array(weightEntrySchema).optional(),
+  // WP4.12 (Kenneth issue 2) - same trim/max-120 shape as mintProfileSchema's own three leaves
+  // (schemas/mintSession.ts); no .min(1), an empty string is a valid "no value" input here too.
+  color: z.string().trim().max(120).optional(),
+  registrationId: z.string().trim().max(120).optional(),
+  registrationAuthority: z.string().trim().max(120).optional(),
   ownerClientIds: z.array(z.string()).min(1, "At least one owner is required"),
 });
 export type CreatePetInput = z.infer<typeof createPetSchema>;

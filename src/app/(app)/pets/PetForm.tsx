@@ -24,7 +24,17 @@ interface PetFormValues {
   microchipBodyLocation: string;
   weightHistory: WeightEntry[];
   owners: {clientId: string; name: string}[];
+  // WP4.12 (Kenneth issue 2)
+  color: string;
+  registrationId: string;
+  registrationAuthority: string;
 }
+
+/** Keyed by `PetFormValues`' own field names (not the wire's `error.details.fieldErrors` keys,
+ * which happen to be identical for these three since they are top-level in `createPetSchema` -
+ * unlike TagIssueWizard's nested `mintProfileSchema`, zod's `flatten()` gives exact per-field
+ * granularity here). */
+type NewFieldKey = "color" | "registrationId" | "registrationAuthority";
 
 function toValues(pet?: PetDoc, owners?: ClientDoc[]): PetFormValues {
   return {
@@ -40,6 +50,9 @@ function toValues(pet?: PetDoc, owners?: ClientDoc[]): PetFormValues {
     microchipBodyLocation: pet?.microchip?.bodyLocation ?? "",
     weightHistory: pet?.weightHistory ?? [],
     owners: owners?.map((o) => ({clientId: o.clientId, name: o.name})) ?? [],
+    color: pet?.color ?? "",
+    registrationId: pet?.registrationId ?? "",
+    registrationAuthority: pet?.registrationAuthority ?? "",
   };
 }
 
@@ -58,9 +71,13 @@ export function PetForm({pet, initialOwners, defaultOwnerClientId}: {
     return base;
   });
   const [saving, setSaving] = useState(false);
+  const [fieldErrors, setFieldErrors] = useState<Partial<Record<NewFieldKey, string>>>({});
 
   function set<K extends keyof PetFormValues>(key: K, value: PetFormValues[K]) {
     setValues((prev) => ({...prev, [key]: value}));
+    if (key === "color" || key === "registrationId" || key === "registrationAuthority") {
+      setFieldErrors((prev) => ({...prev, [key]: undefined}));
+    }
   }
 
   async function handleSave() {
@@ -73,6 +90,7 @@ export function PetForm({pet, initialOwners, defaultOwnerClientId}: {
       return;
     }
     setSaving(true);
+    setFieldErrors({});
     const payload = {
       name: values.name.trim(),
       species: values.species.trim() || undefined,
@@ -88,6 +106,9 @@ export function PetForm({pet, initialOwners, defaultOwnerClientId}: {
       },
       weightHistory: values.weightHistory.filter((w) => w.value.trim() !== ""),
       ownerClientIds: values.owners.map((o) => o.clientId),
+      color: values.color.trim() || undefined,
+      registrationId: values.registrationId.trim() || undefined,
+      registrationAuthority: values.registrationAuthority.trim() || undefined,
     };
     try {
       const res = await fetch(pet ? `/api/pets/${pet.petId}` : "/api/pets", {
@@ -95,10 +116,21 @@ export function PetForm({pet, initialOwners, defaultOwnerClientId}: {
         headers: {"Content-Type": "application/json"},
         body: JSON.stringify(payload),
       });
-      if (!res.ok) throw new Error("Save failed");
-      const saved = await res.json();
+      const body = await res.json().catch(() => null);
+      if (!res.ok) {
+        // color/registrationId/registrationAuthority are top-level in createPetSchema, so unlike
+        // TagIssueWizard's nested profile.*, zod's flatten() keys fieldErrors by these exact names.
+        const details = (body as {error?: {message?: string; details?: {fieldErrors?: Record<string, string[]>}}} | null)?.error;
+        setFieldErrors({
+          color: details?.details?.fieldErrors?.color?.[0],
+          registrationId: details?.details?.fieldErrors?.registrationId?.[0],
+          registrationAuthority: details?.details?.fieldErrors?.registrationAuthority?.[0],
+        });
+        snackbar.show(details?.message ?? "Could not save pet - try again", "danger");
+        return;
+      }
       snackbar.show(pet ? "Pet updated" : "Pet created", "ok");
-      if (!pet) router.push(`/pets/${saved.petId}`);
+      if (!pet) router.push(`/pets/${body.petId}`);
       else router.refresh();
     } catch {
       snackbar.show("Could not save pet - try again", "danger");
@@ -138,6 +170,27 @@ export function PetForm({pet, initialOwners, defaultOwnerClientId}: {
         </FormField>
         <FormField label="Notes" htmlFor="pet-notes">
           <Textarea id="pet-notes" rows={3} value={values.notes} onChange={(e) => set("notes", e.target.value)} />
+        </FormField>
+        <FormField label="Color" htmlFor="pet-color" error={fieldErrors.color}>
+          <Input id="pet-color" maxLength={120} placeholder="brown" value={values.color} onChange={(e) => set("color", e.target.value)} />
+        </FormField>
+        <FormField label="Government registration id" htmlFor="pet-registration-id" error={fieldErrors.registrationId}>
+          <Input
+            id="pet-registration-id"
+            maxLength={120}
+            placeholder="e.g. AVS licence number"
+            value={values.registrationId}
+            onChange={(e) => set("registrationId", e.target.value)}
+          />
+        </FormField>
+        <FormField label="Registration authority" htmlFor="pet-registration-authority" error={fieldErrors.registrationAuthority}>
+          <Input
+            id="pet-registration-authority"
+            maxLength={120}
+            placeholder="e.g. AVS Singapore"
+            value={values.registrationAuthority}
+            onChange={(e) => set("registrationAuthority", e.target.value)}
+          />
         </FormField>
       </FormSection>
 
