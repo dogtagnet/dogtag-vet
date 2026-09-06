@@ -70,6 +70,21 @@ function stageDisplay(result: RecordVerifyStoredResult): {tone: StatusTone; labe
       if (result.validity === "expired") {
         return {tone: "warn", label: "Expired", explanation: "This record is genuine and was never revoked, but its validity window has passed."};
       }
+      if (result.validity === "not_yet_valid") {
+        return {
+          tone: "warn",
+          label: "Not yet valid",
+          explanation: "This record is genuine and has not been revoked, but its validity window has not opened yet.",
+        };
+      }
+      if (result.validity === "hidden") {
+        return {
+          tone: "warn",
+          label: "Validity hidden",
+          explanation:
+            "This record is genuine and has not been revoked, but the presenting device did not disclose its validity window, so this deployment cannot say whether it is still in force.",
+        };
+      }
       return {tone: "ok", label: "Valid", explanation: "This record is genuine, currently valid, and has not been revoked."};
     }
   }

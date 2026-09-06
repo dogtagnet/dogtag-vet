@@ -29,7 +29,12 @@ export interface RecordVerifyStoredResult {
   reason?: string;
   issuerClone?: string;
   recordType?: string;
-  validity?: "valid" | "expired" | "revoked";
+  /** Grade round 1 D1: widened from valid|expired|revoked. `hidden` - the presented artifact
+   * withheld validFrom and/or validUntil (both are ordinary maskable leaves), so this deployment
+   * has no basis to compute a verdict and says so rather than guessing `valid`. `not_yet_valid` -
+   * validFrom was disclosed and is still in the future, never collapsed into `expired`. See
+   * `lib/records/validity.ts`'s `computeRecordValidity`, the single shared decision procedure. */
+  validity?: "valid" | "expired" | "revoked" | "hidden" | "not_yet_valid";
   disclosedKeyPaths?: string[];
   /** Plan section 11.2 V6's own explicit ask: "disclosed fields, hidden count". Set unconditionally
    * alongside `disclosedKeyPaths` regardless of `stage` (same reasoning: even a `crypto_failed` or
@@ -62,7 +67,7 @@ const recordVerifyStoredResultSchema = new Schema<RecordVerifyStoredResult>(
     reason: String,
     issuerClone: String,
     recordType: String,
-    validity: {type: String, enum: ["valid", "expired", "revoked"]},
+    validity: {type: String, enum: ["valid", "expired", "revoked", "hidden", "not_yet_valid"]},
     disclosedKeyPaths: [String],
     hiddenCount: Number,
   },

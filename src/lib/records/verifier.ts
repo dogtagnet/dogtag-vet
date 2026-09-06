@@ -1,6 +1,7 @@
 import {zeroAddress} from "viem";
 import {recordTypeKey, verifyRecordArtifact, type RecordArtifact as RecordArtifactWire} from "@dogtag/standard";
-import {recordValidUntilCutoffUtc} from "@/lib/records/validity";
+import {computeRecordValidity, type RecordValidity} from "@/lib/records/validity";
+import type {RecordArtifactStatus} from "@/lib/models/RecordArtifact";
 
 /**
  * The record-presentment verifier (plan section 11.2 V6) - checks a THIRD-PARTY-PRESENTED
@@ -58,12 +59,17 @@ export type RecordVerifyStage =
       recordType: string;
       /** `isValid(root) === false` at this point can only mean genuinely revoked (never "never
        * issued" - check 1 already proved `rootIssuer` resolves non-zero to the claimed clone, which
-       * the clone's own `issueRecord` only ever sets atomically together with `issuedAt`), so this
-       * three-way is exhaustive: `isValid` false is always `"revoked"`; `isValid` true splits on the
-       * disclosed `validUntil` leaf against `lib/records/validity.ts`'s own UTC-end-of-day cutoff -
-       * the SAME boundary rule V4's Records tab list uses, never a second, independently-reasoned
-       * date comparison. */
-      validity: "valid" | "expired" | "revoked";
+       * the clone's own `issueRecord` only ever sets atomically together with `issuedAt`).
+       * `isValid` true then runs `lib/records/validity.ts`'s `computeRecordValidity` - the SAME
+       * shared decision procedure the Records tab list uses, never a second, independently-reasoned
+       * one - over whichever of the disclosed `validFrom`/`validUntil` leaves are present. Grade
+       * round 1 D1 (MAJOR): `validFrom`/`validUntil` are ordinary MASKABLE leaves, not part of the
+       * seven non-maskable keyPaths, so a presenter may legally withhold either - the prior version
+       * of this stage defaulted an absent `validUntil` to `"valid"`, a guess this deployment had no
+       * basis for. `Exclude<..., "pending">` - `computeRecordValidity`'s own `status` parameter is
+       * always `"active"` or `"revoked"` here, never draft/issuing/error, so `"pending"` can never
+       * actually come back (enforced defensively below, never assumed). */
+      validity: Exclude<RecordValidity, "pending">;
     };
 
 const REQUIRED_LEAF_KEY_PATHS = ["issuer.contract", "issuer.operator", "issuer.chainId", "recordType"] as const;
@@ -134,13 +140,25 @@ export async function verifyPresentedRecordArtifact(
     return {stage: "not_anchored", reason: "operator_mismatch"};
   }
 
-  if (!valid) {
-    return {stage: "verified", issuerClone: resolvedClone.toLowerCase(), recordType: claimedRecordType, validity: "revoked"};
-  }
-
-  const validUntil = leafValue(artifact, "validUntil");
-  const validity = validUntil && Date.now() >= recordValidUntilCutoffUtc(validUntil).getTime() ? "expired" : "valid";
+  // "active"/"revoked" only - never draft/issuing/error, which have no meaning for a presented
+  // artifact (there is no draft to present). computeRecordValidity's own "pending" branch is
+  // therefore unreachable from this call site; assertNotPending below enforces that, never assumes it.
+  const derivedStatus: RecordArtifactStatus = valid ? "active" : "revoked";
+  const validity = assertNotPending(
+    computeRecordValidity(derivedStatus, leafValue(artifact, "validFrom"), leafValue(artifact, "validUntil")),
+  );
   return {stage: "verified", issuerClone: resolvedClone.toLowerCase(), recordType: claimedRecordType, validity};
+}
+
+/** `computeRecordValidity` is a general six-way function; this call site can only ever produce
+ * `"active"` or `"revoked"` as its `status` input, so `"pending"` is structurally unreachable here -
+ * this makes that honest at the type level (rather than an unchecked cast) and throws loudly if the
+ * assumption is ever wrong, instead of silently mis-typing a "pending" record as some other state. */
+function assertNotPending(validity: RecordValidity): Exclude<RecordValidity, "pending"> {
+  if (validity === "pending") {
+    throw new Error("verifyPresentedRecordArtifact: computeRecordValidity returned \"pending\" for a status that was always \"active\" or \"revoked\" - this should be unreachable.");
+  }
+  return validity;
 }
 
 // Exported for callers that need to name every disclosed keyPath a record artifact is REQUIRED to

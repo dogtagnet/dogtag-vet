@@ -180,9 +180,17 @@ export function RecordsCard({petId, timeZone, dogTagIssued}: {petId: string; tim
             key: "validity",
             header: "Validity",
             render: (r: RecordArtifactDoc) => {
-              const validUntil = leafValue(r, "validUntil");
-              if (validUntil === "-") return "-";
-              const validity = computeRecordValidity(r.status, validUntil);
+              // leafValue's "-" is a display sentinel for "no such leaf", not a real date - this
+              // deployment's own rows always have both in storage (the issuance form requires
+              // them), so this only matters for pre-validation legacy data; computeRecordValidity
+              // reports that honestly as "hidden" rather than a bare, unlabeled "-".
+              const validFromRaw = leafValue(r, "validFrom");
+              const validUntilRaw = leafValue(r, "validUntil");
+              const validity = computeRecordValidity(
+                r.status,
+                validFromRaw === "-" ? undefined : validFromRaw,
+                validUntilRaw === "-" ? undefined : validUntilRaw,
+              );
               return <StatusBadge tone={recordValidityTone[validity]} label={recordValidityLabel[validity]} />;
             },
           },

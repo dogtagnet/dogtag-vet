@@ -454,6 +454,53 @@ describe("confirm - fail-closed", () => {
     expect(res.status).toBe(400);
   });
 
+  // Grade round 1 D2 (MAJOR, coverage): the plan's own non-negotiable names FOUR chain reads that
+  // must all agree (rootIssuer, isValid, recordTypeOf, issuedBy). Before this pair, only two of the
+  // four had a test where deleting the production `&&` conjunct for that check would turn anything
+  // red - the existing "recordTypeOf ALL-ZERO" case above is caught by reconcile.ts's separate,
+  // explicitly-defensive `!== ZERO_HEX32` guard, never by the equality comparison itself, and no
+  // test anywhere set `isValid` to `false` while the other three agreed. `pnpm test` stayed fully
+  // green with either `valid &&` or the `recordTypeOf` equality conjunct deleted from
+  // `reconcileAnchoredRecord`'s `agrees` - exactly the silent-regression class the plan calls out
+  // by name. Bite (run once per test, confirmed, no production line changed - see the FIX ROUND 1
+  // progress log for the exact commands): deleting `valid &&` turns only the first test below red;
+  // separately deleting the `recordTypeOf` equality conjunct turns only the second test below red.
+  it("isValid(root) returning false refuses even when rootIssuer/recordTypeOf/issuedBy all agree - never active", async () => {
+    const petId = randomUUID();
+    const created = await draftedAndIssuing(petId);
+    vi.mocked(chainRead.readTxReceiptStatus).mockResolvedValue("success");
+    vi.mocked(chainRead.readRootIssuer).mockResolvedValue(OUR_CLONE);
+    vi.mocked(chainRead.readIsValidRoot).mockResolvedValue(false);
+    vi.mocked(chainRead.readRecordTypeOf).mockResolvedValue(VACCINATION_RECORD_TYPE_HASH);
+    vi.mocked(chainRead.readIssuedBy).mockResolvedValue(OPERATOR);
+
+    const res = await confirmPOST(new Request(`https://vet.example.com/api/records/${created.recordId}/confirm`, {method: "POST"}), idParams(created.recordId));
+    expect(res.status).toBe(400);
+    const errored = await RecordArtifact.findOne({recordId: created.recordId}).lean<RecordArtifactDoc>();
+    expect(errored?.status).toBe("error");
+    expect(errored?.errorStage).toBe("verify");
+  });
+
+  it("recordTypeOf(root) returning a NON-ZERO but WRONG word refuses, even when rootIssuer/isValid/issuedBy all agree (a non-zero wrong value bites where the all-zero case above cannot)", async () => {
+    const petId = randomUUID();
+    const created = await draftedAndIssuing(petId);
+    // Any 32-byte value that is neither ZERO_HEX32 nor VACCINATION_RECORD_TYPE_HASH - what matters
+    // is that it is a well-formed, genuinely non-zero word the equality conjunct alone must reject,
+    // not that it is any particular record type's real hash.
+    const wrongButNonZeroRecordTypeHash = `0x${"1".repeat(63)}2`;
+    vi.mocked(chainRead.readTxReceiptStatus).mockResolvedValue("success");
+    vi.mocked(chainRead.readRootIssuer).mockResolvedValue(OUR_CLONE);
+    vi.mocked(chainRead.readIsValidRoot).mockResolvedValue(true);
+    vi.mocked(chainRead.readRecordTypeOf).mockResolvedValue(wrongButNonZeroRecordTypeHash);
+    vi.mocked(chainRead.readIssuedBy).mockResolvedValue(OPERATOR);
+
+    const res = await confirmPOST(new Request(`https://vet.example.com/api/records/${created.recordId}/confirm`, {method: "POST"}), idParams(created.recordId));
+    expect(res.status).toBe(400);
+    const errored = await RecordArtifact.findOne({recordId: created.recordId}).lean<RecordArtifactDoc>();
+    expect(errored?.status).toBe("error");
+    expect(errored?.errorStage).toBe("verify");
+  });
+
   it("a CONFIRMED revert bounces the record back to draft (redraft never needed - leaves/root already verified)", async () => {
     const petId = randomUUID();
     const created = await draftedAndIssuing(petId);

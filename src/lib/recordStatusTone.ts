@@ -35,6 +35,8 @@ export const recordValidityTone: Record<RecordValidity, StatusTone> = {
   expired: "warn",
   revoked: "danger",
   pending: "neutral",
+  hidden: "warn",
+  not_yet_valid: "warn",
 };
 
 export const recordValidityLabel: Record<RecordValidity, string> = {
@@ -42,4 +44,6 @@ export const recordValidityLabel: Record<RecordValidity, string> = {
   expired: "Expired",
   revoked: "Revoked",
   pending: "Not yet issued",
+  hidden: "Validity hidden",
+  not_yet_valid: "Not yet valid",
 };
