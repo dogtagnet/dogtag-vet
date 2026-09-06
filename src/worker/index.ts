@@ -8,7 +8,10 @@
  *    reconciled to `bound` if its tag actually anchored on chain, back to `ready` if its tx
  *    confirmed REVERTED (WP4.5 track 3), or otherwise - once genuinely stale, never a seconds-old
  *    in-flight issuance - marked `interrupted` so it shows up as retryable rather than silently
- *    stuck forever (`recoverInterruptedSessions`, `src/lib/mint/bootRecovery.ts`).
+ *    stuck forever (`recoverInterruptedSessions`, `src/lib/mint/bootRecovery.ts`). WP4.14 adds the
+ *    identical recovery for a `RecordArtifact` left `issuing` (`recoverInterruptedRecords`,
+ *    `src/lib/records/bootRecovery.ts`) - back to `draft` on a confirmed revert, since a record's
+ *    leaves/root are already computed and already verified, so no redraft is ever needed.
  * 2. The chain-activity follower for `/activity` (`runActivityFollowerLoop`): chunked `getLogs`
  *    over this clinic's clone (`TagIssued`/`TagRevoked`/`TagReactivated`/`RecordIssued`/
  *    `RecordRevoked`/`RecordReactivated`/`FundsReceived`/`RefundSkipped`), plus `StatusChanged` on
@@ -28,6 +31,7 @@ import {ChainActivity} from "@/lib/models/ChainActivity";
 import {roaxPublicClient} from "@/lib/chainRead";
 import {vetIssuerAbi, dogTagSBTConsentAbi, verificationRegistryConsentAbi} from "@/lib/abi";
 import {recoverInterruptedSessions} from "@/lib/mint/bootRecovery";
+import {recoverInterruptedRecords} from "@/lib/records/bootRecovery";
 import {runPaymentWatcherOnce} from "@/lib/payments/watcher";
 import type {Log} from "viem";
 
@@ -176,6 +180,7 @@ async function runActivityFollowerLoop(pollMs: number): Promise<never> {
 async function main() {
   await connectToDatabase();
   await recoverInterruptedSessions();
+  await recoverInterruptedRecords();
 
   const env = getServerEnv();
   console.log(`[worker] starting chain-activity follower (poll every ${env.ACTIVITY_POLL_MS}ms)`);

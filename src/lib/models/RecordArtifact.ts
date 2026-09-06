@@ -36,9 +36,11 @@ export type RecordArtifactStatus = "draft" | "issuing" | "active" | "revoked" | 
 
 /** Mirrors `MintErrorStage`'s narrower shape (`MintSession.ts`) - a record's issuance has no
  * `"attestation"`/`"seal"` stage of its own (no custodial-bind leaf-commitment check exists for a
- * record - the server itself builds and already trusts the leaves it just built), so only the two
- * stages a record's own issuance flow can actually fail at are named. */
-export type RecordErrorStage = "issue" | "verify";
+ * record - the server itself builds and already trusts the leaves it just built): `"verify"` is
+ * `POST /api/records/:id/confirm` finding the chain does not (yet, or ever) agree; `"interrupted"`
+ * is the worker's boot recovery giving up on a stale `"issuing"` row it could neither reconcile nor
+ * prove reverted (`lib/records/bootRecovery.ts`, mirroring `MintErrorStage`'s own `"interrupted"`). */
+export type RecordErrorStage = "verify" | "interrupted";
 
 export interface RecordArtifactLeaf {
   keyPath: string;
@@ -130,6 +132,12 @@ export interface RecordArtifactDoc {
    * uses, not a second, independently-maintained list. */
   revokedReason?: string;
   errorStage?: RecordErrorStage;
+  /** Stamped by `POST /api/records/:id/tx` the moment `status` first enters `"issuing"` - the
+   * worker boot-recovery staleness clock measures from THIS, never `createdAt` (a draft can sit
+   * unsent for minutes while the vet fills the form) and never `updatedAt` (which also moves on an
+   * unrelated later edit, e.g. a revoke) - the identical `issuingAt`-not-`createdAt` reasoning
+   * `MintSessionDoc.issuingAt`'s own doc comment gives for tags. */
+  issuingAt?: Date;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -215,7 +223,8 @@ const recordArtifactSchema = new Schema<RecordArtifactDoc>(
     attestation: recordAttestationSchema,
     revokedAt: Date,
     revokedReason: String,
-    errorStage: {type: String, enum: ["issue", "verify"]},
+    errorStage: {type: String, enum: ["verify", "interrupted"]},
+    issuingAt: Date,
   },
   {timestamps: true},
 );

@@ -136,6 +136,33 @@ export async function readRecordTypeProfile(cloneAddress: Address): Promise<stri
   })) as string;
 }
 
+/** `VetIssuer.RECORD_TYPE_VACCINATION()` (WP4.14) - the vaccination-record-type constant, read
+ * from the clone itself for the SAME "never a free string" reason `readRecordTypeProfile` is - the
+ * C3 attestation message for a vaccination record (`api/records/[id]/attestation/route.ts`) needs
+ * this exact on-chain value, not a locally re-hashed one. */
+export async function readRecordTypeVaccination(cloneAddress: Address): Promise<string> {
+  return (await roaxPublicClient().readContract({
+    address: cloneAddress,
+    abi: vetIssuerAbi,
+    functionName: "RECORD_TYPE_VACCINATION",
+  })) as string;
+}
+
+/** `VetIssuer.recordTypeOf(root)` (WP4.14) - the per-ROOT record-type mapping
+ * (`contracts/src/VetIssuer.sol`'s `mapping(bytes32 => bytes32) public recordTypeOf`), populated
+ * by BOTH the original tag-issuance path and `issueRecord(recordType, root)`. Returns the all-zero
+ * hash for a root this mapping has never seen - callers MUST treat that as "not this record type",
+ * never as a pass (specs/leaf-commitment.md section 16's on-chain binding rule 2). Read from the
+ * RESOLVED clone (never a clone the caller merely claims), exactly like `readIssuedBy`. */
+export async function readRecordTypeOf(cloneAddress: Address, root: string): Promise<string> {
+  return (await roaxPublicClient().readContract({
+    address: cloneAddress,
+    abi: vetIssuerAbi,
+    functionName: "recordTypeOf",
+    args: [root as `0x${string}`],
+  })) as string;
+}
+
 /** The current ROAX head block number - the wallet-registration EIP-712 message's `blockNumber`
  * field (plans/wp4.2-client-wallet-registration.md: "ROAX head at session creation, server-
  * fetched; session creation FAILS if the RPC is unreachable - chain presence is part of the
