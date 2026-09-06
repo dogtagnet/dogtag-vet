@@ -30,6 +30,11 @@ export interface MintProfile {
   neuterStatus?: "intact" | "neutered" | "spayed" | "unknown";
   dateOfBirth?: string;
   weightHistory: WeightEntry[];
+  /** WP4.12 (Kenneth issue 2) - optional flat `credentialSubject.*` string leaves. See
+   * `schemas/mintSession.ts`'s `mintProfileSchema` for the trim/max-120 validation. */
+  color?: string;
+  registrationId?: string;
+  registrationAuthority?: string;
 }
 
 export interface MintSessionDoc {
@@ -124,6 +129,9 @@ const mintSessionSchema = new Schema<MintSessionDoc>(
       neuterStatus: {type: String, enum: ["intact", "neutered", "spayed", "unknown"]},
       dateOfBirth: String,
       weightHistory: {type: [weightEntrySchema], default: []},
+      color: String,
+      registrationId: String,
+      registrationAuthority: String,
     },
     status: {
       type: String,
