@@ -27,7 +27,7 @@ describe("operatorStatusBadge / operatorStatusExplanation", () => {
 
   it("the not-whitelisted explanation matches Kenneth's own ask (K2) - the one sentence this WP quotes verbatim", () => {
     expect(operatorStatusExplanation("not-whitelisted")).toBe(
-      "You are a vet/owner but this address is not whitelisted on the clinic clone - you cannot issue DogTags until an owner adds it under Issuance operators.",
+      "You are a vet/owner but this address is not whitelisted on the clinic clone - you cannot issue DogTags until the DogTag admin approves an operator request for it in the admin portal.",
     );
   });
 

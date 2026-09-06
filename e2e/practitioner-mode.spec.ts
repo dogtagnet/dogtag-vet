@@ -3,7 +3,7 @@ import {MongoClient} from "mongodb";
 import {expect, test, type Page} from "@playwright/test";
 import {addCalendarDays, localDateMinuteToUtcSeconds, todayInTimeZone} from "../src/lib/booking/dst";
 import {E2E_MONGO_URI} from "./mongo-fixture";
-import {getLastSentTxHash, setRpcReceipt, setRpcScenario} from "./rpcStub";
+import {setRpcScenario} from "./rpcStub";
 
 /**
  * WP4.7 (vet role + per-practitioner availability) - the plan's own section 6 acceptance flows
@@ -94,7 +94,7 @@ test.describe.serial("flow 1+2: role gating, wallet, and the D4 operator panel",
     await expect(page.getByText("Vet or owner access required")).toBeVisible();
   });
 
-  test("owner records the vet's wallet, grants operator on chain, then revokes it", async ({page}) => {
+  test("owner records the vet's wallet; the read-only operators panel reflects on-chain status the DogTag admin sets, with no write control on this page", async ({page}) => {
     // D4's own text: "each vet/owner staff row can record a personal walletAddress" - item 3
     // (A3) made editing that field owner-only ("self-service ... OUT of scope - owner edits
     // all"), so this is the owner recording it on the vet's behalf, not the vet themselves; the
@@ -139,24 +139,45 @@ test.describe.serial("flow 1+2: role gating, wallet, and the D4 operator panel",
     const panel = page.locator("section", {hasText: "Issuance operators"});
     await expect(panel.getByText("Inactive")).toBeVisible({timeout: 15_000});
 
-    await panel.getByRole("button", {name: "Add operator"}).click();
-    await expect(panel.getByRole("button", {name: "Confirming..."})).toBeVisible();
-    await expect.poll(async () => getLastSentTxHash(), {timeout: 15_000}).not.toBeNull();
-    const addHash = await getLastSentTxHash();
-    await setRpcReceipt(addHash!, "success");
-    // rpcStub is a stateless-per-call mock, not a real EVM: eth_sendTransaction never causes a
-    // later eth_call to reflect the write on its own, so the read half is scripted separately -
-    // exactly like every other write-then-read flow already scripted in this suite.
-    await setRpcScenario("operators", CLONE_ADDRESS, [VET_WALLET], true);
-    await expect(panel.getByText("Active", {exact: true})).toBeVisible({timeout: 15_000});
+    // WP4.16 - VetIssuer.addOperator/removeOperator are onlyFactoryAdmin, so this app never
+    // writes the whitelist itself; the panel names the real authority instead of offering a
+    // button for a write that always reverted on a real chain.
+    await expect(panel.getByText("Only the DogTag protocol admin can grant or revoke issuance rights.")).toBeVisible();
+    await expect(panel.getByRole("button", {name: "Add operator"})).toHaveCount(0);
+    await expect(panel.getByRole("button", {name: "Remove operator"})).toHaveCount(0);
 
-    await panel.getByRole("button", {name: "Remove operator"}).click();
-    await expect(panel.getByRole("button", {name: "Confirming..."})).toBeVisible();
-    await expect.poll(async () => getLastSentTxHash(), {timeout: 15_000}).not.toBe(addHash);
-    const removeHash = await getLastSentTxHash();
-    await setRpcReceipt(removeHash!, "success");
+    // Standing in for the DogTag admin approving this vet's operator request in the admin
+    // portal - the real on-chain addOperator write this app can no longer submit. rpcStub is a
+    // stateless-per-call mock, not a real EVM, so the next operators() read simply answers with
+    // whatever this call scripts, exactly as if that admin-signed transaction had just confirmed.
+    await setRpcScenario("operators", CLONE_ADDRESS, [VET_WALLET], true);
+    // A fresh page load re-mounts wagmi's query client from scratch (Providers.tsx creates a new
+    // one per page, not a persisted one), so a single reload is enough in principle - wrapped in
+    // expect.poll with its own reload anyway, the same proven shape vet-wallet-status.spec.ts's
+    // own reload-for-a-fresh-read waits already use, rather than trusting one navigation's timing.
+    await expect
+      .poll(
+        async () => {
+          if (await panel.getByText("Active", {exact: true}).isVisible()) return "active";
+          await page.reload();
+          return "not-yet";
+        },
+        {timeout: 15_000, intervals: [1_000, 2_000, 3_000]},
+      )
+      .toBe("active");
+
+    // ...and the admin later approving a removal request the same way.
     await setRpcScenario("operators", CLONE_ADDRESS, [VET_WALLET], false);
-    await expect(panel.getByText("Inactive", {exact: true})).toBeVisible({timeout: 15_000});
+    await expect
+      .poll(
+        async () => {
+          if (await panel.getByText("Inactive", {exact: true}).isVisible()) return "inactive";
+          await page.reload();
+          return "not-yet";
+        },
+        {timeout: 15_000, intervals: [1_000, 2_000, 3_000]},
+      )
+      .toBe("inactive");
   });
 });
 

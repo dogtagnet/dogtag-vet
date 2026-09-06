@@ -1,7 +1,7 @@
 import {MongoClient} from "mongodb";
 import {expect, test, type Page} from "@playwright/test";
 import {E2E_MONGO_URI} from "./mongo-fixture";
-import {getLastSentTxHash, setRpcReceipt, setRpcScenario} from "./rpcStub";
+import {setRpcScenario} from "./rpcStub";
 // Relative, not the "@/..." alias - the established pattern for an e2e file reaching into src/
 // (`practitioner-mode.spec.ts` imports `../src/lib/booking/dst`; `runBootRecovery.ts` imports
 // `../src/lib/db`), so this needs no new loader behavior. Importing the real `truncateMiddle`
@@ -14,8 +14,11 @@ import {truncateMiddle} from "../src/lib/format";
  * vet registers THEIR OWN wallet (never an owner acting on their behalf - unlike
  * practitioner-mode.spec.ts's own flow 1+2, which predates this WP's self-service route and is
  * still the owner-assigns-it path, unchanged), sees an honest "not whitelisted" status and banner,
- * an owner grants the on-chain operator, and the vet's OWN status flips to whitelisted with no
- * further action from them beyond a normal page load.
+ * the DogTag protocol admin grants the on-chain operator (WP4.16: an application filed in the
+ * admin portal and approved there, never a write this app itself submits - simulated below via a
+ * direct `setRpcScenario` call standing in for that admin-signed transaction, since this repo has
+ * no admin-portal RPC stub to drive the real cross-app flow), and the vet's OWN status flips to
+ * whitelisted with no further action from them beyond a normal page load.
  *
  * A dedicated vet email and clone address, distinct from practitioner-mode.spec.ts's own
  * (vet-wp47@example.com / clone 0x...ab / wallet 0x...cd) - this suite runs every spec file
@@ -130,7 +133,7 @@ test.describe.serial("WP4.7C - vet self-service wallet + whitelist status", () =
       card.getByRole("button", {name: "Save"}).click(),
     ]);
     await expect(card.getByText("NOT whitelisted", {exact: true})).toBeVisible({timeout: 15_000});
-    await expect(card.getByText(/you cannot issue DogTags until an owner adds it/)).toBeVisible();
+    await expect(card.getByText(/you cannot issue DogTags until the DogTag admin approves/)).toBeVisible();
 
     // /tags: the same honest status, from the SAME shared helper (item 3) - the exact reason
     // Kenneth's own ask (K2) asks for, never a false "whitelisted".
@@ -167,7 +170,7 @@ test.describe.serial("WP4.7C - vet self-service wallet + whitelist status", () =
     await page.getByRole("radio", {name: "Light"}).click();
   });
 
-  test("owner grants the on-chain operator; the vet's own status flips to Whitelisted and the banner disappears, with no vet action beyond a reload", async ({page}) => {
+  test("the DogTag admin's on-chain grant (never an owner write) flips both the owner's read-only panel and the vet's own status to Whitelisted, with no vet action beyond a reload", async ({page}) => {
     await devLogin(page, "owner@example.com");
     await page.goto("/settings");
 
@@ -194,21 +197,37 @@ test.describe.serial("WP4.7C - vet self-service wallet + whitelist status", () =
     const vetRow = operatorsPanel.locator("div.rounded-control", {hasText: vetLocalPart});
     await expect(vetRow.getByText("Inactive", {exact: true})).toBeVisible({timeout: 10_000});
 
-    await vetRow.getByRole("button", {name: "Add operator"}).click();
-    await expect.poll(async () => getLastSentTxHash(), {timeout: 15_000}).not.toBeNull();
-    const addHash = await getLastSentTxHash();
-    await setRpcReceipt(addHash!, "success");
-    // rpcStub is a stateless-per-call mock, not a real EVM - the read half is scripted separately,
-    // same convention practitioner-mode.spec.ts's own flow 1+2 already established.
+    // WP4.16 - this app never writes the whitelist itself any more; neither button exists at all,
+    // on this row or any other.
+    await expect(operatorsPanel.getByRole("button", {name: "Add operator"})).toHaveCount(0);
+    await expect(operatorsPanel.getByRole("button", {name: "Remove operator"})).toHaveCount(0);
+
+    // Standing in for the DogTag admin approving this vet's operator request in the admin portal -
+    // the real on-chain `addOperator` write this app can no longer submit itself. rpcStub is a
+    // stateless-per-call mock, not a real EVM, so the next `operators()` read simply answers with
+    // whatever this call scripts, exactly as if that admin-signed transaction had just confirmed.
     await setRpcScenario("operators", CLONE_ADDRESS, [vetWallet], true);
-    await expect(vetRow.getByText("Active", {exact: true})).toBeVisible({timeout: 15_000});
+    // A fresh page load re-mounts wagmi's query client from scratch (Providers.tsx creates a new
+    // one per page, not a persisted one), so a single reload is enough in principle - wrapped in
+    // expect.poll with its own reload anyway, the same proven shape the vet's own poll below (and
+    // this suite's other reload-for-a-fresh-read waits) already uses, rather than trusting one
+    // navigation's timing.
+    await expect
+      .poll(
+        async () => {
+          if (await vetRow.getByText("Active", {exact: true}).isVisible()) return "active";
+          await page.reload();
+          return "not-yet";
+        },
+        {timeout: 15_000, intervals: [1_000, 2_000, 3_000]},
+      )
+      .toBe("active");
 
     // Back to the vet's OWN session - no action from them at all beyond a normal page load. The
     // item-3 status cache is short (5s) specifically so this works within a reasonable timeout,
-    // but the owner's steps above (a real tx-hash poll + a receipt + a scenario write) already
-    // took several real seconds by themselves - wrapped in expect.poll with its own reload rather
-    // than trusting a single navigation, so a cache entry that happens to still be live when this
-    // runs doesn't turn into a flaky failure instead of a clean wait.
+    // but the scenario write above already took some real time by itself - wrapped in expect.poll
+    // with its own reload rather than trusting a single navigation, so a cache entry that happens
+    // to still be live when this runs doesn't turn into a flaky failure instead of a clean wait.
     await page.context().clearCookies();
     await devLogin(page, VET_EMAIL);
     await page.goto("/settings");
