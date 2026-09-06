@@ -140,6 +140,45 @@ test.describe.serial("WP4.13 - practitioner first/last name, title, accreditatio
     // No legacy-displayName hint for a vet who was never given one in the first place.
     await expect(cardAfterReload.getByText("legacy display name")).toHaveCount(0);
 
+    // WP4.13 fix-round regression: toggling ONE unrelated field (Bookable) must never blank the
+    // name/title/accreditation fields just set above - the optimistic patch merge once re-added
+    // every OTHER nullable field to the merge object as an explicit `undefined` on every
+    // single-field edit, and `{...s, ...optimisticPatch}` overwrote the row's real values with it.
+    // `refresh()` always repaired this within a render or two - which is exactly the trap: a plain
+    // `expect().toBeVisible()` RETRIES for its own default ~5s budget, so it happily waits out the
+    // repair and passes whether or not the bug exists, delayed PATCH or not (confirmed by running
+    // this block against the unfixed component - it passed silently until the timeouts below were
+    // added). Holding the PATCH response open widens the window; the SHORT per-assertion timeouts
+    // are what actually make the difference, forcing each check to sample the synchronous
+    // optimistic state instead of tolerating however long the real round-trip takes to correct it.
+    const delayedUncheckPatch = page.waitForResponse((res) => isStaffPatch(res.url()) && res.request().method() === "PATCH");
+    await page.route("**/api/settings/staff/*", async (route) => {
+      if (route.request().method() === "PATCH") await new Promise((resolve) => setTimeout(resolve, 3_000));
+      await route.continue();
+    });
+    await cardAfterReload.getByRole("checkbox", {name: "Bookable"}).uncheck();
+    await expect(cardAfterReload.getByText("Jane Smith, DVM", {exact: true})).toBeVisible({timeout: 1_000});
+    await expect(cardAfterReload.getByLabel("First name")).toHaveValue("Jane", {timeout: 1_000});
+    await expect(cardAfterReload.getByLabel("Last name")).toHaveValue("Smith", {timeout: 1_000});
+    await expect(cardAfterReload.getByLabel("Title / qualification")).toHaveValue("DVM", {timeout: 1_000});
+    await expect(cardAfterReload.getByLabel("Government accreditation number")).toHaveValue(ACCREDITATION_NUMBER, {timeout: 1_000});
+    // Let the delayed uncheck's OWN PATCH land (not just unroute) before issuing another write to
+    // the same row - two overlapping in-flight PATCHes here could resolve out of order server-side
+    // (the artificially delayed bookable:false landing AFTER the restore's bookable:true below),
+    // leaving the DB on bookable:false despite this test's own client-side state and assertions
+    // all showing true. `page.unroute` only stops NEW requests from being intercepted - it does
+    // not cancel or wait out this handler's already-running 3s timer.
+    await delayedUncheckPatch;
+    await page.unroute("**/api/settings/staff/*");
+
+    // Restore Bookable - test 2 (per-practitioner mode) needs this vet bookable. Issued only after
+    // the line above confirms the delayed uncheck's write has fully landed.
+    await Promise.all([
+      page.waitForResponse((res) => isStaffPatch(res.url()) && res.request().method() === "PATCH"),
+      cardAfterReload.getByRole("checkbox", {name: "Bookable"}).check(),
+    ]);
+    await expect(cardAfterReload.getByRole("checkbox", {name: "Bookable"})).toBeChecked();
+
     // The roster's own Name column (Staff access, a SEPARATE section from Practitioner profiles -
     // scoped so this can never accidentally match the practitioner card's own header instead).
     const roster = page.locator("section", {hasText: "Staff access"});

@@ -149,19 +149,26 @@ export function StaffSection({initial, isOwner, currentStaffId}: {initial: Staff
     // (e.g. wouldRemoveActiveOwnerStatus side effects this optimistic patch doesn't know about).
     const previousStaff = staff;
     // StaffDoc models "unset" as the field being absent (`undefined`), never `null` - `null` is
-    // only the WIRE signal telling the API to $unset it (Staff.setStaffProfile's own contract), so
-    // the optimistic local merge below normalizes every nullable field the same way before
-    // assigning into StaffDoc-shaped state (WP4.13 widens this from walletAddress alone to every
-    // one of the five nullable string fields this panel can now clear).
-    const optimisticPatch = {
-      ...patch,
-      displayName: patch.displayName === null ? undefined : patch.displayName,
-      firstName: patch.firstName === null ? undefined : patch.firstName,
-      lastName: patch.lastName === null ? undefined : patch.lastName,
-      title: patch.title === null ? undefined : patch.title,
-      accreditationNumber: patch.accreditationNumber === null ? undefined : patch.accreditationNumber,
-      walletAddress: patch.walletAddress === null ? undefined : patch.walletAddress,
-    };
+    // only the WIRE signal telling the API to $unset it (Staff.setStaffProfile's own contract).
+    // Built from ONLY the keys actually present in `patch` (checked via `"key" in patch`, not
+    // `patch.key !== undefined`, since the value itself is legitimately undefined for a key that
+    // IS present whenever a caller wants "leave unchanged" for the wire but that never happens
+    // here - every call site below only ever includes the keys it means to change). A wider,
+    // always-every-key object here (as this once did) silently reintroduces every OTHER field as
+    // an explicit `undefined`, and `{...s, ...optimisticPatch}` overwrites `s`'s existing value the
+    // moment a key is present at all - even when that key's value is `undefined` - so editing just
+    // one field would visibly blank every other name/title/accreditation/wallet field on the row
+    // until `refresh()` resolves.
+    const optimisticPatch: Partial<StaffDoc> = {};
+    if ("role" in patch) optimisticPatch.role = patch.role;
+    if ("disabled" in patch) optimisticPatch.disabled = patch.disabled;
+    if ("bookable" in patch) optimisticPatch.bookable = patch.bookable;
+    if ("displayName" in patch) optimisticPatch.displayName = patch.displayName ?? undefined;
+    if ("firstName" in patch) optimisticPatch.firstName = patch.firstName ?? undefined;
+    if ("lastName" in patch) optimisticPatch.lastName = patch.lastName ?? undefined;
+    if ("title" in patch) optimisticPatch.title = patch.title ?? undefined;
+    if ("accreditationNumber" in patch) optimisticPatch.accreditationNumber = patch.accreditationNumber ?? undefined;
+    if ("walletAddress" in patch) optimisticPatch.walletAddress = patch.walletAddress ?? undefined;
     setStaff((prev) => prev.map((s) => (s.staffId === staffId ? {...s, ...optimisticPatch} : s)));
     try {
       const res = await fetch(`/api/settings/staff/${staffId}`, {

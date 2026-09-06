@@ -9,6 +9,29 @@ import type {StaffDoc} from "@/lib/models/Staff";
 
 type ProfileFieldKey = "firstName" | "lastName" | "title" | "accreditationNumber";
 
+const PROFILE_FIELD_KEYS: readonly ProfileFieldKey[] = ["firstName", "lastName", "title", "accreditationNumber"];
+
+type FieldErrors = Partial<Record<ProfileFieldKey, string>>;
+
+function isProfileFieldKey(key: string): key is ProfileFieldKey {
+  return (PROFILE_FIELD_KEYS as readonly string[]).includes(key);
+}
+
+/**
+ * The API's 400 shape: error.details is a zod flatten() - fieldErrors keyed by payload field.
+ * Same convention as ClientForm's own `parseFieldErrors` (there is no shared helper between the
+ * two - each form's FieldErrors type is keyed to its own field union, so a shared generic would
+ * buy nothing over restating this small function once per form).
+ */
+function parseFieldErrors(body: unknown): {message?: string; fields: FieldErrors} {
+  const error = (body as {error?: {message?: string; details?: {fieldErrors?: Record<string, string[]>}}} | null)?.error;
+  const fields: FieldErrors = {};
+  for (const [key, messages] of Object.entries(error?.details?.fieldErrors ?? {})) {
+    if (messages?.[0] && isProfileFieldKey(key)) fields[key] = messages[0];
+  }
+  return {message: error?.message, fields};
+}
+
 /**
  * `/settings`'s WP4.13 self-service counterpart to `StaffSection`'s owner-only Practitioner
  * profiles fields (Kenneth issue 3: "split the name of the vet from display name to first name,
@@ -31,6 +54,7 @@ export function MyProfileSection({initial}: {initial: StaffDoc}) {
   const [title, setTitle] = useState(initial.title ?? "");
   const [accreditationNumber, setAccreditationNumber] = useState(initial.accreditationNumber ?? "");
   const [busy, setBusy] = useState(false);
+  const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
 
   // Same convention as MyWalletSection: resync the draft when the server's own value changes
   // underneath this component (a `router.refresh()` after this card's own save, or an owner
@@ -52,18 +76,26 @@ export function MyProfileSection({initial}: {initial: StaffDoc}) {
     title: title.trim(),
     accreditationNumber: accreditationNumber.trim(),
   };
-  const fieldKeys: ProfileFieldKey[] = ["firstName", "lastName", "title", "accreditationNumber"];
+  const fieldKeys = PROFILE_FIELD_KEYS;
   const dirty = fieldKeys.some((key) => trimmed[key] !== stored[key]);
 
-  function resetDrafts() {
-    setFirstName(stored.firstName);
-    setLastName(stored.lastName);
-    setTitle(stored.title);
-    setAccreditationNumber(stored.accreditationNumber);
+  const fieldSetters: Record<ProfileFieldKey, (value: string) => void> = {
+    firstName: setFirstName,
+    lastName: setLastName,
+    title: setTitle,
+    accreditationNumber: setAccreditationNumber,
+  };
+
+  function setField(key: ProfileFieldKey, value: string) {
+    fieldSetters[key](value);
+    // Editing a field retires its stale error; the next save revalidates (ClientForm's own
+    // convention - see its `set()`).
+    setFieldErrors((prev) => (prev[key] ? {...prev, [key]: undefined} : prev));
   }
 
   async function save() {
     setBusy(true);
+    setFieldErrors({});
     try {
       const body: Partial<Record<ProfileFieldKey, string | null>> = {};
       for (const key of fieldKeys) {
@@ -75,14 +107,25 @@ export function MyProfileSection({initial}: {initial: StaffDoc}) {
         body: JSON.stringify(body),
       });
       const responseBody = await res.json().catch(() => null);
-      if (!res.ok) throw new Error(responseBody?.error?.message ?? "Could not update your profile.");
+      if (!res.ok) {
+        // Surface WHICH field the server rejected instead of a generic retry toast, and leave the
+        // typed value in place (not `resetDrafts()`) so the inline error sits next to the text
+        // that triggered it - same convention as ClientForm's own save-failure handling.
+        const {message, fields} = parseFieldErrors(responseBody);
+        setFieldErrors(fields);
+        const firstField = Object.entries(fields).find((entry): entry is [string, string] => Boolean(entry[1]));
+        throw new Error(
+          firstField
+            ? `${fieldLabel(firstField[0] as ProfileFieldKey)}: ${firstField[1]}`
+            : (message ?? "Could not update your profile."),
+        );
+      }
       snackbar.show("Profile saved", "ok");
       // Same idiom as MyWalletSection/StaffSection's own mutations - the roster's Name column and
       // the calendar both read these fields server-side and have no other way to learn they
       // changed.
       router.refresh();
     } catch (err) {
-      resetDrafts();
       snackbar.show(err instanceof Error ? err.message : "Could not update your profile.", "danger");
     } finally {
       setBusy(false);
@@ -95,26 +138,32 @@ export function MyProfileSection({initial}: {initial: StaffDoc}) {
       helperText="Your name, qualification/title, and government accreditation number. The accreditation number is kept internal to this clinic and never shown to clients or on the public booking page."
     >
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-        <FormField label="First name" htmlFor="my-first-name">
-          <Input id="my-first-name" value={firstName} disabled={busy} onChange={(e) => setFirstName(e.target.value)} />
+        <FormField label="First name" htmlFor="my-first-name" error={fieldErrors.firstName}>
+          <Input id="my-first-name" value={firstName} disabled={busy} onChange={(e) => setField("firstName", e.target.value)} />
         </FormField>
-        <FormField label="Last name" htmlFor="my-last-name">
-          <Input id="my-last-name" value={lastName} disabled={busy} onChange={(e) => setLastName(e.target.value)} />
+        <FormField label="Last name" htmlFor="my-last-name" error={fieldErrors.lastName}>
+          <Input id="my-last-name" value={lastName} disabled={busy} onChange={(e) => setField("lastName", e.target.value)} />
         </FormField>
-        <FormField label="Title / qualification" htmlFor="my-title" helperText="Shown after your name, e.g. Jane Smith, DVM.">
-          <Input id="my-title" value={title} disabled={busy} placeholder="DVM" onChange={(e) => setTitle(e.target.value)} />
+        <FormField
+          label="Title / qualification"
+          htmlFor="my-title"
+          helperText="Shown after your name, e.g. Jane Smith, DVM."
+          error={fieldErrors.title}
+        >
+          <Input id="my-title" value={title} disabled={busy} placeholder="DVM" onChange={(e) => setField("title", e.target.value)} />
         </FormField>
         <FormField
           label="Government accreditation number"
           htmlFor="my-accreditation-number"
           helperText="Internal only - never shown to clients or on the public booking page."
+          error={fieldErrors.accreditationNumber}
         >
           <Input
             id="my-accreditation-number"
             value={accreditationNumber}
             disabled={busy}
             placeholder="USDA accreditation number"
-            onChange={(e) => setAccreditationNumber(e.target.value)}
+            onChange={(e) => setField("accreditationNumber", e.target.value)}
           />
         </FormField>
       </div>
@@ -125,4 +174,17 @@ export function MyProfileSection({initial}: {initial: StaffDoc}) {
       </div>
     </FormSection>
   );
+}
+
+function fieldLabel(key: ProfileFieldKey): string {
+  switch (key) {
+    case "firstName":
+      return "First name";
+    case "lastName":
+      return "Last name";
+    case "title":
+      return "Title / qualification";
+    case "accreditationNumber":
+      return "Government accreditation number";
+  }
 }
