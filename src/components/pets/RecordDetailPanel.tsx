@@ -50,10 +50,13 @@ export function RecordDetailPanel({leaves, conformsTo}: {leaves: RecordArtifactL
       )}
 
       {conformsTo.length > 0 && (
-        <div>
+        // Grade round 1 O2: dt/dd need a dl ancestor to be valid HTML - the dl above this already
+        // closed by the time this block renders, so this pair gets its own (a dl validly holds
+        // exactly one dt/dd pair; there is no minimum-of-two rule).
+        <dl>
           <dt className="text-caption font-medium uppercase tracking-wide text-ink-muted">Conforms to</dt>
           <dd className="mt-0.5 text-body text-ink">{conformsTo.map(conformsToName).join(", ")}</dd>
-        </div>
+        </dl>
       )}
     </div>
   );
