@@ -7,6 +7,8 @@ import {getBookingSettings} from "@/lib/models/Availability";
 import {findActiveTagArtifact} from "@/lib/tags/artifact";
 import {PetForm} from "@/app/(app)/pets/PetForm";
 import {PetTagCard} from "@/components/pets/PetTagCard";
+import {PetDetailTabs} from "@/components/pets/PetDetailTabs";
+import {RecordsCard} from "@/components/pets/RecordsCard";
 import {toPlain} from "@/lib/toPlain";
 
 export default async function PetDetailPage({params}: {params: Promise<{id: string}>}) {
@@ -26,10 +28,17 @@ export default async function PetDetailPage({params}: {params: Promise<{id: stri
   return (
     <>
       <PageHeader title={pet.name} description="Pet record." />
-      <div className="mb-6 max-w-2xl">
-        <PetTagCard petId={pet.petId} dogTag={pet.dogTag ?? {}} timeZone={timezone} maskedFieldCount={maskedFieldCount} />
-      </div>
-      <PetForm pet={pet} initialOwners={owners} />
+      <PetDetailTabs
+        profileTab={
+          <>
+            <div className="mb-6 max-w-2xl">
+              <PetTagCard petId={pet.petId} dogTag={pet.dogTag ?? {}} timeZone={timezone} maskedFieldCount={maskedFieldCount} />
+            </div>
+            <PetForm pet={pet} initialOwners={owners} />
+          </>
+        }
+        recordsTab={<RecordsCard petId={pet.petId} timeZone={timezone} dogTagIssued={Boolean(pet.dogTag?.dogTagIdField)} />}
+      />
     </>
   );
 }
