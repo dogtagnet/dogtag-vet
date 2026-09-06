@@ -10,6 +10,7 @@ import {Button, Select} from "@/components/ui/controls";
 import {useSnackbar} from "@/components/ui/Snackbar";
 import {IssueRecordForm} from "@/components/pets/IssueRecordForm";
 import {RecordDetailPanel} from "@/components/pets/RecordDetailPanel";
+import {MaskedRecordExportPanel} from "@/components/pets/MaskedRecordExportPanel";
 import {vetIssuerAbi} from "@/lib/abi";
 import {roax} from "@/lib/chains";
 import {legacyTxWithGas} from "@/lib/chainWrite";
@@ -56,7 +57,9 @@ export function RecordsCard({petId, timeZone, dogTagIssued}: {petId: string; tim
 
   const [records, setRecords] = useState<RecordArtifactDoc[] | null>(null);
   const [showForm, setShowForm] = useState(false);
-  const [expandedRecordId, setExpandedRecordId] = useState<string | null>(null);
+  // At most one row's expansion open at a time, and at most one KIND per row - mirrors
+  // `TagsTable.tsx`'s own `expandedExport` idiom (a `DataTable` row has exactly one expansion slot).
+  const [expanded, setExpanded] = useState<{recordId: string; kind: "details" | "export"} | null>(null);
   const [reasonByRecord, setReasonByRecord] = useState<Record<string, ReasonCodeName>>({});
   const [busyRecordId, setBusyRecordId] = useState<string | null>(null);
   const [retryingRecordId, setRetryingRecordId] = useState<string | null>(null);
@@ -211,9 +214,27 @@ export function RecordsCard({petId, timeZone, dogTagIssued}: {petId: string; tim
             header: "Actions",
             render: (r: RecordArtifactDoc) => (
               <div className="flex flex-wrap items-center gap-2">
-                <Button variant="ghost" size="sm" onClick={() => setExpandedRecordId((prev) => (prev === r.recordId ? null : r.recordId))}>
-                  {expandedRecordId === r.recordId ? "Hide details" : "Details"}
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() =>
+                    setExpanded((prev) => (prev?.recordId === r.recordId && prev.kind === "details" ? null : {recordId: r.recordId, kind: "details"}))
+                  }
+                >
+                  {expanded?.recordId === r.recordId && expanded.kind === "details" ? "Hide details" : "Details"}
                 </Button>
+
+                {r.status === "active" && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() =>
+                      setExpanded((prev) => (prev?.recordId === r.recordId && prev.kind === "export" ? null : {recordId: r.recordId, kind: "export"}))
+                    }
+                  >
+                    {expanded?.recordId === r.recordId && expanded.kind === "export" ? "Hide export" : "Export to phone"}
+                  </Button>
+                )}
 
                 {(r.status === "error" || r.status === "issuing") && (
                   // "issuing" gets this too, not only "error" (advisor review finding): a vet who
@@ -262,7 +283,13 @@ export function RecordsCard({petId, timeZone, dogTagIssued}: {petId: string; tim
         rows={records}
         getRowKey={(r) => r.recordId}
         emptyMessage="No vaccination records yet."
-        renderExpansion={(r) => (expandedRecordId === r.recordId ? <RecordDetailPanel leaves={r.leaves} conformsTo={r.conformsTo} /> : null)}
+        renderExpansion={(r) => {
+          if (expanded?.recordId !== r.recordId) return null;
+          if (expanded.kind === "export") {
+            return <MaskedRecordExportPanel petId={petId} recordId={r.recordId} onClose={() => setExpanded(null)} />;
+          }
+          return <RecordDetailPanel leaves={r.leaves} conformsTo={r.conformsTo} />;
+        }}
       />
     </div>
   );
