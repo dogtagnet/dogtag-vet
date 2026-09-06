@@ -46,6 +46,15 @@ tags:
       copy of a pet's opened profile-tree leaves - plans/wp4.9-tag-data-custody.md). The vet
       starts a session in person; the owner's app scans a QR and resolves it. No on-chain
       writes happen as part of either ceremony.
+  - name: records-verify
+    description: |-
+      Records-verify flow (WP4.14): any clinic staff member asks an owner's phone to present ONE
+      of that pet's issued records (e.g. a vaccination RecordArtifact) for independent on-chain
+      verification - a blind presentment, since the clinic never names a pet or record in
+      advance. Distinct from the `verify` tag above (that is a relayer's ZK-consent proof
+      request) and from `tag-custody` (which moves a pet's data between a specific vet and a
+      specific owner, never checks a claim against the chain). The clinic's own backend runs the
+      chain reads on the owner's behalf; no on-chain writes happen as part of this ceremony.
 x-common-headers:
   rateLimit: &rateLimitHeaders
     X-RateLimit-Limit: {$ref: '#/components/headers/RateLimitLimit'}
@@ -475,6 +484,120 @@ paths:
               schema: {$ref: '#/components/schemas/Error'}
         "410":
           description: "`error.code` is `expired_or_reused`: the token was already consumed (by a prior success OR a prior refusal), or it simply expired."
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
+        "429":
+          $ref: '#/components/responses/RateLimited'
+        "5XX":
+          $ref: '#/components/responses/ServerError'
+
+  /v/{token}:
+    get:
+      operationId: resolveRecordVerifySession
+      tags: [records-verify]
+      summary: Resolve a records-verify session (non-consuming)
+      description: |-
+        The owner's app scans the clinic's records-verify QR (`https://<vet>/v/<32hex>`, see
+        `specs/qr-formats.md`) and calls this to fetch enough context for a consent screen
+        (clinic name) before choosing which of its own issued RECORDS (WP4.14) to present, and
+        optionally masking a subset of that record's own MASKABLE leaves (never one of the seven
+        non-maskable ones, `specs/leaf-commitment.md` section 16 - the app's own mask picker
+        refuses that choice, and `POST .../complete`'s verification refuses it again regardless).
+
+        **Blind presentment**: unlike the export ceremony, staff never named a specific pet or
+        record when starting this session - this route never identifies one either. The owner's
+        device decides everything about what gets shown.
+
+        **Non-consuming**: calling this does not burn the token - `POST /v/{token}/complete` is
+        the consuming action, mirroring `GET /w/{token}`'s own shape (not `GET /e/{token}`'s
+        one-shot pattern - unlike an export, this ceremony has something for the phone to submit
+        back). This same route is also the legitimate poll target for the terminal `presented`
+        status once `.../complete` has run - an expired deadline is therefore only treated as
+        `410` while `status` is still `pending`.
+      parameters:
+        - $ref: '#/components/parameters/RecordVerifyToken'
+      responses:
+        "200":
+          description: Session resolved.
+          headers: *rateLimitHeaders
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/RecordVerifySessionResolveResponse'}
+        "404":
+          description: Token unknown or malformed.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
+        "410":
+          description: "`error.code` is `expired_or_reused`: the session naturally expired while still pending. (A session that has already moved to `presented` keeps returning `200` - see above.)"
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
+        "429":
+          $ref: '#/components/responses/RateLimited'
+        "5XX":
+          $ref: '#/components/responses/ServerError'
+
+  /v/{token}/complete:
+    post:
+      operationId: postRecordVerifyComplete
+      tags: [records-verify]
+      summary: Present a RecordArtifact for independent on-chain verification (consumes the token)
+      description: |-
+        The owner's app posts whichever `RecordArtifact` it chose to present (masked or fully
+        disclosed). The clinic's own backend runs the exact five on-chain binding checks
+        `specs/leaf-commitment.md` section 16 specifies for a third-party verifier - against ITS
+        OWN configured chain/factory, never trusting the artifact's own claimed issuer without
+        cross-checking it - and returns a `result` naming which stage the presentment reached.
+        See `specs/qr-formats.md`'s "Records verify QR" for the full per-stage narrative.
+
+        **A shape-valid artifact that then fails verification is NOT an error response**: this
+        still returns `200` with `result.stage` naming the failure (`crypto_failed`,
+        `chain_unreadable`, `wrong_chain`, or `not_anchored`) - the ceremony's job is to report
+        what it found, not to treat a forgery or a stale anchor as a transport failure. Only a
+        request body that does not even parse as a `RecordArtifact` is a `400`.
+
+        **Consumes the token on every outcome from the point the body parses onward**, mirroring
+        `POST /w/{token}/complete`'s own "a burned token is simply dead" rule - including a
+        shape-valid artifact that then fails verification (a wrong-but-well-formed presentment
+        still counts as "presented," matching how a human ceremony works: you showed the clinic
+        something, right or wrong). The one exception: a `400` (body does not parse as a
+        `RecordArtifact` at all) is returned BEFORE the token is looked up, so it does NOT
+        consume the token - a confused or buggy client can retry with a corrected body without
+        needing a fresh QR. There is no retry endpoint for any other outcome; a fresh attempt
+        after any other response needs a fresh QR from the clinic.
+
+        The response never carries the presented artifact's disclosed leaf VALUES back in any
+        form persisted beyond this call - only `disclosedKeyPaths` (field names) are kept, since
+        this endpoint is unauthenticated and its session is later polled by clinic staff over a
+        separate, deployment-internal API out of scope for this spec.
+      parameters:
+        - $ref: '#/components/parameters/RecordVerifyToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/RecordVerifyCompleteRequest'}
+      responses:
+        "200":
+          description: The presentment was processed (this includes a failed verification, reported via `result.stage` - see description).
+          headers: *rateLimitHeaders
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/RecordVerifyCompleteResponse'}
+        "400":
+          description: "`error.code` is `malformed_artifact`: the request body does not parse as a `RecordArtifact`. Does NOT consume the token."
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
+        "404":
+          description: Token unknown or malformed.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
+        "410":
+          description: "`error.code` is `expired_or_reused`: the token was already consumed (by a prior success or failure alike), or it naturally expired."
           content:
             application/json:
               schema: {$ref: '#/components/schemas/Error'}
@@ -915,6 +1038,12 @@ components:
       required: true
       description: The 32-lowercase-hex tag-data import session token (see `specs/qr-formats.md`).
       schema: {$ref: '#/components/schemas/Hex32Token'}
+    RecordVerifyToken:
+      name: token
+      in: path
+      required: true
+      description: The 32-lowercase-hex records-verify session token (see `specs/qr-formats.md`).
+      schema: {$ref: '#/components/schemas/Hex32Token'}
     AppointmentToken:
       name: token
       in: query
@@ -1081,6 +1210,71 @@ components:
         blockTime:
           type: string
           description: The anchoring block's timestamp (ISO 8601), when known - may mature from absent/pending to a confirmed value as the transaction gets more confirmations, without invalidating `root` or requiring re-issuance.
+
+    RecordVerifySessionResolveResponse:
+      type: object
+      description: WP4.14. `GET /v/{token}`'s resolve body - the records-verify session's own equivalent of `VerifySessionResolveResponse`, deliberately minimal since staff never named a pet or record in advance (blind presentment).
+      required: [purpose, clinicName, status, ttlSecs]
+      properties:
+        purpose:
+          type: string
+          enum: [RECORD_PRESENT]
+          description: Always the literal `"RECORD_PRESENT"` - reserved for a future distinct purpose value on this same session shape.
+        clinicName:
+          type: string
+          description: The clinic's display name, for the owner's consent screen. Empty string if the clinic has not set one.
+        status:
+          type: string
+          enum: [pending, presented]
+          description: "`presented` once `POST /v/{token}/complete` has consumed the token. This same `GET` is also the legitimate poll target for that terminal state, not only the initial resolve - it never returns the verification `result` itself, which is only available to clinic staff over a separate, deployment-internal API out of scope for this spec."
+        ttlSecs:
+          type: integer
+          minimum: 0
+          description: Seconds remaining before this session expires. Fixed at creation, like the wallet-registration and export/import ceremonies - NOT extended by resolving, unlike the mint session's TTL-extension-on-first-resolve.
+
+    RecordVerifyCompleteRequest:
+      type: object
+      required: [artifact]
+      properties:
+        artifact:
+          allOf: [{$ref: '#/components/schemas/RecordArtifact'}]
+          description: The `RecordArtifact` the owner's device chose to present, masked or fully disclosed - staff never picked a specific record or mask in advance (blind presentment, see `specs/qr-formats.md`'s "Records verify QR").
+
+    RecordVerifyResult:
+      type: object
+      description: |-
+        WP4.14. Which of the five on-chain binding checks (`specs/leaf-commitment.md` section 16)
+        a presented `RecordArtifact` landed on. See `specs/qr-formats.md`'s "Records verify QR"
+        for the full per-stage narrative.
+      required: [stage]
+      properties:
+        stage:
+          type: string
+          enum: [crypto_failed, chain_unreadable, wrong_chain, not_anchored, verified]
+        reason:
+          type: string
+          enum: [root_unset, issuer_mismatch, record_type_mismatch, operator_mismatch]
+          description: Present only when `stage` is `not_anchored`.
+        issuerClone:
+          type: string
+          description: Present only when `stage` is `verified`. The `VetIssuer` clone address `rootIssuer` resolved to (lowercase) - the FACTORY-anchored answer, not the artifact's own claimed `issuer.contract`.
+        recordType:
+          type: string
+          description: Present only when `stage` is `verified`. The record type as claimed by the artifact's own `recordType` leaf (e.g. `VACCINATION`) and cross-checked against the resolved clone's `recordTypeOf`.
+        validity:
+          type: string
+          enum: [valid, expired, revoked]
+          description: Present only when `stage` is `verified`. `revoked` here can only mean genuinely revoked, never "never issued" - `not_anchored/root_unset` already covers that case.
+        disclosedKeyPaths:
+          type: array
+          items: {type: string}
+          description: The keyPaths the presented artifact actually disclosed, echoed back for display purposes - never the leaf VALUES themselves.
+
+    RecordVerifyCompleteResponse:
+      type: object
+      required: [result]
+      properties:
+        result: {$ref: '#/components/schemas/RecordVerifyResult'}
 
     PetProfile:
       type: object
