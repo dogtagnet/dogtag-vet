@@ -50,6 +50,9 @@ export async function GET(request: Request, {params}: {params: Promise<{token: s
           neuterStatus: session.profile.neuterStatus,
           dateOfBirth: session.profile.dateOfBirth,
           weightHistory: session.profile.weightHistory.map(toWireWeightEntry),
+          color: session.profile.color,
+          registrationId: session.profile.registrationId,
+          registrationAuthority: session.profile.registrationAuthority,
         },
         microchip: {
           code: session.microchip.code,
