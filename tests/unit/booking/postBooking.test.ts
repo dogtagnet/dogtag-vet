@@ -99,6 +99,30 @@ describe("applyPostBookingSideEffects - Q3 external import", () => {
     expect(outcome).toEqual({completed: true, linkedPet: {petId: "pet-new", petName: "Buddy"}});
   });
 
+  /**
+   * WP4.12V FIX ROUND 1 (D3) - `mapVerifiedLeavesToPetAttributes` already computes
+   * color/registrationId/registrationAuthority whenever the foreign clinic disclosed them; this
+   * pins that they actually reach `createExternalPet` alongside the four sibling attributes,
+   * rather than being silently dropped the way they were before this fix (an external pet is NOT
+   * hidden from the Pets CRM - only from `/tags`/`/tags/issue` - so a verified value belongs on
+   * its record like any other attribute).
+   */
+  it("carries color/registrationId/registrationAuthority through to createExternalPet when the foreign clinic disclosed them (D3)", async () => {
+    const store = fakeStore();
+    const claim: TagClaimResult = {
+      ...verifiedExternalClaim,
+      verifiedAttributes: {...verifiedExternalClaim.verifiedAttributes, color: "brown", registrationId: "SGP-DOG-0042", registrationAuthority: "AVS Singapore"},
+    };
+    await applyPostBookingSideEffects(
+      store,
+      baseInput({tagClaim: claim, wireDogTagIdDec: "42", tagLeaves: TAG_LEAVES, tagReservedLeafHashes: TAG_RESERVED_LEAF_HASHES}),
+    );
+
+    expect(store.createExternalPet).toHaveBeenCalledWith(
+      expect.objectContaining({color: "brown", registrationId: "SGP-DOG-0042", registrationAuthority: "AVS Singapore"}),
+    );
+  });
+
   it("falls back to the wire name hint, then 'Pet', when the verified attributes carry no name", async () => {
     const store = fakeStore();
     const claim: TagClaimResult = {...verifiedExternalClaim, verifiedAttributes: {species: "dog"}};

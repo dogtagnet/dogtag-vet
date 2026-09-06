@@ -80,6 +80,9 @@ export const mongoPostBookingStore: PostBookingStore = {
       breed: input.breed,
       sex: input.sex,
       dateOfBirth: input.dateOfBirth,
+      color: input.color,
+      registrationId: input.registrationId,
+      registrationAuthority: input.registrationAuthority,
       ownerClientIds: [input.ownerClientId],
       dogTag: {
         dogTagIdDec: input.dogTag.dogTagIdDec,

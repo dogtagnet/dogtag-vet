@@ -46,6 +46,14 @@ export interface CreateExternalPetInput {
   breed?: string;
   sex?: PetSex;
   dateOfBirth?: string;
+  /** WP4.12V FIX ROUND 1 (D3) - the same three optional leaves the vet-issued path carries
+   * (`mapVerifiedLeavesToPetAttributes` already computes them; only this path was dropping them).
+   * An external pet is NOT hidden from the Pets CRM (only from `/tags`/`/tags/issue` -
+   * `Pet.ts`'s own `dogTag.external` doc comment), so a verified color/registration id/authority
+   * belongs on its record exactly like the four siblings above. */
+  color?: string;
+  registrationId?: string;
+  registrationAuthority?: string;
   ownerClientId: string;
   dogTag: {
     dogTagIdDec?: string;
@@ -129,6 +137,9 @@ async function runSideEffects(store: PostBookingStore, input: PostBookingInput):
         breed: attrs.breed,
         sex: attrs.sex,
         dateOfBirth: attrs.dateOfBirth,
+        color: attrs.color,
+        registrationId: attrs.registrationId,
+        registrationAuthority: attrs.registrationAuthority,
         ownerClientId: input.client.clientId,
         dogTag: {
           dogTagIdDec: input.wireDogTagIdDec,
