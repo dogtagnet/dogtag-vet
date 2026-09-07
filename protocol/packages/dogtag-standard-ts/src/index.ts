@@ -12,3 +12,4 @@ export * from "./consent.js";
 export * from "./disclosure.js";
 export * from "./profileBind.js";
 export * from "./redactedArtifact.js";
+export * from "./recordArtifact.js";

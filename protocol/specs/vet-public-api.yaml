@@ -54,6 +54,15 @@ tags:
       clone the same way tag issuance already is. No ZK consent proof from the primary owner is
       required for this ceremony - see docs/DELEGATION.md for the full model. These endpoints do
       not exist on any deployed vet platform yet.
+  - name: records-verify
+    description: |-
+      Records-verify flow (WP4.14): any clinic staff member asks an owner's phone to present ONE
+      of that pet's issued records (e.g. a vaccination RecordArtifact) for independent on-chain
+      verification - a blind presentment, since the clinic never names a pet or record in
+      advance. Distinct from the `verify` tag above (that is a relayer's ZK-consent proof
+      request) and from `tag-custody` (which moves a pet's data between a specific vet and a
+      specific owner, never checks a claim against the chain). The clinic's own backend runs the
+      chain reads on the owner's behalf; no on-chain writes happen as part of this ceremony.
 x-common-headers:
   rateLimit: &rateLimitHeaders
     X-RateLimit-Limit: {$ref: '#/components/headers/RateLimitLimit'}
@@ -490,20 +499,30 @@ paths:
     get:
       operationId: resolveArtifactExport
       tags: [tag-custody]
-      summary: Fetch a pet's exported tag data (one-time; consumes the token)
+      summary: Fetch a pet's exported tag or record data (one-time; consumes the token)
       description: |-
         The owner's app scans the vet's export QR (`https://<vet>/e/<32hex>`,
         plans/wp4.9-tag-data-custody.md section 2.2, generalized by plans/wp4.10-masked-export.md
-        section 2) and calls this to fetch the pet's currently-active `TagArtifact`, as a
-        `RedactedTagArtifact` (`specs/schemas/dogtag.redacted-tag-artifact.v1.schema.json`): every
-        DISCLOSED profile-tree leaf opening, plus a hash for every leaf staff chose to mask (or
-        that this artifact already only held a hash for - partial custody from an earlier masked
-        import), plus the 3 reserved owner-control leaf hashes. An export with no mask - the
-        pre-WP4.10V default, and still the common case - is this format's degenerate case:
-        `obfuscatedLeafHashes` empty, `disclosed` holding every attribute leaf. The server never
-        trusts a stored hash for a newly-masked leaf: it recomputes it fresh from the opening,
-        and self-checks the WHOLE payload (`verifyRedactedArtifact`) before ever serving it - the
-        ceremony is deliberately in-person and short-lived (600s) either way.
+        section 2) and calls this to fetch either the pet's currently-active `TagArtifact` or one of
+        its issued RECORDS (WP4.14), distinguished by the response's `artifactType`.
+
+        `artifactType: "tag"` (or absent, for a session predating WP4.14) is a `RedactedTagArtifact`
+        (`specs/schemas/dogtag.redacted-tag-artifact.v1.schema.json`): every DISCLOSED profile-tree
+        leaf opening, plus a hash for every leaf staff chose to mask (or that this artifact already
+        only held a hash for - partial custody from an earlier masked import), plus the 3 reserved
+        owner-control leaf hashes. An export with no mask - the pre-WP4.10V default, and still the
+        common case - is this format's degenerate case: `obfuscatedLeafHashes` empty, `disclosed`
+        holding every attribute leaf.
+
+        `artifactType: "record"` is instead a `RecordArtifact` (`specs/leaf-commitment.md` section 16,
+        `#/components/schemas/RecordArtifact`): `reservedLeafHashes` always empty, the seven
+        non-maskable leaves always disclosed, plus the record's uncommitted `recordType`/`conformsTo`/
+        `anchoring`/`presentation` block (specs/qr-formats.md's "Record share steps").
+
+        Either way, the server never trusts a stored hash for a newly-masked (or record-obfuscated)
+        leaf: it recomputes it fresh from the opening, and self-checks the WHOLE payload
+        (`verifyRedactedArtifact` for a tag, `verifyRecordArtifact` for a record) before ever serving
+        it - the ceremony is deliberately in-person and short-lived (600s) either way.
 
         **ONE-TIME**: unlike every other resolve route in this spec, THIS single `GET` both
         resolves AND atomically consumes the token - there is no separate `/complete` step,
@@ -649,6 +668,120 @@ paths:
               schema: {$ref: '#/components/schemas/Error'}
         "410":
           description: "`error.code` is `expired_or_reused`: the token was already consumed (by a prior success OR a prior refusal), or it simply expired."
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
+        "429":
+          $ref: '#/components/responses/RateLimited'
+        "5XX":
+          $ref: '#/components/responses/ServerError'
+
+  /v/{token}:
+    get:
+      operationId: resolveRecordVerifySession
+      tags: [records-verify]
+      summary: Resolve a records-verify session (non-consuming)
+      description: |-
+        The owner's app scans the clinic's records-verify QR (`https://<vet>/v/<32hex>`, see
+        `specs/qr-formats.md`) and calls this to fetch enough context for a consent screen
+        (clinic name) before choosing which of its own issued RECORDS (WP4.14) to present, and
+        optionally masking a subset of that record's own MASKABLE leaves (never one of the seven
+        non-maskable ones, `specs/leaf-commitment.md` section 16 - the app's own mask picker
+        refuses that choice, and `POST .../complete`'s verification refuses it again regardless).
+
+        **Blind presentment**: unlike the export ceremony, staff never named a specific pet or
+        record when starting this session - this route never identifies one either. The owner's
+        device decides everything about what gets shown.
+
+        **Non-consuming**: calling this does not burn the token - `POST /v/{token}/complete` is
+        the consuming action, mirroring `GET /w/{token}`'s own shape (not `GET /e/{token}`'s
+        one-shot pattern - unlike an export, this ceremony has something for the phone to submit
+        back). This same route is also the legitimate poll target for the terminal `presented`
+        status once `.../complete` has run - an expired deadline is therefore only treated as
+        `410` while `status` is still `pending`.
+      parameters:
+        - $ref: '#/components/parameters/RecordVerifyToken'
+      responses:
+        "200":
+          description: Session resolved.
+          headers: *rateLimitHeaders
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/RecordVerifySessionResolveResponse'}
+        "404":
+          description: Token unknown or malformed.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
+        "410":
+          description: "`error.code` is `expired_or_reused`: the session naturally expired while still pending. (A session that has already moved to `presented` keeps returning `200` - see above.)"
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
+        "429":
+          $ref: '#/components/responses/RateLimited'
+        "5XX":
+          $ref: '#/components/responses/ServerError'
+
+  /v/{token}/complete:
+    post:
+      operationId: postRecordVerifyComplete
+      tags: [records-verify]
+      summary: Present a RecordArtifact for independent on-chain verification (consumes the token)
+      description: |-
+        The owner's app posts whichever `RecordArtifact` it chose to present (masked or fully
+        disclosed). The clinic's own backend runs the exact five on-chain binding checks
+        `specs/leaf-commitment.md` section 16 specifies for a third-party verifier - against ITS
+        OWN configured chain/factory, never trusting the artifact's own claimed issuer without
+        cross-checking it - and returns a `result` naming which stage the presentment reached.
+        See `specs/qr-formats.md`'s "Records verify QR" for the full per-stage narrative.
+
+        **A shape-valid artifact that then fails verification is NOT an error response**: this
+        still returns `200` with `result.stage` naming the failure (`crypto_failed`,
+        `chain_unreadable`, `wrong_chain`, or `not_anchored`) - the ceremony's job is to report
+        what it found, not to treat a forgery or a stale anchor as a transport failure. Only a
+        request body that does not even parse as a `RecordArtifact` is a `400`.
+
+        **Consumes the token on every outcome from the point the body parses onward**, mirroring
+        `POST /w/{token}/complete`'s own "a burned token is simply dead" rule - including a
+        shape-valid artifact that then fails verification (a wrong-but-well-formed presentment
+        still counts as "presented," matching how a human ceremony works: you showed the clinic
+        something, right or wrong). The one exception: a `400` (body does not parse as a
+        `RecordArtifact` at all) is returned BEFORE the token is looked up, so it does NOT
+        consume the token - a confused or buggy client can retry with a corrected body without
+        needing a fresh QR. There is no retry endpoint for any other outcome; a fresh attempt
+        after any other response needs a fresh QR from the clinic.
+
+        The response never carries the presented artifact's disclosed leaf VALUES back in any
+        form persisted beyond this call - only `disclosedKeyPaths` (field names) are kept, since
+        this endpoint is unauthenticated and its session is later polled by clinic staff over a
+        separate, deployment-internal API out of scope for this spec.
+      parameters:
+        - $ref: '#/components/parameters/RecordVerifyToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/RecordVerifyCompleteRequest'}
+      responses:
+        "200":
+          description: The presentment was processed (this includes a failed verification, reported via `result.stage` - see description).
+          headers: *rateLimitHeaders
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/RecordVerifyCompleteResponse'}
+        "400":
+          description: "`error.code` is `malformed_artifact`: the request body does not parse as a `RecordArtifact`. Does NOT consume the token."
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
+        "404":
+          description: Token unknown or malformed.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
+        "410":
+          description: "`error.code` is `expired_or_reused`: the token was already consumed (by a prior success or failure alike), or it naturally expired."
           content:
             application/json:
               schema: {$ref: '#/components/schemas/Error'}
@@ -1097,6 +1230,12 @@ components:
         PLANNED (WP4.15) - the 32-lowercase-hex delegation-session token (see
         `specs/qr-formats.md`). Not yet issued by any deployed vet platform.
       schema: {$ref: '#/components/schemas/Hex32Token'}
+    RecordVerifyToken:
+      name: token
+      in: path
+      required: true
+      description: The 32-lowercase-hex records-verify session token (see `specs/qr-formats.md`).
+      schema: {$ref: '#/components/schemas/Hex32Token'}
     AppointmentToken:
       name: token
       in: query
@@ -1196,6 +1335,162 @@ components:
         value:
           type: string
           description: Canonical string form of the value for this `tag` (e.g. `"true"`/`"false"` for Bool, a canonical decimal-integer string for Integer, hex for Bytes).
+
+    RecordArtifact:
+      type: object
+      description: |-
+        WP4.14. The `RecordArtifact` wire shape (`specs/leaf-commitment.md` section 16,
+        `specs/schemas/dogtag.record-artifact.v1.schema.json`) - the sibling of a `RedactedTagArtifact`
+        built over a record's own opened-leaf tree, with NO reserved owner-control leaves. Carries no
+        `dogTagIdField`/`dogTagIdDec`/`issuerClone`/top-level `recordType` field: `credentialSubject.
+        dogTagId`, `issuer.contract`, and `recordType` are each already a non-maskable DISCLOSED leaf
+        on every valid record artifact, so a second, unchecked top-level copy of any of them would
+        only invite drift between what is shown and what `root` actually commits to. This component
+        is the standalone mirror of the wire shape; `ArtifactExportResponse` inlines the same fields
+        directly (plus display context) rather than nesting a copy of this object, for the identical
+        reason its tag-artifact fields are inlined rather than nested.
+      required: [protocolVersion, artifactType, root, disclosed, obfuscatedLeafHashes, reservedLeafHashes]
+      properties:
+        protocolVersion:
+          type: string
+          description: "The leaf-commitment protocol version this artifact was verified under, e.g. `dogtag-v2/1`."
+        artifactType:
+          type: string
+          enum: [record]
+          description: Always the literal `"record"` on this component - the discriminator that distinguishes this shape from a `RedactedTagArtifact`.
+        schemaId:
+          type: string
+          description: "The schema registry `$id` this record was issued against, e.g. `https://dogtag.io/schemas/vaccination/v1` - mirrors the disclosed `credentialSchema.id` leaf for a caller's convenience. Optional, but when present it is a CHECKED mirror, not a display-only one: it MUST equal that leaf's value exactly, or `verifyRecordArtifact` rejects the whole artifact (specs/leaf-commitment.md section 16 step 3b). A producer MUST set this field and the leaf from the same value if it sets this field at all."
+        root: {$ref: '#/components/schemas/Hex32'}
+        disclosed:
+          type: array
+          description: Fully opened attribute leaves. MUST include an opening for every one of the seven non-maskable keyPaths (specs/leaf-commitment.md section 16) or the artifact does not verify.
+          items: {$ref: '#/components/schemas/OpenedLeaf'}
+        obfuscatedLeafHashes:
+          type: array
+          description: Attribute leaves named ONLY by their opaque hash - masked BY CHOICE. MUST NOT name a non-maskable keyPath while that keyPath is simultaneously absent from `disclosed`.
+          items: {$ref: '#/components/schemas/Hex32'}
+        reservedLeafHashes:
+          type: array
+          maxItems: 0
+          description: ALWAYS EMPTY - a record artifact's tree carries no reserved owner-control leaves at all (specs/leaf-commitment.md section 16). Present, as an always-empty array, only so this shape stays structurally parallel to its RedactedTagArtifact sibling.
+
+    RecordAnchoring:
+      type: object
+      description: |-
+        WP4.14. The UNCOMMITTED on-chain anchoring block a record is carried alongside (specs/leaf-
+        commitment.md section 16) - never hashed, never checked by `verifyRecordArtifact`. `chainId`/
+        `contract` restate, for display convenience, facts the on-chain binding rules independently
+        verify against the record's own disclosed `issuer.chainId`/`issuer.contract` leaves; a mismatch
+        here is a presentation bug, never itself a verification failure. `txHash`/`blockNumber`/
+        `blockTime` have no leaf counterpart at all - they describe when the CHAIN learned about the
+        record (the `RecordIssued` receipt), a related but distinct fact from the record's own clinical
+        `vaccinationDate` leaf.
+      properties:
+        chainId:
+          type: integer
+          description: The ROAX chain id this root was anchored on. SHOULD equal the disclosed `issuer.chainId` leaf.
+        contract:
+          type: string
+          description: The `VetIssuer` clone address `issueRecord` was called on. SHOULD equal the disclosed `issuer.contract` leaf.
+        txHash:
+          type: string
+          description: The `issueRecord` transaction hash, when known. Absent for a record still pending inclusion.
+        blockNumber:
+          type: integer
+          description: The block `issueRecord` was included in, when known.
+        blockTime:
+          type: string
+          description: The anchoring block's timestamp (ISO 8601), when known - may mature from absent/pending to a confirmed value as the transaction gets more confirmations, without invalidating `root` or requiring re-issuance.
+
+    RecordVerifySessionResolveResponse:
+      type: object
+      description: WP4.14. `GET /v/{token}`'s resolve body - the records-verify session's own equivalent of `VerifySessionResolveResponse`, deliberately minimal since staff never named a pet or record in advance (blind presentment).
+      required: [purpose, clinicName, status, ttlSecs]
+      properties:
+        purpose:
+          type: string
+          enum: [RECORD_PRESENT]
+          description: Always the literal `"RECORD_PRESENT"` - reserved for a future distinct purpose value on this same session shape.
+        clinicName:
+          type: string
+          description: The clinic's display name, for the owner's consent screen. Empty string if the clinic has not set one.
+        status:
+          type: string
+          enum: [pending, presented]
+          description: "`presented` once `POST /v/{token}/complete` has consumed the token. This same `GET` is also the legitimate poll target for that terminal state, not only the initial resolve - it never returns the verification `result` itself, which is only available to clinic staff over a separate, deployment-internal API out of scope for this spec."
+        ttlSecs:
+          type: integer
+          minimum: 0
+          description: Seconds remaining before this session expires. Fixed at creation, like the wallet-registration and export/import ceremonies - NOT extended by resolving, unlike the mint session's TTL-extension-on-first-resolve.
+
+    RecordVerifyCompleteRequest:
+      type: object
+      required: [artifact]
+      properties:
+        artifact:
+          allOf: [{$ref: '#/components/schemas/RecordArtifact'}]
+          description: The `RecordArtifact` the owner's device chose to present, masked or fully disclosed - staff never picked a specific record or mask in advance (blind presentment, see `specs/qr-formats.md`'s "Records verify QR").
+
+    RecordVerifyResult:
+      type: object
+      description: |-
+        WP4.14. Which of the five on-chain binding checks (`specs/leaf-commitment.md` section 16)
+        a presented `RecordArtifact` landed on. See `specs/qr-formats.md`'s "Records verify QR"
+        for the full per-stage narrative.
+      required: [stage]
+      properties:
+        stage:
+          type: string
+          enum: [crypto_failed, chain_unreadable, wrong_chain, not_anchored, verified]
+        reason:
+          type: string
+          enum: [root_unset, issuer_mismatch, record_type_mismatch, operator_mismatch]
+          description: Present only when `stage` is `not_anchored`.
+        issuerClone:
+          type: string
+          description: Present only when `stage` is `verified`. The `VetIssuer` clone address `rootIssuer` resolved to (lowercase) - the FACTORY-anchored answer, not the artifact's own claimed `issuer.contract`.
+        recordType:
+          type: string
+          description: Present only when `stage` is `verified`. The record type as claimed by the artifact's own `recordType` leaf (e.g. `VACCINATION`) and cross-checked against the resolved clone's `recordTypeOf`.
+        validity:
+          type: string
+          enum: [valid, expired, revoked, hidden, not_yet_valid]
+          description: |-
+            Present only when `stage` is `verified`. Computed by an ORDERED decision procedure -
+            a later step is never reached once an earlier one has fired (full procedure:
+            `specs/leaf-commitment.md` section 16, "Reporting validity once binding succeeds"):
+            (1) `isValid(root)` false -> `revoked`, unconditionally, ignoring both date leaves -
+            this can only mean genuinely revoked, never "never issued", which
+            `not_anchored/root_unset` already covers; (2) `validFrom` or `validUntil` withheld
+            (moved into `obfuscatedLeafHashes`) -> `hidden`, checked BEFORE any date comparison,
+            so a disclosed `validUntil` that is already past its UTC end-of-day still reports
+            `hidden` rather than `expired` when `validFrom` is masked - this deployment cannot
+            compute a verdict for a window it was not fully shown, so it says so rather than
+            guessing; (3) `validFrom` disclosed and still in the future relative to the
+            verifier's clock -> `not_yet_valid`, never collapsed into `expired`; (4) the clock
+            past `validUntil`'s UTC end-of-day -> `expired` (by this step both bounds are
+            already known disclosed); (5) otherwise -> `valid`, both bounds disclosed and the
+            clock inside `[validFrom, end-of-validUntil UTC]`.
+        disclosedKeyPaths:
+          type: array
+          items: {type: string}
+          description: The keyPaths the presented artifact actually disclosed, echoed back for display purposes - never the leaf VALUES themselves.
+        hiddenCount:
+          type: integer
+          minimum: 0
+          description: |-
+            How many attribute leaves the presenting device withheld - directly the presented
+            artifact's own `obfuscatedLeafHashes.length`, never a diff against the record type's
+            full schema field set (which would fabricate a number for fields the issuer simply never
+            populated in the first place). Set regardless of `stage` - even a `crypto_failed` or
+            `not_anchored` presentment still structurally names how many leaves it withheld.
+
+    RecordVerifyCompleteResponse:
+      type: object
+      required: [result]
+      properties:
+        result: {$ref: '#/components/schemas/RecordVerifyResult'}
 
     PetProfile:
       type: object
@@ -1319,63 +1614,115 @@ components:
 
     ArtifactExportResponse:
       type: object
-      required: [protocolVersion, dogTagIdField, root, leaves, disclosed, obfuscatedLeafHashes, reservedLeafHashes, issuerClone, chainId, petName, clinicName]
+      required: [protocolVersion, root, disclosed, obfuscatedLeafHashes, reservedLeafHashes, chainId, petName, clinicName]
+      # FIX ROUND 1 D3: WP4.14 originally moved dogTagIdField/leaves/issuerClone out of `required`
+      # entirely and widened reservedLeafHashes to a bare maxItems:3, to make room for the record shape
+      # - a real narrowing of a machine-checkable guarantee on the TAG shape, not merely additive (see
+      # wp4.14-vaccination-records.md section 12.1's "S4 correction" note). Restored structurally here,
+      # conditioned on `artifactType`, so a schema-validating consumer sees the pre-WP4.14 tag
+      # guarantees as a strict superset rather than a removal, while the record shape keeps its own
+      # (now equally strict) guarantees expressed the same way.
+      allOf:
+        - if:
+            required: [artifactType]
+            properties: {artifactType: {const: record}}
+          then:
+            required: [artifactType, recordType]
+            properties:
+              reservedLeafHashes: {maxItems: 0}
+          else:
+            required: [dogTagIdField, leaves, issuerClone]
+            properties:
+              reservedLeafHashes: {minItems: 3, maxItems: 3}
       description: |-
-        The pet's currently-active `TagArtifact`, as a `RedactedTagArtifact` (WP4.10V,
-        plans/wp4.10-masked-export.md section 2 - the crypto-bearing fields `protocolVersion`
-        through `issuerClone` below match `specs/schemas/dogtag.redacted-tag-artifact.v1.schema.json`
-        exactly, apart from the deprecated `leaves` alias described in the TRANSITION note below
-        (that registry schema has no `leaves` property at all - `disclosed` is its name for the
-        same data); `chainId`/`petName`/`clinicName` are display context that schema does not carry)
-        plus display context. `disclosed`/`obfuscatedLeafHashes`/`reservedLeafHashes` recompute
-        `root` via `verifyRedactedArtifact` - the SAME check this deployment already self-runs on
-        the payload before ever serving it (never trusting a stored hash without recomputing it) -
-        the owner's app SHOULD independently re-verify this on device rather than trusting the
-        transport regardless. An export with no mask picked - the pre-WP4.10V default, and still
-        the common case - is this format's degenerate case: `obfuscatedLeafHashes` empty,
-        `disclosed`/`leaves` both holding every attribute leaf, byte-identical to what this
-        endpoint always returned before `obfuscatedLeafHashes` existed.
+        The pet's currently-active `TagArtifact` OR one of its issued RECORDS (WP4.14), distinguished
+        by `artifactType`. `artifactType: "tag"` (or the field absent entirely, for a deployment
+        predating WP4.14) is a `RedactedTagArtifact` (WP4.10V, plans/wp4.10-masked-export.md section 2
+        - the crypto-bearing fields `protocolVersion` through `issuerClone` below match
+        `specs/schemas/dogtag.redacted-tag-artifact.v1.schema.json` exactly, apart from the deprecated
+        `leaves` alias described in the TRANSITION note below; `chainId`/`petName`/`clinicName` are
+        display context that schema does not carry). `artifactType: "record"` is instead a
+        `RecordArtifact` (`specs/leaf-commitment.md` section 16, `#/components/schemas/RecordArtifact`
+        below): `reservedLeafHashes` is always empty (never 3), `dogTagIdField`/`dogTagIdDec`/
+        `issuerClone`/`leaves` are never present (a record's dogTagId and issuer are disclosed LEAVES,
+        `credentialSubject.dogTagId`/`issuer.contract`, not top-level fields - specs/leaf-commitment.md
+        section 16's wire-format note), and the response additionally carries `recordType`,
+        `conformsTo`, `anchoring`, and optionally `presentation` (the record's UNCOMMITTED envelope
+        block, never hashed - see below). `disclosed`/`obfuscatedLeafHashes`/`reservedLeafHashes`
+        recompute `root` via `verifyRedactedArtifact` (tag) or `verifyRecordArtifact` (record) - the
+        SAME check this deployment already self-runs on the payload before ever serving it (never
+        trusting a stored hash without recomputing it) - the owner's app SHOULD independently
+        re-verify this on device rather than trusting the transport regardless. A tag export with no
+        mask picked - the pre-WP4.10V default, and still the common case - is this format's degenerate
+        case: `obfuscatedLeafHashes` empty, `disclosed`/`leaves` both holding every attribute leaf,
+        byte-identical to what this endpoint always returned before `obfuscatedLeafHashes` existed.
 
-        TRANSITION (`leaves` is a DEPRECATED ALIAS of `disclosed`, identical content, both always
-        present): WP4.9M's shipped phone client (`ArtifactReceiveEngine`) decodes `leaves` as a
-        non-optional field today and has no `disclosed`/`obfuscatedLeafHashes` concept yet. Once
-        WP4.10M (the masked-aware phone client) ships and every consumer reads `disclosed`, drop
-        `leaves` from this schema and this response.
+        TRANSITION (`leaves` is a DEPRECATED ALIAS of `disclosed` for a TAG response only, identical
+        content, both always present on a tag response): WP4.9M's shipped phone client
+        (`ArtifactReceiveEngine`) decodes `leaves` as a non-optional field today and has no
+        `disclosed`/`obfuscatedLeafHashes` concept yet - and no record-artifact concept at all, so a
+        record response never needs to carry it. Once WP4.10M (the masked-aware phone client) ships
+        and every consumer reads `disclosed`, drop `leaves` from this schema and every tag response.
       properties:
         protocolVersion:
           type: string
           description: "The leaf-commitment protocol version this artifact was verified under, e.g. `dogtag-v2/1`."
+        artifactType:
+          type: string
+          enum: [tag, record]
+          description: |-
+            WP4.14. Which sibling wire shape the rest of this response is. Absent on a response from
+            a deployment predating WP4.14 - treat a missing value as `"tag"` for backward
+            compatibility (see the TRANSITION note above).
         schemaId:
           type: string
-          description: The schema registry `$id` this credential was issued/received against, when known. Absent for some imported artifacts whose sender did not carry one.
+          description: "The schema registry `$id` this credential was issued/received against, when known. Absent for some imported artifacts whose sender did not carry one. TAG: display-only - a profile tree carries no `credentialSchema.id` leaf to compare against, so `verifyRedactedArtifact` never checks this field. RECORD: a CHECKED mirror of the disclosed `credentialSchema.id` leaf - when present it MUST equal that leaf's value exactly, or `verifyRecordArtifact` rejects the whole artifact (specs/leaf-commitment.md section 16 step 3b). A producer MUST set this field and the leaf from the same value if it sets this field at all."
         dogTagIdDec:
           type: string
-          description: The issuing clinic's own off-chain decimal handle, when known. Absent for many imported artifacts - this label has no meaning outside the clinic that minted it.
+          description: "TAG ONLY. The issuing clinic's own off-chain decimal handle, when known. Absent for many imported artifacts - this label has no meaning outside the clinic that minted it. Never present when artifactType is \"record\"."
         dogTagIdField:
           type: string
-          description: The canonical on-chain dogTagId as a decimal uint256 string - `dogTagIdField(dogTagIdDec)` from `packages/dogtag-standard-ts`.
+          description: "TAG ONLY. The canonical on-chain dogTagId as a decimal uint256 string - `dogTagIdField(dogTagIdDec)` from `packages/dogtag-standard-ts`. Never present when artifactType is \"record\" - a record's dogTagId is the disclosed `credentialSubject.dogTagId` leaf instead (specs/leaf-commitment.md section 16)."
         root: {$ref: '#/components/schemas/Hex32'}
         leaves:
           type: array
           deprecated: true
-          description: DEPRECATED - identical content to `disclosed` below, kept only for WP4.9M's shipped phone client, which decodes this exact key as required. New consumers should read `disclosed` instead; this field is removed once WP4.10M ships.
+          description: "TAG ONLY. DEPRECATED - identical content to `disclosed` below, kept only for WP4.9M's shipped phone client, which decodes this exact key as required. New consumers should read `disclosed` instead; this field is removed once WP4.10M ships. Never present when artifactType is \"record\"."
           items: {$ref: '#/components/schemas/OpenedLeaf'}
         disclosed:
           type: array
-          description: Fully opened (unmasked) attribute leaves - every leaf this clinic holds an opening for AND staff did not choose to mask for this export. The canonical field going forward - see `leaves` above.
+          description: "Fully opened (unmasked) attribute leaves - every leaf this clinic holds an opening for AND staff did not choose to mask for this export. The canonical field going forward - see `leaves` above (tag only). For a record response, MUST include an opening for every one of the seven non-maskable keyPaths (specs/leaf-commitment.md section 16) or the artifact does not verify."
           items: {$ref: '#/components/schemas/OpenedLeaf'}
         obfuscatedLeafHashes:
           type: array
-          description: Every attribute leaf named ONLY by its opaque hash - masked for this export, or already opaque on this artifact from an earlier masked import (partial custody, WP4.10V item 6). Empty for an ordinary, fully-disclosed export.
+          description: Every attribute leaf named ONLY by its opaque hash - masked for this export, or already opaque on this artifact from an earlier masked import (partial custody, WP4.10V item 6, tag only). Empty for an ordinary, fully-disclosed export.
           items: {$ref: '#/components/schemas/Hex32'}
         reservedLeafHashes:
           type: array
-          minItems: 3
           maxItems: 3
+          description: "Exactly 3 when artifactType is \"tag\" (or absent) - the profile tree's reserved owner-control leaves (specs/leaf-commitment.md section 9). ALWAYS EMPTY when artifactType is \"record\" - a record's tree carries no reserved leaves at all (specs/leaf-commitment.md section 16)."
           items: {$ref: '#/components/schemas/Hex32'}
         issuerClone:
           type: string
-          description: The `VetIssuer` clone address that issued this root, as indexed by the factory - never assumed to be the exporting clinic's own clone.
+          description: "TAG ONLY. The `VetIssuer` clone address that issued this root, as indexed by the factory - never assumed to be the exporting clinic's own clone. Never present when artifactType is \"record\" - a record's issuing contract is the disclosed `issuer.contract` leaf instead."
+        recordType:
+          type: string
+          description: "RECORD ONLY. The record type this credential was issued as, e.g. `VACCINATION` - mirrors the disclosed `recordType` leaf for display convenience; the server sets this field and the leaf from the same value, so the two never diverge on a genuine response. Present if and only if artifactType is \"record\"."
+        conformsTo:
+          type: array
+          description: "RECORD ONLY. UNCOMMITTED (specs/leaf-commitment.md section 16 - never hashed, never checked by verifyRecordArtifact). Zero or more external standards (specs/standards/index.yaml) this record's data also happens to satisfy, independent of credentialSchema.id/credentialSchema.version (the committed leaves naming which DogTag registry schema it was issued against)."
+          items:
+            type: object
+            required: [standard, version]
+            properties:
+              standard: {type: string, description: "specs/standards/index.yaml entry id, e.g. hl7-fhir-immunization."}
+              version: {type: string, description: "specs/standards/index.yaml entry version, e.g. r4."}
+        anchoring:
+          allOf: [{$ref: '#/components/schemas/RecordAnchoring'}]
+          description: "RECORD ONLY. UNCOMMITTED (specs/leaf-commitment.md section 16 - never hashed). chainId/contract SHOULD equal the disclosed issuer.chainId/issuer.contract leaves where both exist; a mismatch is a presentation bug to fix, never itself a verification failure (a caller that cares checks the leaves and the chain directly)."
+        presentation:
+          type: object
+          description: "RECORD ONLY. UNCOMMITTED, free-form rendering hints (e.g. WP4.11's dynamic renderer) with no normative schema of its own."
         chainId:
           type: integer
           description: The ROAX chain id, as configured server-side.

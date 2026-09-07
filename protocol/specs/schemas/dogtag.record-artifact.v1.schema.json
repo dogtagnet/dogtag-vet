@@ -1,0 +1,75 @@
+{
+  "$id": "https://dogtag.io/schemas/record-artifact/v1",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "DogTag RecordArtifact v1",
+  "description": "Selective disclosure by obfuscation over a record's own opened-leaf tree, with NO reserved owner-control leaves (specs/leaf-commitment.md section 16) - the sibling wire format of dogtag.redacted-tag-artifact.v1.schema.json, which describes the PROFILE-tree variant instead. NOT a W3C VC credential and NOT composed with dogtag.envelope.v1: a RecordArtifact is an opened-leaf custody/export wire record, like its RedactedTagArtifact sibling. Shape only - this schema says nothing about whether `root` actually recomputes from `disclosed`+`obfuscatedLeafHashes`, whether the seven non-maskable keyPaths (specs/leaf-commitment.md section 16) are actually present in `disclosed`, or whether `reservedLeafHashes` is actually empty; those are verifyRecordArtifact's job (packages/dogtag-standard-ts/src/recordArtifact.ts, crates/dogtag-standard-rs/src/record_artifact.rs). Deliberately carries NO top-level dogTagIdField/dogTagIdDec/issuerClone/recordType fields, unlike its RedactedTagArtifact sibling: credentialSubject.dogTagId, issuer.contract, and recordType are each non-maskable DISCLOSED LEAVES on every valid RecordArtifact, so a second, unchecked top-level copy of any of them would only invite drift between what is shown and what the root commits to (specs/leaf-commitment.md section 16's wire-format note) - a caller reads these values out of `disclosed` once verifyRecordArtifact has accepted the artifact.",
+  "version": "1.0.0",
+  "x-validationRules": [],
+  "type": "object",
+  "required": ["protocolVersion", "artifactType", "root", "disclosed", "obfuscatedLeafHashes", "reservedLeafHashes"],
+  "properties": {
+    "protocolVersion": {
+      "type": "string",
+      "minLength": 1,
+      "description": "e.g. \"dogtag-v2/1\" (specs/leaf-commitment.md section 12) - which fixed encoding-and-hashing manner this artifact's leaves were committed under."
+    },
+    "artifactType": {
+      "const": "record",
+      "description": "Wire-format discriminator (specs/leaf-commitment.md section 16): distinguishes this shape from a RedactedTagArtifact (dogtag.redacted-tag-artifact.v1, which carries no artifactType field of its own - its absence is read as the implicit \"tag\" case). Not a leaf; not itself cryptographically checked."
+    },
+    "schemaId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Optional: the registry $id of the record type this credential was issued/received against, e.g. https://dogtag.io/schemas/vaccination/v1. Absent on a legacy/backfilled artifact whose original issuance predates schemaId stamping - the leaf-commitment root recompute never depends on it. Mirrors the disclosed credentialSchema.id leaf for convenience only; a caller that needs the authoritative value reads the leaf itself."
+    },
+    "root": {
+      "$ref": "#/$defs/hex32",
+      "description": "The record tree's Merkle root (specs/leaf-commitment.md section 7), folded over disclosed + obfuscated leaf hashes ONLY - reservedLeafHashes contributes nothing (it is always empty for a record artifact)."
+    },
+    "disclosed": {
+      "type": "array",
+      "description": "Fully opened attribute leaves - the OpenedLeaf shape (packages/dogtag-standard-ts/src/profileBind.ts). MUST include an opening for every one of the seven non-maskable keyPaths (specs/leaf-commitment.md section 16) for the artifact to verify, though this schema does not and cannot express that cross-cutting rule structurally - see verifyRecordArtifact. No maxItems: unlike a RedactedTagArtifact, a RecordArtifact is never consent-bound, so section 10's 64-leaf cap does not apply (specs/leaf-commitment.md section 16).",
+      "items": {"$ref": "#/$defs/openedLeaf"}
+    },
+    "obfuscatedLeafHashes": {
+      "type": "array",
+      "description": "Attribute leaves named ONLY by their opaque hash - masked BY CHOICE. Disjoint in principle from disclosed; verifyRecordArtifact rejects any overlap at the leaf-commitment layer. MUST NOT contain the hash of a non-maskable leaf while that leaf is simultaneously absent from disclosed (verifyRecordArtifact's non-maskable-set check).",
+      "items": {"$ref": "#/$defs/hex32"}
+    },
+    "reservedLeafHashes": {
+      "type": "array",
+      "maxItems": 0,
+      "description": "MUST be empty on every RecordArtifact (specs/leaf-commitment.md section 16) - contra its RedactedTagArtifact sibling, which requires exactly 3. A record's tree never had a reserved owner-control leaf to begin with: issueRecord(recordType, root) anchors the root directly, with no owner-control material folded in. Present (as an always-empty array) rather than omitted so the two sibling wire shapes stay structurally parallel."
+    }
+  },
+  "$defs": {
+    "hex32": {
+      "type": "string",
+      "pattern": "^0x[0-9a-fA-F]{64}$",
+      "description": "A 32-byte big-endian field element, 0x-prefixed lowercase-or-uppercase hex (specs/leaf-commitment.md section 5). Shape only: a value in this exact pattern can still exceed the BN254 scalar field modulus, which only the leaf-commitment-layer parser (fromHex32/from_hex32) rejects."
+    },
+    "openedLeaf": {
+      "type": "object",
+      "description": "keyPath/saltHex/tag/value - the packed wire form specs/leaf-commitment.md section 4 describes, split into named fields.",
+      "required": ["keyPath", "saltHex", "tag", "value"],
+      "properties": {
+        "keyPath": {"type": "string", "minLength": 1},
+        "saltHex": {
+          "type": "string",
+          "pattern": "^(0x)?[0-9a-fA-F]{32}$",
+          "description": "16 raw bytes, hex-encoded. The 0x prefix is optional here (hexToBytes/hex::decode strip it when present) - this schema is deliberately no stricter than the code it mirrors."
+        },
+        "tag": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 5,
+          "description": "TypeTag (specs/leaf-commitment.md section 1's table): 0 Null, 1 Bool, 2 String, 3 Integer, 4 Decimal, 5 Bytes."
+        },
+        "value": {
+          "type": "string",
+          "description": "The packed wire value (section 4): the canonical string form for every tag except Bytes, whose value is lowercase hex with no 0x prefix; Null's value is the empty string."
+        }
+      }
+    }
+  }
+}

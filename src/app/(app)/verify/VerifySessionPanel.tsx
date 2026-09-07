@@ -34,6 +34,14 @@ interface SessionState {
  * connected wallet acts as the relayer, the owner's device resolves the `/x/<token>?a=<relayer>`
  * QR and posts a proof, and the staff wallet submits `recordVerificationZK` once it arrives.
  *
+ * WP4.14 V6 note: this component's own `recordType` field (below) is a ZK CONSENT-PROOF CATEGORY
+ * - a circuit-input enumeration entirely unrelated to `@/lib/models/RecordArtifact`'s real, issued
+ * vaccination records (the Records tab, `RecordsCard.tsx`) or the Records verify mode
+ * (`/verify/records`, `VerifyRecordsPanel.tsx`). The two `VACCINATION`/`TRAVEL_CLEARANCE` OPTION
+ * VALUES here are left untouched (an existing deployment or e2e spec may already depend on the
+ * exact wire string) - only the DISPLAY labels were honestly clarified, per the plan's own
+ * non-negotiable, so staff cannot mistake this dropdown for the real credential feature.
+ *
  * WP4.15 multi-owner (PLANNED) item V5: an OPTIONAL, clinic-wide-defaulted mode targets the
  * clinic's own clone as the relayer instead (`docs/DELEGATION.md` section 7's "relayVerification
  * is a new relayer") - `useClone` below, initialized from `consentRelayerViaCloneEnabled`
@@ -212,11 +220,15 @@ export function VerifySessionPanel({
         <FormField label="Purpose" htmlFor="purpose" helperText="A short identifier, e.g. BOARDING_CHECKIN">
           <Input id="purpose" value={purpose} onChange={(e) => setPurpose(e.target.value)} />
         </FormField>
-        <FormField label="Record type" htmlFor="recordType">
+        <FormField
+          label="Consent-proof category"
+          htmlFor="recordType"
+          helperText="Which ZK consent circuit this proof is for - unrelated to an actual issued RecordArtifact (WP4.14's Records tab/verify mode). Renamed from 'Record type' to avoid confusion with that separate, real credential."
+        >
           <Select id="recordType" value={recordType} onChange={(e) => setRecordType(e.target.value)}>
             <option value="DOG_PROFILE">DOG_PROFILE</option>
-            <option value="VACCINATION">VACCINATION</option>
-            <option value="TRAVEL_CLEARANCE">TRAVEL_CLEARANCE</option>
+            <option value="VACCINATION">VACCINATION (consent-proof category, not an issued record)</option>
+            <option value="TRAVEL_CLEARANCE">TRAVEL_CLEARANCE (consent-proof category, not an issued record)</option>
           </Select>
         </FormField>
         <FormField label="Pet" htmlFor="pet-search" helperText="The pet whose tag will be verified.">

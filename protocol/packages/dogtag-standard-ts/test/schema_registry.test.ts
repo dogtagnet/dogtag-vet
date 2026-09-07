@@ -259,8 +259,8 @@ describe("S2 registry - valid fixtures pass both validateSchema and their JSON S
 });
 
 describe("S2 registry - every registered schema compiles under ajv strict mode", () => {
-  it("all seven schema files (envelope + 5 record types + the WP4.10S redacted-tag-artifact custody/export format) are registered and compile", () => {
-    expect(schemaFiles.length).toBe(7);
+  it("all nine schema files (envelope + 5 record types + the WP4.10S redacted-tag-artifact custody/export format + the WP4.14S generic vaccination record + the WP4.14S record-artifact custody/export format) are registered and compile", () => {
+    expect(schemaFiles.length).toBe(9);
     for (const s of registrySchemas) {
       expect(ajv.getSchema(s.$id), s.$id).toBeTypeOf("function");
     }
@@ -620,11 +620,21 @@ const positiveCases: PositiveCase[] = [
       (c.credentialSubject as Record<string, unknown>).titer = titer;
     },
   },
+  {
+    name: "dog-profile: accepted with non-string color/registrationId/registrationAuthority, including a literal null (schema.ts does not know these fields exist, so it validates nothing about them - not even that they are strings, not even that they are non-null; the registry must not be stricter, D1 fix)",
+    schemaId: "https://dogtag.io/schemas/dog-profile/v1",
+    build: validDogProfile,
+    mutate: (c) => {
+      (c.credentialSubject as Record<string, unknown>).color = 42;
+      (c.credentialSubject as Record<string, unknown>).registrationId = null;
+      (c.credentialSubject as Record<string, unknown>).registrationAuthority = ["not", "a", "string"];
+    },
+  },
 ];
 
 describe("S2 registry - positive-direction conformance: everything validateSchema accepts, the registry must accept too (catches registry-stricter-than-code drift)", () => {
   it("pins the positive case count (guards a case silently dropped from this list)", () => {
-    expect(positiveCases.length).toBe(6);
+    expect(positiveCases.length).toBe(7);
   });
 
   for (const pc of positiveCases) {
@@ -798,6 +808,56 @@ describe("S2 registry - leaf-dictionary.v1.json is sufficient to type every fiel
         entry!.tags.includes(tagName),
         `keyPath ${JSON.stringify(keyPath)} produced tag ${tagName}, not among dictionary's allowed tags ${JSON.stringify(entry!.tags)}`,
       ).toBe(true);
+    }
+  });
+
+  // WP4.12S added three optional String leaves (color, registrationId, registrationAuthority) as
+  // matching schema-property + dictionary-entry pairs, the same shape as the titer test above. D1's
+  // fix (dropping the type keyword from the three schema properties, so the registry cannot become
+  // stricter than schema.ts, which does not know these fields exist) only touches validateSchema-vs-
+  // ajv agreement; it never exercises the dictionary, typifyWithDictionary, or flatten. Without a
+  // test here, nothing anywhere asserted that a profile actually carrying these three fields
+  // flattens to three String leaves at the flat keyPaths - the entire point of the work item - so a
+  // later edit that deleted a dictionary entry, changed its tags to ["Bytes"], or renamed a keyPath
+  // would have kept every other test in this file green. Two cases, not one: "optional means no
+  // leaf, not a Null leaf" is the half a present-only test cannot show.
+  const NEW_OPTIONAL_LEAVES: Record<string, string> = {
+    "credentialSubject.color": "brown",
+    "credentialSubject.registrationId": "AVS-12345",
+    "credentialSubject.registrationAuthority": "AVS Singapore",
+  };
+
+  it("DOG_PROFILE with color/registrationId/registrationAuthority set: each is in the dictionary as optional String and flattens to exactly one String leaf at its flat keyPath", () => {
+    const fixture = validDogProfile();
+    Object.assign(fixture.credentialSubject as Record<string, unknown>, {
+      color: "brown",
+      registrationId: "AVS-12345",
+      registrationAuthority: "AVS Singapore",
+    });
+
+    expect(() => validateSchema(clone(fixture))).not.toThrow();
+    const validate = schemaFor("https://dogtag.io/schemas/dog-profile/v1");
+    expect(validate(fixture), JSON.stringify(validate.errors)).toBe(true);
+
+    const flat = flatten(typifyWithDictionary(fixture, ""));
+    for (const [keyPath, value] of Object.entries(NEW_OPTIONAL_LEAVES)) {
+      const entry = dictionary.entries[keyPath];
+      expect(entry, `leaf-dictionary.v1.json must have an entry for ${keyPath}`).toBeDefined();
+      expect(entry!.tags, keyPath).toEqual(["String"]);
+      expect(entry!.requirement, keyPath).toBe("optional");
+
+      const hits = flat.filter((f) => f.keyPath === keyPath);
+      expect(hits.length, keyPath).toBe(1);
+      expect(hits[0]!.scalar.tag, keyPath).toBe(TypeTag.String);
+      expect(hits[0]!.scalar.value, keyPath).toBe(value);
+    }
+  });
+
+  it("DOG_PROFILE without color/registrationId/registrationAuthority: no leaf at all at those keyPaths (optional means absent, never a Null leaf)", () => {
+    const fixture = validDogProfile();
+    const flat = flatten(typifyWithDictionary(fixture, ""));
+    for (const keyPath of Object.keys(NEW_OPTIONAL_LEAVES)) {
+      expect(flat.some((f) => f.keyPath === keyPath), keyPath).toBe(false);
     }
   });
 });

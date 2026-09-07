@@ -586,27 +586,75 @@ describe("verifyRedactedArtifact - masking-specific behavior", () => {
     expect(verifyRedactedArtifact(artifact)).toBe(true);
   });
 
-  it("DOCUMENTS (does not fix - frozen code) the BROADER scope of this divergence (D5): hexToBytes's leniency applies to saltHex on EVERY disclosed leaf, at EVERY TypeTag - not only a Bytes-tagged VALUE", () => {
-    // recomputeLeaf (redactedArtifact.ts) decodes saltHex via hexToBytes UNCONDITIONALLY, before
-    // scalarFromPacked ever inspects `tag` - so the exact same zero-fill leniency the test above proves
-    // for a malformed Bytes VALUE applies identically to a malformed SALT on a String-tagged (or any
-    // other TypeTag) leaf. The true scope of this divergence is "saltHex, on every disclosed leaf, at
-    // every TypeTag" - not merely "a Bytes-tagged value," which is all the plan/progress prose and the
-    // test above ever named until this fix round.
+  it("FIXED (fix round 1 D2, grade wp4.14S-grade.md - was: DOCUMENTS, does not fix): a malformed (non-hex) saltHex on EVERY disclosed leaf, at EVERY TypeTag, is now REJECTED by verifyRedactedArtifact, closing the cross-language divergence this test used to document", () => {
+    // hexToBytes ITSELF (src/encode.ts, frozen - HARD RULE: no semantic change to encoding) is
+    // UNTOUCHED and exactly as lenient as before: it still zero-fills a non-hex-but-even-length string
+    // rather than throwing. What changed in this fix round is NOT hexToBytes - it is recomputeLeaf
+    // (redactedArtifact.ts, NOT frozen), which now checks saltHex against isMalformedSaltHex BEFORE
+    // ever calling hexToBytes, so a malformed salt never reaches the lenient primitive at all. The
+    // original comment here framed this as "does not fix - frozen code," which conflated "hexToBytes
+    // itself cannot be fixed" (still true) with "therefore verifyRedactedArtifact's behavior on this
+    // input cannot be fixed either" (false - the caller can guard its own input before handing it to a
+    // frozen primitive, which is exactly what recomputeLeaf now does). This is a genuinely NEW
+    // divergence from profileBind.ts's own frozen recomputeLeaf, which this file's recomputeLeaf
+    // otherwise mirrors - see plans/orchestration/wp4.14S-progress.md's deviations for that disclosure.
     const malformedSalt = "0x" + "z".repeat(32);
-    expect(hexToBytes(malformedSalt)).toEqual(new Uint8Array(16));
+    expect(hexToBytes(malformedSalt)).toEqual(new Uint8Array(16)); // hexToBytes's own leniency: unchanged.
 
     const reserved = reservedHashes();
     const malformedSaltLeaf: OpenedLeaf = {keyPath: "credentialSubject.name", saltHex: malformedSalt, tag: TypeTag.String, value: "Rex"};
     const explicitZeroSaltLeaf: OpenedLeaf = {...malformedSaltLeaf, saltHex: "0x" + "00".repeat(16)};
-    // Proves WHICH deterministic value TS actually lands on: bit-identical to an explicit zero salt.
+    // hexToBytes would still land on the same deterministic (wrong) zero-fill if it were ever called -
+    // but recomputeLeaf's new guard means it never is, for the malformed leaf, so the two roots below
+    // are still bit-identical (both computed via the frozen primitive, off-verifier, for comparison
+    // purposes only) even though verifyRedactedArtifact now treats the two leaves very differently.
     expect(computeRoot(reserved, [malformedSaltLeaf])).toBe(computeRoot(reserved, [explicitZeroSaltLeaf]));
 
     const root = computeRoot(reserved, [malformedSaltLeaf]);
     const artifact: RedactedTagArtifact = {...ENVELOPE, root, disclosed: [malformedSaltLeaf], obfuscatedLeafHashes: [], reservedLeafHashes: reserved};
-    // TS accepts (self-consistent, never throws, per this function's own fail-closed contract) - the
-    // Rust mirror rejects outright on the identical input; see redacted_artifact.rs's
-    // "documents_the_ts_side_malformed_salt_hex_divergence..." test for the Rust-side half of this proof.
+    // TS now REJECTS (recomputeLeaf throws before hexToBytes is ever reached; verifyRedactedArtifact's
+    // fail-closed try/catch turns that into `false`) - matching the Rust mirror, which already rejected
+    // outright on the identical input; see redacted_artifact.rs's
+    // "rejects_a_malformed_salt_hex_on_every_typetag_fix_round_1_d2" test for the Rust-side half.
+    expect(verifyRedactedArtifact(artifact)).toBe(false);
+  });
+
+  it("fix round 1 D2: a genuinely well-formed (hex, even-length, any length) saltHex still recomputes and verifies normally - the new guard only rejects, never additionally accepts or changes a correct root", () => {
+    const reserved = reservedHashes();
+    const wellFormed: OpenedLeaf = {keyPath: "credentialSubject.name", saltHex: "0x" + "ab".repeat(16), tag: TypeTag.String, value: "Rex"};
+    const root = computeRoot(reserved, [wellFormed]);
+    const artifact: RedactedTagArtifact = {...ENVELOPE, root, disclosed: [wellFormed], obfuscatedLeafHashes: [], reservedLeafHashes: reserved};
     expect(verifyRedactedArtifact(artifact)).toBe(true);
+  });
+
+  it("fix round 1 D2: accepts a saltHex without the 0x prefix (the shape specs/leaf-commitment-vectors.json's own saltHex entries actually use) - the guard does not require the prefix, only hex digits at even length", () => {
+    const reserved = reservedHashes();
+    const noPrefix: OpenedLeaf = {keyPath: "credentialSubject.name", saltHex: "ab".repeat(16), tag: TypeTag.String, value: "Rex"};
+    const root = computeRoot(reserved, [noPrefix]);
+    const artifact: RedactedTagArtifact = {...ENVELOPE, root, disclosed: [noPrefix], obfuscatedLeafHashes: [], reservedLeafHashes: reserved};
+    expect(verifyRedactedArtifact(artifact)).toBe(true);
+  });
+});
+
+// WP4.14S (advisor round 2 item 3): the two sibling opened-leaf formats are policy-incompatible by
+// CONSTRUCTION, not merely by prose - specs/leaf-commitment.md section 16's "Relation to redacted (tag)
+// artifacts" states a receiver must pick the right verifier from `artifactType` because a payload
+// cannot cross-accept. recordArtifact.test.ts's "rejects three reserved hashes too" already proves one
+// direction (a RedactedTagArtifact-shaped 3-reserved-hash artifact fails verifyRecordArtifact); this is
+// the other direction.
+describe("cross-verifier: verifyRedactedArtifact rejects a genuine RecordArtifact's shape (specs/leaf-commitment.md section 16 \"Relation to redacted (tag) artifacts\")", () => {
+  it("rejects reservedLeafHashes: [] even when the root genuinely folds over exactly that (record-shaped) leaf set - a RecordArtifact's own invariant is never an acceptable RedactedTagArtifact", () => {
+    // A record-shaped leaf set (no reserved triple folded in at all, unlike every fixture above) -
+    // this artifact's root is genuinely the buildMerkle root of its OWN posted leaves, isolating the
+    // exactly-3-reserved-count check rather than merely failing on a root mismatch.
+    const recordLikeLeaves = [
+      opened("credentialSubject.dogTagId", 1, TypeTag.String, "424242"),
+      opened("recordType", 2, TypeTag.String, "VACCINATION"),
+      opened("credentialSchema.id", 3, TypeTag.String, "https://dogtag.io/schemas/vaccination/v1"),
+      ...petOpenings(),
+    ];
+    const root = computeRoot([], recordLikeLeaves);
+    const artifact: RedactedTagArtifact = {...ENVELOPE, root, disclosed: recordLikeLeaves, obfuscatedLeafHashes: [], reservedLeafHashes: []};
+    expect(verifyRedactedArtifact(artifact)).toBe(false);
   });
 });

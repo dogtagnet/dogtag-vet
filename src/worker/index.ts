@@ -8,7 +8,10 @@
  *    reconciled to `bound` if its tag actually anchored on chain, back to `ready` if its tx
  *    confirmed REVERTED (WP4.5 track 3), or otherwise - once genuinely stale, never a seconds-old
  *    in-flight issuance - marked `interrupted` so it shows up as retryable rather than silently
- *    stuck forever (`recoverInterruptedSessions`, `src/lib/mint/bootRecovery.ts`).
+ *    stuck forever (`recoverInterruptedSessions`, `src/lib/mint/bootRecovery.ts`). WP4.14 adds the
+ *    identical recovery for a `RecordArtifact` left `issuing` (`recoverInterruptedRecords`,
+ *    `src/lib/records/bootRecovery.ts`) - back to `draft` on a confirmed revert, since a record's
+ *    leaves/root are already computed and already verified, so no redraft is ever needed.
  *    WP4.15 (PLANNED) adds the same recovery for a `DelegationSession` left `"submitting"`
  *    (`recoverStuckDelegationSessions`, `src/lib/delegation/bootRecovery.ts`).
  * 2. The chain-activity follower for `/activity` (`runActivityFollowerLoop`): chunked `getLogs`
@@ -30,6 +33,7 @@ import {ChainActivity} from "@/lib/models/ChainActivity";
 import {roaxPublicClient} from "@/lib/chainRead";
 import {vetIssuerAbi, dogTagSBTConsentAbi, verificationRegistryConsentAbi} from "@/lib/abi";
 import {recoverInterruptedSessions} from "@/lib/mint/bootRecovery";
+import {recoverInterruptedRecords} from "@/lib/records/bootRecovery";
 import {recoverStuckDelegationSessions} from "@/lib/delegation/bootRecovery";
 import {runPaymentWatcherOnce} from "@/lib/payments/watcher";
 import type {Log} from "viem";
@@ -188,6 +192,7 @@ async function runActivityFollowerLoop(pollMs: number): Promise<never> {
 async function main() {
   await connectToDatabase();
   await recoverInterruptedSessions();
+  await recoverInterruptedRecords();
   await recoverStuckDelegationSessions();
 
   const env = getServerEnv();

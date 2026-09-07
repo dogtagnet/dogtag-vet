@@ -1,16 +1,20 @@
 import {keccak256, toBytes} from "viem";
 
 /**
- * `revokeTag`/`reactivateTag`/`revokeEntity` all take a `bytes32 reasonCode` (see
- * `protocol/contracts/exports/abi/VetIssuer.json`, `EntityRegistry.json`), but this protocol
- * snapshot vendors no fixed reason-code table anywhere (`protocol/specs/events.md` and the
- * flattened contracts only ever name a `reasonCode` PARAMETER, never a list of values - unlike
- * `RECORD_TYPE_*`, which the clone itself exposes as view functions). This repo therefore defines
- * its own list, deriving each value the same documented way `specs/issuer-attestation.md` says
- * `recordType` is derived ("the keccak256-derived constant ... never a free string"):
- * `keccak256(utf8Bytes(name))`. `wp4-vet.md` names `REASON_REPLACED` explicitly for the
- * replace-tag wizard; the rest of this list covers the reasons a vet realistically revokes or
- * reactivates a tag.
+ * `revokeTag`/`reactivateTag`/`revokeEntity`/`revokeRecord`/`reactivateRecord` all take a
+ * `bytes32 reasonCode` (see `protocol/contracts/exports/abi/VetIssuer.json`,
+ * `EntityRegistry.json`), but this protocol snapshot vendors no fixed reason-code table anywhere
+ * (`protocol/specs/events.md` and the flattened contracts only ever name a `reasonCode` PARAMETER,
+ * never a list of values - unlike `RECORD_TYPE_*`, which the clone itself exposes as view
+ * functions). This repo therefore defines its own list, deriving each value the same documented
+ * way `specs/issuer-attestation.md` says `recordType` is derived ("the keccak256-derived constant
+ * ... never a free string"): `keccak256(utf8Bytes(name))`. `wp4-vet.md` names `REASON_REPLACED`
+ * explicitly for the replace-tag wizard; the rest of this list covers the reasons a vet
+ * realistically revokes or reactivates a tag - and, since WP4.14, the SAME list a vet revokes a
+ * vaccination record for (`api/records/[id]/lifecycle/route.ts`): one shared, app-defined
+ * vocabulary rather than a second, independently-maintained list that could drift from this one
+ * for no protocol-level reason (the contract itself treats `reasonCode` as an opaque `bytes32` in
+ * both cases).
  */
 export const REASON_CODES = [
   {name: "REASON_OWNER_REQUEST", label: "Owner requested"},

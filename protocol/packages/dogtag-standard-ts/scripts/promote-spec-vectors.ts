@@ -184,8 +184,148 @@ const promotedNameSet = new Set<string>(PROMOTED_NAMES);
 specVectors.redactedArtifactVectors = specVectors.redactedArtifactVectors.filter((v) => !promotedNameSet.has(v.name));
 specVectors.redactedArtifactVectors.push(...promoted);
 
+// ------------------------------------------------------------------------------------------------
+// WP4.14S - recordArtifactVectors (specs/leaf-commitment.md section 16): the RecordArtifact sibling
+// of redactedArtifactVectors above, over a tree with NO reserved leaves. UNLIKE the promotion above,
+// there is no pre-existing "recordArtifacts" fixture set in testvectors.json to promote FROM
+// (gen-testvectors.ts is out of scope for this wave - plans/orchestration/wp4.14S-progress.md), so
+// these six vectors are instead COMPUTED DIRECTLY here, via the same real hashLeaf/buildMerkle
+// primitives every other section of this script and of leaf-commitment-vectors.json itself already
+// uses - never hand-typed. They are proven correct against the real verifyRecordArtifact
+// (packages/dogtag-standard-ts/src/recordArtifact.ts) by that function's own test suite
+// (test/recordArtifact.test.ts), which loads this exact file and asserts every vector's `valid`
+// outcome is reproduced - the identical division of labor leafHashVectors/merkleVectors/
+// inclusionVectors/dogTagIdFieldVectors already have with spec_vectors.test.ts: none of those four
+// sections are self-checked against a "verify" function inside their own generation either.
+interface RecordLeaf {
+  keyPath: string;
+  saltHex: string;
+  tag: TypeTag;
+  value: string;
+}
+
+function recordLeafHash(l: RecordLeaf): Field {
+  return hashLeaf(l.keyPath, hexToBytes(l.saltHex), scalarFromPacked(l.tag, l.value));
+}
+
+function toCuratedRecordLeaf(l: RecordLeaf) {
+  return {
+    keyPath: l.keyPath,
+    saltHex: l.saltHex,
+    tag: l.tag,
+    tagName: TypeTag[l.tag]!,
+    value: l.value,
+    expected_leaf_hex: toHex32(recordLeafHash(l)),
+  };
+}
+
+// The seven non-maskable leaves (specs/leaf-commitment.md section 16) every valid record artifact
+// must disclose, plus two ordinary clinical (maskable) leaves used by the full/masked vectors below.
+// Values mirror a realistic dogtag.vaccination.v1 record (specs/schemas/dogtag.vaccination.v1.schema.json).
+const NM_DOG_TAG_ID: RecordLeaf = {keyPath: "credentialSubject.dogTagId", saltHex: "11".repeat(16), tag: TypeTag.String, value: "424242"};
+const NM_RECORD_TYPE: RecordLeaf = {keyPath: "recordType", saltHex: "22".repeat(16), tag: TypeTag.String, value: "VACCINATION"};
+const NM_SCHEMA_ID: RecordLeaf = {keyPath: "credentialSchema.id", saltHex: "33".repeat(16), tag: TypeTag.String, value: "https://dogtag.io/schemas/vaccination/v1"};
+const NM_SCHEMA_VERSION: RecordLeaf = {keyPath: "credentialSchema.version", saltHex: "44".repeat(16), tag: TypeTag.String, value: "1.0.0"};
+const NM_CHAIN_ID: RecordLeaf = {keyPath: "issuer.chainId", saltHex: "55".repeat(16), tag: TypeTag.Integer, value: "135"};
+const NM_CONTRACT: RecordLeaf = {keyPath: "issuer.contract", saltHex: "66".repeat(16), tag: TypeTag.String, value: "0x86d9ac6c094783e6a27d3bdbb6ef868060256c75"};
+const NM_OPERATOR: RecordLeaf = {keyPath: "issuer.operator", saltHex: "77".repeat(16), tag: TypeTag.String, value: "0x15759c525000000000000000000000000000cda"};
+const NON_MASKABLE: RecordLeaf[] = [NM_DOG_TAG_ID, NM_RECORD_TYPE, NM_SCHEMA_ID, NM_SCHEMA_VERSION, NM_CHAIN_ID, NM_CONTRACT, NM_OPERATOR];
+
+const CLINICAL_PRODUCT_NAME: RecordLeaf = {keyPath: "vaccineProductName", saltHex: "88".repeat(16), tag: TypeTag.String, value: "Rabvac 3"};
+const CLINICAL_BATCH: RecordLeaf = {keyPath: "batchLotNumber", saltHex: "99".repeat(16), tag: TypeTag.String, value: "LOT-998"};
+
+const fullLeaves: RecordLeaf[] = [...NON_MASKABLE, CLINICAL_PRODUCT_NAME, CLINICAL_BATCH];
+const fullRootHex = toHex32(buildMerkle(fullLeaves.map(recordLeafHash)).root);
+
+const recordFullArtifact = {
+  name: "record_full_artifact",
+  notes:
+    "The seven non-maskable leaves (specs/leaf-commitment.md section 16) plus two ordinary clinical leaves (vaccineProductName, batchLotNumber), nothing masked: obfuscatedLeafHashes and reservedLeafHashes are both empty. This is the reference root the masked variants below must reproduce exactly.",
+  disclosed: fullLeaves.map(toCuratedRecordLeaf),
+  obfuscatedLeafHashes: [] as string[],
+  reservedLeafHashes: [] as string[],
+  root_hex: fullRootHex,
+  valid: true,
+};
+
+const recordMaskedClinicalLeaf = {
+  name: "record_masked_clinical_leaf",
+  notes:
+    "Masks batchLotNumber (a maskable clinical leaf, NOT in the non-maskable set) - moves its hash into obfuscatedLeafHashes and drops its opening from disclosed. Reproduces record_full_artifact's identical root: buildMerkle folds the same 9 leaf hashes either way, so which array names each one is invisible to the root.",
+  disclosed: [...NON_MASKABLE, CLINICAL_PRODUCT_NAME].map(toCuratedRecordLeaf),
+  obfuscatedLeafHashes: [toHex32(recordLeafHash(CLINICAL_BATCH))],
+  reservedLeafHashes: [] as string[],
+  root_hex: fullRootHex,
+  valid: true,
+};
+
+const recordMaskedExceptNonMaskable = {
+  name: "record_masked_except_non_maskable",
+  notes:
+    "Masks EVERY clinical leaf (vaccineProductName and batchLotNumber both moved to obfuscatedLeafHashes), disclosing only the seven non-maskable leaves - the falsifiable demonstration that the non-maskable set is real: masking down to exactly this set still verifies (unlike a RedactedTagArtifact, where the non-maskable set is empty and masking down to nothing at all still verifies - specs/leaf-commitment.md section 15). Reproduces record_full_artifact's identical root.",
+  disclosed: NON_MASKABLE.map(toCuratedRecordLeaf),
+  obfuscatedLeafHashes: [CLINICAL_PRODUCT_NAME, CLINICAL_BATCH].map((l) => toHex32(recordLeafHash(l))),
+  reservedLeafHashes: [] as string[],
+  root_hex: fullRootHex,
+  valid: true,
+};
+
+const recordNegativeMaskedDogtagid = {
+  name: "record_negative_masked_dogtagid",
+  notes:
+    "Moves credentialSubject.dogTagId's hash into obfuscatedLeafHashes instead of disclosed - the same 9-hash multiset as record_full_artifact, just repartitioned, so root_hex is bit-identical to it and step 4's root comparison alone cannot reject this. Only the non-maskable-set-must-be-disclosed check (specs/leaf-commitment.md section 16) rejects it, since dogTagId - one of the seven required keyPaths - is no longer found among disclosed's keyPaths.",
+  disclosed: [NM_RECORD_TYPE, NM_SCHEMA_ID, NM_SCHEMA_VERSION, NM_CHAIN_ID, NM_CONTRACT, NM_OPERATOR, CLINICAL_PRODUCT_NAME, CLINICAL_BATCH].map(toCuratedRecordLeaf),
+  obfuscatedLeafHashes: [toHex32(recordLeafHash(NM_DOG_TAG_ID))],
+  reservedLeafHashes: [] as string[],
+  root_hex: fullRootHex,
+  valid: false,
+};
+
+// A single bogus hash, FOLDED INTO the posted root (unlike the non-isolating shape section 15's own
+// "negative_overlap" worked example warns against), so the root comparison alone cannot reject this -
+// only the reserved-must-be-empty check (specs/leaf-commitment.md section 16) can.
+const BOGUS_RESERVED_HEX = "0x" + "0".repeat(63) + "1";
+const reservedPresentRootHex = toHex32(buildMerkle([fromHex32(BOGUS_RESERVED_HEX), ...fullLeaves.map(recordLeafHash)]).root);
+const recordNegativeReservedPresent = {
+  name: "record_negative_reserved_present",
+  notes:
+    "Carries one entry in reservedLeafHashes (an arbitrary field element, not a genuine owner-control hash - a record artifact never has one to begin with) and FOLDS it into root_hex, so the posted root is the genuine root of this exact 10-hash multiset and the root comparison alone cannot reject it. Every other check passes (all seven non-maskable leaves are disclosed; no overlap). Only the reserved-must-be-empty check rejects this.",
+  disclosed: fullLeaves.map(toCuratedRecordLeaf),
+  obfuscatedLeafHashes: [] as string[],
+  reservedLeafHashes: [BOGUS_RESERVED_HEX],
+  root_hex: reservedPresentRootHex,
+  valid: false,
+};
+
+// A genuinely duplicated clinical leaf hash - one copy disclosed normally, the other copy's hash
+// separately listed in obfuscatedLeafHashes - with root_hex the genuine root of the multiset
+// containing it TWICE (mirrors redactedArtifactVectors' negative_overlap_root_preserving_duplicate_leaf,
+// not the non-isolating "negative_overlap" shape section 15's worked examples warn against).
+const productNameHash = recordLeafHash(CLINICAL_PRODUCT_NAME);
+const overlapRootHex = toHex32(buildMerkle([...NON_MASKABLE.map(recordLeafHash), productNameHash, productNameHash]).root);
+const recordNegativeOverlap = {
+  name: "record_negative_overlap",
+  notes:
+    "vaccineProductName's leaf hash is genuinely committed TWICE in this tree (a record tree, like a profile tree, enforces no cross-leaf uniqueness among ordinary attribute leaves) - one copy is disclosed normally, the other copy's hash is separately listed in obfuscatedLeafHashes. root_hex is the genuine Merkle root over this exact 9-hash multiset (7 non-maskable plus the duplicated vaccineProductName hash twice), so the root comparison cannot tell this apart from a genuine artifact; only the overlap check rejects it.",
+  disclosed: [...NON_MASKABLE, CLINICAL_PRODUCT_NAME].map(toCuratedRecordLeaf),
+  obfuscatedLeafHashes: [toHex32(productNameHash)],
+  reservedLeafHashes: [] as string[],
+  root_hex: overlapRootHex,
+  valid: false,
+};
+
+specVectors.recordArtifactVectors = [
+  recordFullArtifact,
+  recordMaskedClinicalLeaf,
+  recordMaskedExceptNonMaskable,
+  recordNegativeMaskedDogtagid,
+  recordNegativeReservedPresent,
+  recordNegativeOverlap,
+];
+
 writeFileSync(SPEC_VECTORS_PATH, JSON.stringify(specVectors, null, 2) + "\n");
 console.log(
   `wrote ${SPEC_VECTORS_PATH}: redactedArtifactVectors now has ${specVectors.redactedArtifactVectors.length} entries ` +
-    `(${promoted.length} promoted from testvectors.json: ${promoted.map((v) => v.name).join(", ")})`,
+    `(${promoted.length} promoted from testvectors.json: ${promoted.map((v) => v.name).join(", ")}); ` +
+    `recordArtifactVectors now has ${(specVectors.recordArtifactVectors as unknown[]).length} entries (computed directly)`,
 );

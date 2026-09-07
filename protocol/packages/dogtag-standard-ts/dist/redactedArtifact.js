@@ -78,12 +78,36 @@ const HEX32 = /^0x[0-9a-fA-F]{64}$/;
 function isHex32(h) {
     return HEX32.test(h);
 }
+/** Fix round 1 D2 (grade wp4.14S-grade.md): true if `saltHex` contains anything `hexToBytes` (frozen,
+ * `encode.ts`) would silently MISHANDLE rather than reject. `hexToBytes` decodes byte-pair-by-byte-pair
+ * via `parseInt(..., 16)`, which returns `NaN` for a non-hex pair - a `Uint8Array` store then coerces
+ * that `NaN` to `0`, so a non-hex-but-even-length `saltHex` silently becomes a wrong-but-16-byte salt
+ * instead of throwing. Rust's `hex::decode` (`redacted_artifact.rs`) errors on the identical input.
+ * `hexToBytes`'s own odd-length check already throws correctly (matching Rust) and needs no help here;
+ * this guard is checked anyway, defensively, so the combined condition matches `hex::decode`'s error
+ * surface exactly. Deliberately a SECOND independent copy of `recordArtifact.ts`'s identically-named
+ * helper (this file's own convention throughout - see its header on why `recomputeLeaf` itself is a
+ * second transcription rather than a shared import). NOTE: `profileBind.ts`'s OWN private
+ * `recomputeLeaf` (the bind-time tag-issuance path this file's `recomputeLeaf` mirrors) is FROZEN and
+ * deliberately NOT given this guard - `profileBind.ts` is core hashing/encoding-adjacent verifier code
+ * frozen since before WP4.10S introduced this file, out of scope for this wave entirely, and its own
+ * divergence (if any) is unaffected by this fix. */
+function isMalformedSaltHex(saltHex) {
+    const s = saltHex.startsWith("0x") ? saltHex.slice(2) : saltHex;
+    return !/^[0-9a-fA-F]*$/.test(s) || s.length % 2 !== 0;
+}
 /** Recompute one disclosed leaf's hash from its posted opening. Throws on a malformed opening (bad
  * salt hex/length, unknown tag, bad value encoding) - `verifyRedactedArtifact` catches this and
  * rejects rather than propagate it, keeping the check fail-closed either way. Mirrors
  * `profileBind.ts`'s private `recomputeLeaf` - see the file header for why this is a deliberate
- * second transcription, not a shared import. */
+ * second transcription, not a shared import. As of fix round 1 D2, this transcription is no longer
+ * BIT-IDENTICAL to `profileBind.ts`'s frozen original: it additionally guards `saltHex` before calling
+ * `hexToBytes` (see `isMalformedSaltHex` above), a deliberate, disclosed cross-wave behavior change
+ * this wave makes to a WP4.10S file - see plans/orchestration/wp4.14S-progress.md's deviations. */
 function recomputeLeaf(leaf) {
+    if (isMalformedSaltHex(leaf.saltHex)) {
+        throw new Error("saltHex contains a non-hex character or odd length (fix round 1 D2)");
+    }
     const salt = hexToBytes(leaf.saltHex);
     const scalar = scalarFromPacked(leaf.tag, leaf.value);
     // encodeValue is called only to force a malformed value (e.g. a non-canonical integer) to throw

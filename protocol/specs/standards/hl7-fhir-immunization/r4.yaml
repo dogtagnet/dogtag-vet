@@ -1,0 +1,129 @@
+# specs/standards/hl7-fhir-immunization/r4.yaml
+#
+# HL7 FHIR R4 "Immunization" resource. Descriptive metadata only (specs/standards/README.md) - not
+# parsed or enforced by any code in this repository. Field list is the subset of the real Immunization
+# resource this protocol's `dogtag.vaccination.v1` schema keyPaths were aligned to (WP4.14 plan
+# section 8's research); it is not a restatement of the full resource.
+id: hl7-fhir-immunization
+version: r4
+name: "HL7 FHIR Immunization"
+authority: "HL7 International"
+sourceUrl: "https://hl7.org/fhir/R4/immunization.html"
+notes: |-
+  FHIR's Immunization resource explicitly states it covers "immunization of both humans and animals" -
+  there is no separate veterinary-specific FHIR resource for vaccination events. A non-human patient
+  is represented via the base Patient resource's animal extension
+  (https://hl7.org/fhir/R4/extension-patient-animal.html), not a field on Immunization itself.
+  DogTag does not carry a FHIR Patient resource; `credentialSubject.dogTagId` plays the equivalent
+  binding role (specs/leaf-commitment.md section 16).
+
+fields:
+  - name: vaccineCode
+    type: CodeableConcept
+    required: true
+    description: "The vaccine product administered - a coding (e.g. CVX/NDC) plus free-text display."
+  - name: manufacturer
+    type: Reference(Organization)
+    required: false
+    description: "The vaccine's manufacturer, as a reference to an Organization resource (display text in practice for a standalone record)."
+  - name: lotNumber
+    type: string
+    required: false
+    description: "The manufacturer's lot/batch number for the administered dose."
+  - name: expirationDate
+    type: date
+    required: false
+    description: "The vaccine dose's own expiration date (shelf life), distinct from the protection-window dates below."
+  - name: occurrenceDateTime
+    type: dateTime
+    required: true
+    description: "When the vaccine was administered."
+  - name: site
+    type: CodeableConcept
+    required: false
+    description: "Body site the vaccine was administered at (e.g. left flank)."
+  - name: route
+    type: CodeableConcept
+    required: false
+    description: "Route of administration (e.g. subcutaneous, intramuscular)."
+  - name: doseQuantity
+    type: SimpleQuantity
+    required: false
+    description: "The amount of vaccine administered, value + unit."
+  - name: performer
+    type: "BackboneElement[] (actor: Reference)"
+    required: false
+    description: "Who administered the vaccine - the practitioner/organization reference."
+  - name: patient
+    type: Reference(Patient)
+    required: true
+    description: "The immunized subject. DogTag has no FHIR Patient resource of its own; `credentialSubject.dogTagId` is the equivalent binding key."
+  - name: status
+    type: code
+    required: true
+    description: "completed | entered-in-error | not-done. DogTag records have no direct equivalent leaf - a revoked record is modeled as an on-chain revocation (revokeRecord), not a status field on the leaf set."
+  - name: protocolApplied.targetDisease
+    type: CodeableConcept[]
+    required: false
+    description: "The disease(s) the protocol targets, e.g. rabies."
+  - name: protocolApplied.doseNumberPositiveInt
+    type: positiveInt
+    required: false
+    description: "Which dose in the series this was (1, 2, ...)."
+  - name: protocolApplied.seriesDoses
+    type: positiveInt
+    required: false
+    description: "Total doses in the series this protocol calls for."
+
+mapping:
+  - keyPath: targetDisease
+    field: protocolApplied.targetDisease
+    transform: "Free-text or coded disease name (e.g. \"rabies\"); protocolApplied.targetDisease is a CodeableConcept, so a full FHIR export puts this string in .text and, when targetDiseaseCode is present, a matching .coding entry."
+  - keyPath: targetDiseaseCode
+    field: protocolApplied.targetDisease
+    transform: "Populates the CodeableConcept's .coding[].code/.system (SNOMED CT Veterinary Extension or VeNom - see specs/standards/README.md)."
+  - keyPath: vaccineProductName
+    field: vaccineCode
+    transform: "Populates vaccineCode.text (or vaccineCode.coding[].display when vaccineProductCode is also present)."
+  - keyPath: vaccineProductCode
+    field: vaccineCode
+    transform: "Populates a vaccineCode.coding[].code entry (system depends on the code's own authority, e.g. an NDC or a national vaccine registry id)."
+  - keyPath: vaccineManufacturer
+    field: manufacturer
+    transform: "Free-text manufacturer name; a full FHIR export represents this as an Organization reference's display text, since DogTag does not carry a separate Organization resource."
+  - keyPath: batchLotNumber
+    field: lotNumber
+    transform: "Direct 1:1 string copy."
+  - keyPath: vaccinationDate
+    field: occurrenceDateTime
+    transform: "DogTag carries a calendar date (specs/leaf-commitment.md section 16's dates-not-blocks decision); occurrenceDateTime accepts a date-only value."
+  - keyPath: vaccineExpirationDate
+    field: expirationDate
+    transform: "Direct 1:1 date copy."
+  - keyPath: route
+    field: route
+    transform: "Free-text route name; a full FHIR export maps common values (e.g. \"subcutaneous\") to the standard route CodeableConcept coding."
+  - keyPath: site
+    field: site
+    transform: "Free-text site name, same coding treatment as route."
+  - keyPath: doseQuantity
+    field: doseQuantity
+    transform: "DogTag's doseQuantity is a canonical Decimal-string value (specs/leaf-commitment.md section 1 - never a float); FHIR's SimpleQuantity.value is a decimal, so this is a like-for-like copy plus whatever unit convention the issuing clinic records out of band."
+  - keyPath: series
+    field: protocolApplied.doseNumberPositiveInt
+    transform: "\"primary\" maps to dose number 1; \"booster\" maps to any later dose number (the exact ordinal is not tracked by this protocol's leaf set)."
+  - keyPath: authorizedVet
+    field: performer
+    transform: "Populates performer[0].actor's display text; DogTag's authorizedVet is a name/title string, not a FHIR Practitioner reference."
+  - keyPath: nextDueDate
+    field: (none - see notes)
+    transform: "FHIR models a recommended future dose as a SEPARATE ImmunizationRecommendation resource, not a field on Immunization itself. DogTag inlines it as nextDueDate on the same record for simplicity; a full FHIR export would synthesize a companion ImmunizationRecommendation resource from this value."
+  - keyPath: validFrom
+    field: (none - see notes)
+    transform: "Not a FHIR Immunization field at all - the protection-window semantics (validFrom/validUntil) are a DogTag-specific addition layered on top of the FHIR-aligned clinical fields above, closer to the EU pet passport's \"valid from/until\" fields (see eu-pet-passport mapping)."
+  - keyPath: validUntil
+    field: (none - see notes)
+    transform: "Same as validFrom."
+  - keyPath: credentialSubject.dogTagId
+    field: patient
+    transform: "The equivalent binding key to FHIR's Patient reference; DogTag has no Patient resource, so a full FHIR export would need to synthesize one (with the animal extension) keyed by this id."

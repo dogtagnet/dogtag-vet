@@ -1,0 +1,102 @@
+# specs/standards/nasphv-form51/2007.yaml
+#
+# NASPHV Form 51, the US National Association of State Public Health Veterinarians' standard rabies
+# vaccination certificate. Descriptive metadata only (specs/standards/README.md) - not parsed or
+# enforced by any code in this repository.
+id: nasphv-form51
+version: "2007"
+name: "NASPHV Form 51 (Rabies Vaccination Certificate)"
+authority: "National Association of State Public Health Veterinarians (NASPHV), United States"
+sourceUrl: "https://www.nasphv.org/documentsCompendia.html"
+notes: |-
+  Widely adopted by US state and local rabies-control ordinances as the required rabies certificate
+  shape. This protocol's existing dogtag.rabies-vaccination.v1 schema (specs/schemas/) already covers
+  every field below under its own keyPath names; this file exists so a generic dogtag.vaccination.v1
+  record can ALSO declare conformance to this standard via its uncommitted conformsTo[] block
+  (specs/leaf-commitment.md section 16) without duplicating the rabies-specific schema.
+
+fields:
+  - name: "Owner name and address"
+    type: string
+    required: true
+    description: "The animal owner's name and address. DogTag never commits owner data to a record leaf (WP4.14 plan section 10) - out of scope for the mapping below."
+  - name: "Species"
+    type: string
+    required: true
+    description: "Animal species (dog, cat, ferret, ...). Not part of the vaccination record leaf set - carried on the DogTag profile, not the record."
+  - name: "Breed, sex, color, age"
+    type: string
+    required: false
+    description: "Animal description fields. Same scope note as Species."
+  - name: "Microchip number"
+    type: string
+    required: false
+    description: "The animal's microchip/transponder number, when implanted."
+  - name: "Vaccine Product Name"
+    type: string
+    required: true
+    description: "The trade name of the rabies vaccine used."
+  - name: "Manufacturer"
+    type: string
+    required: true
+    description: "The vaccine's manufacturer."
+  - name: "USDA Product License Number"
+    type: string
+    required: true
+    description: "The USDA biologics license number for the vaccine product."
+  - name: "Serial/Lot Number"
+    type: string
+    required: true
+    description: "The vaccine dose's manufacturer lot/serial number."
+  - name: "Date Vaccinated"
+    type: date
+    required: true
+    description: "The date the vaccine was administered."
+  - name: "Type (Initial or Booster)"
+    type: enum
+    required: true
+    description: "Whether this was the animal's initial/primary rabies vaccination or a booster."
+  - name: "Vaccine Duration (1 year or 3 year)"
+    type: enum
+    required: true
+    description: "The labeled duration of protection for the product/lot used."
+  - name: "Vaccination Due Date"
+    type: date
+    required: true
+    description: "The date by which the next rabies vaccination is due."
+  - name: "Veterinarian name, license number, signature"
+    type: string
+    required: true
+    description: "The administering/certifying veterinarian's identification."
+
+mapping:
+  - keyPath: vaccineProductName
+    field: "Vaccine Product Name"
+    transform: "Direct 1:1 string copy."
+  - keyPath: vaccineManufacturer
+    field: Manufacturer
+    transform: "Direct 1:1 string copy."
+  - keyPath: vaccineProductCode
+    field: "USDA Product License Number"
+    transform: "DogTag's existing rabies keyPath already carries the USDA product/license code in this field (see dogtag.rabies-vaccination.v1's own vaccineProductCode description and its \"USDA-PCN-12345\" example fixture) - direct 1:1 copy, no transform needed."
+  - keyPath: batchLotNumber
+    field: "Serial/Lot Number"
+    transform: "Direct 1:1 string copy."
+  - keyPath: vaccinationDate
+    field: "Date Vaccinated"
+    transform: "Direct 1:1 date copy."
+  - keyPath: series
+    field: "Type (Initial or Booster)"
+    transform: "\"primary\" maps to Initial; \"booster\" maps to Booster."
+  - keyPath: validUntil
+    field: "Vaccine Duration (1 year or 3 year)"
+    transform: "The form's duration field is the CATEGORY (1yr/3yr product label); DogTag's validUntil is already the computed calendar date that duration produces from vaccinationDate. A full form-51 export would derive the category back from (validUntil - vaccinationDate) rounded to the nearest labeled duration, or carry the category separately if precision matters."
+  - keyPath: nextDueDate
+    field: "Vaccination Due Date"
+    transform: "Direct 1:1 date copy."
+  - keyPath: authorizedVet
+    field: "Veterinarian name, license number, signature"
+    transform: "DogTag's authorizedVet carries a name/title string; the form additionally wants a license number and a wet or electronic signature, neither of which this protocol commits as a leaf (the on-chain issuer.operator/issuer.contract leaves are this protocol's own equivalent of \"signature\", per specs/leaf-commitment.md section 16's on-chain binding rules)."
+  - keyPath: credentialSubject.microchip.code
+    field: "Microchip number"
+    transform: "Direct 1:1 copy, when the shared envelope's microchip object (specs/schemas/dogtag.envelope.v1.schema.json#/$defs/microchip) is present on the underlying credential."

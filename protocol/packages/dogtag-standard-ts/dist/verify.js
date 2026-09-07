@@ -24,6 +24,15 @@
 // apps actually import from this module today. Round 2 fixed a fail-open gap in it (see the function's
 // own doc comment): a malformed packed leaf or an out-of-field/non-hex `targetHash`/`merkleRoot` used
 // to throw past this function and out of `verify()` entirely; both now resolve to INVALID instead.
+//
+// WP4.14S: a FIFTH new required RpcAdapter method, `issuerRecordTypeOfRoot` - v2 clones store the
+// whitelist pillar's record-type key per ROOT (`recordTypeOf(root)`, populated by both tag issuance
+// and the new `issueRecord`), not per CLONE the way `issuerRecordType`'s `recordType()` did. Every
+// v2 clone this pillar checks was returning UNRESOLVED before this change, because `issuerRecordType`
+// alone called a getter that no longer exists on the deployed contract (WP4.14 plan section 3's
+// blocker; contracts/src/VetIssuer.sol has no `function recordType()` at all). `issuerRecordType`
+// itself is UNCHANGED in shape - it is now the FALLBACK path only, tried when `issuerRecordTypeOfRoot`
+// itself fails (see that method's own doc comment for exactly which failure mode triggers it).
 import { buildMerkle } from "./merkle.js";
 import { flattenData, leafFromPacked } from "./wrap.js";
 import { fromHex32 } from "./field.js";
@@ -175,10 +184,21 @@ async function resolveIssuerWhitelist(rpc, resolvedClone, issuerResolution, root
     }
     let chainRtKey;
     try {
-        chainRtKey = await rpc.issuerRecordType(resolvedClone);
+        // v2 PRIMARY: per-root recordTypeOf(root) - see issuerRecordTypeOfRoot's own doc comment.
+        chainRtKey = await rpc.issuerRecordTypeOfRoot(resolvedClone, root);
     }
     catch {
-        return { state: "UNRESOLVED", onchainSigner: signer };
+        // recordTypeOf(root) itself failed - most likely a pre-v2 clone whose bytecode has no such
+        // mapping at all (WP4.14 plan section 3's blocker). Fall back to the v1 per-clone recordType().
+        // A v2 clone's recordTypeOf SUCCEEDING with the zero word is handled below, NOT here - that is
+        // not a signal to fall back, it is "not found on this clone", the identical case issuerRecordType
+        // returning null already was.
+        try {
+            chainRtKey = await rpc.issuerRecordType(resolvedClone);
+        }
+        catch {
+            return { state: "UNRESOLVED", onchainSigner: signer };
+        }
     }
     if (chainRtKey === null) {
         return { state: "UNRESOLVED", onchainSigner: signer }; // uninitialized, or not a clone at all

@@ -13,7 +13,9 @@ import {isVetOrOwner} from "@/lib/staffRoleTone";
 import {loadOwnersCardData} from "@/lib/delegation/ownersCardData";
 import {PetForm} from "@/app/(app)/pets/PetForm";
 import {PetTagCard} from "@/components/pets/PetTagCard";
+import {PetDetailTabs} from "@/components/pets/PetDetailTabs";
 import {OwnersCard} from "@/components/pets/OwnersCard";
+import {RecordsCard} from "@/components/pets/RecordsCard";
 import {VetWalletStatusBanner} from "@/app/(app)/tags/VetWalletStatusBanner";
 import {toPlain} from "@/lib/toPlain";
 
@@ -50,18 +52,25 @@ export default async function PetDetailPage({params}: {params: Promise<{id: stri
       {canManage && operatorStatus && pet.dogTag?.dogTagIdField && (
         <VetWalletStatusBanner status={operatorStatus.status} recordedAddress={operatorStatus.recordedAddress} />
       )}
-      <div className="mb-6 max-w-2xl space-y-6">
-        <PetTagCard petId={pet.petId} dogTag={pet.dogTag ?? {}} timeZone={timezone} maskedFieldCount={maskedFieldCount} />
-        <OwnersCard
-          petId={pet.petId}
-          dogTagIdField={pet.dogTag?.dogTagIdField}
-          primaryOwnerLabel={primaryOwnerLabel}
-          data={ownersCardData}
-          canManage={canManage}
-          timeZone={timezone}
-        />
-      </div>
-      <PetForm pet={pet} initialOwners={owners} />
+      <PetDetailTabs
+        profileTab={
+          <>
+            <div className="mb-6 max-w-2xl space-y-6">
+              <PetTagCard petId={pet.petId} dogTag={pet.dogTag ?? {}} timeZone={timezone} maskedFieldCount={maskedFieldCount} />
+              <OwnersCard
+                petId={pet.petId}
+                dogTagIdField={pet.dogTag?.dogTagIdField}
+                primaryOwnerLabel={primaryOwnerLabel}
+                data={ownersCardData}
+                canManage={canManage}
+                timeZone={timezone}
+              />
+            </div>
+            <PetForm pet={pet} initialOwners={owners} />
+          </>
+        }
+        recordsTab={<RecordsCard petId={pet.petId} timeZone={timezone} dogTagIssued={Boolean(pet.dogTag?.dogTagIdField)} />}
+      />
     </>
   );
 }
