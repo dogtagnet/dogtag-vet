@@ -1,5 +1,5 @@
 import {execFile, spawn, type ChildProcess} from "node:child_process";
-import {mkdtempSync} from "node:fs";
+import {mkdtempSync, rmSync} from "node:fs";
 import {tmpdir} from "node:os";
 import {join} from "node:path";
 import {fileURLToPath} from "node:url";
@@ -50,10 +50,25 @@ async function waitForMongoReady(uri: string, timeoutMs = 30_000): Promise<void>
   throw new Error(`Mongo at ${uri} was not ready in time: ${String(lastError)}`);
 }
 
+let localDbPath: string | null = null;
+
 function startLocalMongod(): void {
   const dbPath = mkdtempSync(join(tmpdir(), "dogtag-vet-e2e-mongo-"));
+  localDbPath = dbPath;
   localMongod = spawn("mongod", ["--dbpath", dbPath, "--port", String(E2E_MONGO_PORT), "--bind_ip", "127.0.0.1"], {
     stdio: "ignore",
+  });
+}
+
+/** Waits for the spawned mongod to exit so its dbpath can be removed safely; gives up after a bounded delay. */
+function waitForExit(child: ChildProcess, timeoutMs: number): Promise<void> {
+  if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve();
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, timeoutMs);
+    child.once("exit", () => {
+      clearTimeout(timer);
+      resolve();
+    });
   });
 }
 
@@ -111,8 +126,14 @@ export async function seedTestMongo(): Promise<void> {
 
 export async function stopTestMongo(): Promise<void> {
   if (localMongod) {
-    localMongod.kill();
+    const child = localMongod;
     localMongod = null;
+    child.kill();
+    await waitForExit(child, 10_000);
+    if (localDbPath) {
+      rmSync(localDbPath, {recursive: true, force: true});
+      localDbPath = null;
+    }
     return;
   }
   await execFileAsync("docker", ["rm", "-f", CONTAINER_NAME]).catch(() => {});
