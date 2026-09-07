@@ -2,8 +2,9 @@ import {expect, test, type Page} from "@playwright/test";
 import {randomUUID} from "node:crypto";
 import {MongoClient} from "mongodb";
 import {privateKeyToAccount, generatePrivateKey} from "viem/accounts";
+import {buildMerkle, hashLeaf, hexToBytes, toHex32, TypeTag, verifyLeafCommitment, type OpenedLeaf, type TypedScalar} from "@dogtag/standard";
 import {E2E_MONGO_URI} from "./mongo-fixture";
-import {getLastSentTxHash, resetRpcStub, setRpcReceipt, setRpcScenario} from "./rpcStub";
+import {forceRpcSendTransactionFailure, getLastSentTxHash, resetRpcStub, setRpcReceipt, setRpcScenario} from "./rpcStub";
 
 /**
  * End-to-end coverage for WP4.15 multi-owner (PLANNED - `DelegationRegistry`/`VetIssuer.
@@ -56,6 +57,17 @@ function randomHex32(): `0x${string}` {
 }
 
 const ZERO_HEX32 = `0x${"0".repeat(64)}`;
+
+/** Every object key at every nesting depth, for the D3 no-owner-secret-material assertion below -
+ * a plain top-level `Object.keys` would miss a leaked key nested inside `disclosed[]` or any future
+ * bundle field this test does not otherwise name. */
+function allKeysDeep(value: unknown): string[] {
+  if (Array.isArray(value)) return value.flatMap(allKeysDeep);
+  if (value && typeof value === "object") {
+    return Object.keys(value).flatMap((k) => [k, ...allKeysDeep((value as Record<string, unknown>)[k])]);
+  }
+  return [];
+}
 
 /** The Owners card's own display status (`src/lib/delegation/ownersCardData.ts`) reads
  * `delegationLeaves` (the full 16-slot array), NOT `isSecondary` - a DIFFERENT chain read from the
@@ -150,13 +162,47 @@ test.beforeEach(async ({page}) => {
   await configurePreflight();
 });
 
-/** A pet with an issued tag, and a client with a registered wallet ready to become a secondary
- * owner - the two preconditions the ceremony's own start route checks (`docs/DELEGATION.md`
- * section 4.3). Raw `insertOne`s (mirroring `mint-issue-revert.spec.ts`'s own convention) - this
- * suite is not testing issuance or wallet registration, both of which have their own coverage. */
-async function seedPetAndSecondaryClient(): Promise<{petId: string; dogTagIdField: string; clientId: string; account: ReturnType<typeof privateKeyToAccount>}> {
+/** A genuine (leaves, reservedLeafHashes, root) triple the real `verifyLeafCommitment` accepts -
+ * mirrors `tag-custody.spec.ts`'s own `buildVerifiableProfile` (the "keep a separate copy"
+ * convention this file's own header comment already follows for the EIP-712 types). Needed so the
+ * co-owner bundle (grade round 1 D3) has a real `TagArtifact` to build from - a bundle recomputes
+ * its own root via `verifyRedactedArtifact` and fails its self-check on anything less than genuine
+ * crypto, unlike the rest of this suite's opaque, uninterpreted `commitment` values. */
+function buildVerifiableProfile(name: string, species: string): {leaves: OpenedLeaf[]; reservedLeafHashes: string[]; root: string} {
+  const salt = (n: number) => new Uint8Array(16).fill(n);
+  const saltHexOf = (n: number) => ("0x" + Array.from(salt(n)).map((b) => b.toString(16).padStart(2, "0")).join("")) as `0x${string}`;
+  const leaves: OpenedLeaf[] = [
+    {keyPath: "credentialSubject.name", saltHex: saltHexOf(11), tag: TypeTag.String, value: name},
+    {keyPath: "credentialSubject.species", saltHex: saltHexOf(12), tag: TypeTag.String, value: species},
+  ];
+  const reservedLeafHashes = [
+    toHex32(hashLeaf("owner.address", salt(201), {tag: TypeTag.Bytes, value: new Uint8Array([1])} as TypedScalar)),
+    toHex32(hashLeaf("owner.consentKey", salt(202), {tag: TypeTag.Bytes, value: new Uint8Array([2])} as TypedScalar)),
+    toHex32(hashLeaf("owner.secret", salt(203), {tag: TypeTag.Bytes, value: new Uint8Array([3])} as TypedScalar)),
+  ];
+  const reservedFields = reservedLeafHashes.map((h) => BigInt(h));
+  const leafFields = leaves.map((l) => hashLeaf(l.keyPath, hexToBytes(l.saltHex), {tag: l.tag, value: l.value} as TypedScalar));
+  const root = toHex32(buildMerkle([...reservedFields, ...leafFields]).root);
+  expect(verifyLeafCommitment({root, leaves, reservedLeafHashes, expectedIdentityLeaves: []})).toBe(true);
+  return {leaves, reservedLeafHashes, root};
+}
+
+/** A pet with an issued tag AND a custodied `TagArtifact` (grade round 1 D3 - the co-owner bundle
+ * is built from exactly this record, `status/route.ts`'s `tryBuildBundle`), plus a client with a
+ * registered wallet ready to become a secondary owner - the three preconditions the ceremony's own
+ * start route and the post-confirm bundle both need (`docs/DELEGATION.md` section 4.3). Raw
+ * `insertOne`s (mirroring `mint-issue-revert.spec.ts`'s own convention) - this suite is not testing
+ * issuance or wallet registration, both of which have their own coverage. */
+async function seedPetAndSecondaryClient(): Promise<{
+  petId: string;
+  dogTagIdField: string;
+  clientId: string;
+  account: ReturnType<typeof privateKeyToAccount>;
+  artifact: ReturnType<typeof buildVerifiableProfile>;
+}> {
   const petId = randomUUID();
   const dogTagIdField = String(Math.floor(Math.random() * 1_000_000) + 1);
+  const artifact = buildVerifiableProfile("Blaze", "dog");
   await mongoClient.db().collection("pets").insertOne({
     petId,
     name: "Blaze",
@@ -164,11 +210,31 @@ async function seedPetAndSecondaryClient(): Promise<{petId: string; dogTagIdFiel
     weightHistory: [],
     ownerClientIds: [],
     primaryOwnerClientId: undefined,
-    dogTag: {dogTagIdDec: dogTagIdField, dogTagIdField, status: "active"},
+    dogTag: {dogTagIdDec: dogTagIdField, dogTagIdField, root: artifact.root.toLowerCase(), status: "active", cloneAddress: CLONE_ADDRESS},
     searchKey: "blaze",
     createdAt: new Date(),
     updatedAt: new Date(),
   });
+  const artifactInsert = await mongoClient.db().collection("tagartifacts").insertOne({
+    artifactId: `e2e-${petId}`,
+    petId,
+    dogTagIdDec: dogTagIdField,
+    dogTagIdField,
+    root: artifact.root.toLowerCase(),
+    protocolVersion: "dogtag-v2/1",
+    leaves: artifact.leaves,
+    reservedLeafHashes: artifact.reservedLeafHashes,
+    source: "issued_here",
+    issuerClone: CLONE_ADDRESS,
+    verifiedAt: Math.floor(Date.now() / 1000),
+    active: true,
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  });
+  // "Assert the artifact exists first, then assert the bundle" (grade round 1 D3's own recipe) - a
+  // fixture that failed to land must fail HERE, loudly and specifically, not surface later as a
+  // confusing bundle-shape mismatch that sends a future fixer chasing the wrong thing.
+  expect(artifactInsert.acknowledged).toBe(true);
 
   const account = privateKeyToAccount(generatePrivateKey());
   const clientId = randomUUID();
@@ -182,11 +248,11 @@ async function seedPetAndSecondaryClient(): Promise<{petId: string; dogTagIdFiel
     updatedAt: new Date(),
   });
 
-  return {petId, dogTagIdField, clientId, account};
+  return {petId, dogTagIdField, clientId, account, artifact};
 }
 
 test("Add secondary owner: full ceremony from the Owners card through on-chain confirmation", async ({page}) => {
-  const {petId, dogTagIdField, account} = await seedPetAndSecondaryClient();
+  const {petId, dogTagIdField, account, artifact} = await seedPetAndSecondaryClient();
 
   await page.goto(`/pets/${petId}`);
   await expect(ownersCard(page).getByRole("heading", {name: "DogTag owners"})).toBeVisible();
@@ -242,6 +308,52 @@ test("Add secondary owner: full ceremony from the Owners card through on-chain c
   await expect(page.getByText("Secondary owner added")).toBeVisible({timeout: 15_000});
   await expect(ownersCard(page).getByText("Jamie Rivera")).toBeVisible();
   await expect(ownersCard(page).getByText("Active")).toBeVisible();
+
+  // Grade round 1 D3: assert the co-owner bundle itself, on the wire. Plan section 14.1 item V6's
+  // own e2e arc ends "... -> Owners card updates -> bundle served" - nothing before this fix round
+  // ever called this endpoint or looked at its response body, so a real fault in `tryBuildBundle`
+  // (status/route.ts) had zero coverage at any level.
+  const statusRes = await page.request.get(`/d/${token}/status`);
+  expect(statusRes.ok()).toBe(true);
+  const statusBody = await statusRes.json();
+  expect(statusBody.status).toBe("added");
+  // Not `bundleUnavailable` - the TagArtifact this test seeded (and already asserted landed, in
+  // seedPetAndSecondaryClient) must have produced a real bundle, not a silent miss.
+  expect(statusBody.bundleUnavailable).toBeUndefined();
+  const bundle = statusBody.bundle as Record<string, unknown>;
+  expect(bundle).toBeTruthy();
+
+  const REQUIRED_BUNDLE_FIELDS = [
+    "protocolVersion",
+    "dogTagIdField",
+    "root",
+    "disclosed",
+    "obfuscatedLeafHashes",
+    "reservedLeafHashes",
+    "delegationLeaves",
+    "issuerClone",
+    "chainId",
+    "petName",
+    "clinicName",
+  ] as const; // DelegationCoOwnerBundle.required, verbatim - 11 fields.
+  for (const field of REQUIRED_BUNDLE_FIELDS) {
+    expect(bundle, `bundle.${field} must be present`).toHaveProperty(field);
+  }
+  expect(bundle.dogTagIdField).toBe(dogTagIdField);
+  expect((bundle.root as string).toLowerCase()).toBe(artifact.root.toLowerCase());
+  expect(bundle.delegationLeaves).toHaveLength(16);
+  expect((bundle.delegationLeaves as string[])[0]!.toLowerCase()).toBe(commitment.toLowerCase());
+  expect(bundle.reservedLeafHashes).toHaveLength(3);
+  expect(bundle.petName).toBe("Blaze");
+  expect(bundle.clinicName).toBe("Example Vet Clinic");
+
+  // No owner-secret material anywhere in the bundle, at any nesting depth - true by construction
+  // (`DelegationCoOwnerBundle`'s own TS interface declares no such field at all), re-checked here
+  // on the actual wire response rather than merely trusted from reading the type.
+  const forbidden = /ownersecret|consentkey|seed|ownersalt|secretsalt/i;
+  for (const key of allKeysDeep(bundle)) {
+    expect(key, `bundle must not carry a "${key}" key`).not.toMatch(forbidden);
+  }
 });
 
 test("Revoke a secondary owner: no QR, straight to the operator wallet write", async ({page}) => {
@@ -304,4 +416,62 @@ test("Revoke a secondary owner: no QR, straight to the operator wallet write", a
 
   await expect(page.getByText("Secondary owner revoked")).toBeVisible({timeout: 15_000});
   await expect(page.getByText("Revoked")).toBeVisible();
+});
+
+test("Revoke a secondary owner: a rejected wallet prompt returns the row to idle, not a permanent 'Revoking...' badge", async ({page}) => {
+  // Grade round 1 D6: before this fix, `registrationId` being set immediately (well before
+  // `writeContractAsync` even runs) meant a rejected wallet prompt left this component showing
+  // ONLY a "Revoking..." badge forever - no button, no recovery, a reload required. This test
+  // fails on the pre-fix code (the "Revoke" button never reappears) and passes once
+  // `RevokeSecondaryOwnerAction`'s catch resets `registrationId`/`pendingTxHash` and stops polling.
+  const {petId, dogTagIdField, clientId} = await seedPetAndSecondaryClient();
+  const commitment = randomHex32();
+
+  await mongoClient.db().collection("delegationsessions").insertOne({
+    token: randomUUID().replace(/-/g, "").slice(0, 32),
+    registrationId: randomUUID(),
+    kind: "add",
+    petId,
+    dogTagIdField,
+    clientId,
+    clinic: CLONE_ADDRESS.toLowerCase(),
+    chainId: 135,
+    clinicName: "Example Vet Clinic",
+    maskedTargetName: "J***** R******",
+    commitment: commitment.toLowerCase(),
+    wallet: "0x1111111111111111111111111111111111111111",
+    issuedAt: Math.floor(Date.now() / 1000) - 60,
+    blockNumber: 1,
+    deadline: Math.floor(Date.now() / 1000) + 600,
+    status: "confirmed",
+    consumed: true,
+    consumedAt: Math.floor(Date.now() / 1000) - 60,
+    createdAt: new Date(),
+  });
+  await setRpcScenario("isSecondary", DELEGATION_REGISTRY_ADDRESS, [dogTagIdField, commitment], true);
+  await setRpcScenario("delegationLeaves", DELEGATION_REGISTRY_ADDRESS, [dogTagIdField], sixteenSlotLeaves(commitment));
+
+  await page.goto(`/pets/${petId}`);
+  await expect(ownersCard(page).getByText("Jamie Rivera")).toBeVisible();
+  await expect(ownersCard(page).getByText("Active")).toBeVisible();
+
+  await forceRpcSendTransactionFailure();
+  await ownersCard(page).getByRole("button", {name: "Revoke"}).click();
+  await ownersCard(page).getByRole("button", {name: /Confirm revoke/}).click();
+
+  // The row must come back to life - never stay on "Revoking..." with no way out.
+  await expect(ownersCard(page).getByRole("button", {name: "Revoke"})).toBeVisible({timeout: 10_000});
+  await expect(page.getByText("Revoking...")).toHaveCount(0);
+
+  // Proves this is a real return to idle, not a coincidental re-render: the SAME real write,
+  // retried, still succeeds cleanly (the one-shot failure already reset itself on the stub).
+  await ownersCard(page).getByRole("button", {name: "Revoke"}).click();
+  await ownersCard(page).getByRole("button", {name: /Confirm revoke/}).click();
+  await expect.poll(() => getLastSentTxHash(), {timeout: 10_000}).not.toBeNull();
+  const hash = await getLastSentTxHash();
+  expect(hash).not.toBeNull();
+  await setRpcScenario("isSecondary", DELEGATION_REGISTRY_ADDRESS, [dogTagIdField, commitment], false);
+  await setRpcScenario("delegationLeaves", DELEGATION_REGISTRY_ADDRESS, [dogTagIdField], sixteenSlotLeaves());
+  await setRpcReceipt(hash!, "success");
+  await expect(page.getByText("Secondary owner revoked")).toBeVisible({timeout: 15_000});
 });
