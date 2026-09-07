@@ -165,6 +165,45 @@ Editing the value on the Pet CRM record after issuance changes the CRM record on
 **The WP4.4 mobile-booking external-pet path carries them too (WP4.12V fix round 1, D3).**
 `lib/booking/postBooking.ts`'s `CreateExternalPetInput` (the provisional pet record created when a mobile booking claims a foreign clinic's tag) gains `color`/`registrationId`/`registrationAuthority` alongside the four sibling attributes it already carried, and `lib/booking/mobileMongoAdapters.ts`'s `createExternalPet` writes them onto the created `Pet`. This was originally left out on the theory that these provisional ("external") records are invisible to the vet - that theory was wrong: `Pet.dogTag.external`'s own doc comment on `src/lib/models/Pet.ts` scopes the exclusion precisely to "this clinic's own tags/issuance surfaces (`/tags`, `/tags/issue`)" - it says nothing about the general Pets pages. An external pet appears in the Pets list and opens its own detail page like any other (`src/app/(app)/pets/page.tsx` and `.../pets/[id]/page.tsx` apply no `external` filter at all), so a verified color/registration id/authority the shared `mapVerifiedLeavesToPetAttributes` already computes belongs on that record exactly like species/breed/sex/dateOfBirth, the four fields this path was already carrying.
 
+## Multi-owner: vet-issued secondary owners (WP4.15, PLANNED - not deployed on any real chain yet)
+
+Kenneth's ask, verbatim: "primary owner continue as what we have, but add in feature to have distinguishable secondary owners to the same dogtag ID.
+revocable individually by the primary owner.
+Changing primary owner means re-issuing a new dogtag id."
+
+**Nothing about the primary owner's own tree, circuit, or privacy changes.**
+A secondary owner ("delegate") lives entirely OUTSIDE the profile tree, in a new, small, per-tag Merkle set of delegate key commitments with its own root (`delegationRoot`), held in a brand-new `DelegationRegistry` contract - see `docs/DELEGATION.md` (vendored from the `dogtag-protocol` branch `feature/wp4.15-multi-owner`) for the full model and the reasoning behind keeping this outside the frozen tree entirely.
+This is Stage A/B of that design: custody-only secondary owners, added and revoked by a vet ceremony with no ZK consent proof of their own (Kenneth's decision - the clinic's attestation with the primary present is sufficient, the same trust model tag issuance itself already runs on).
+The future delegate CONSENT proof (a secondary owner producing their own ZK proof) needs a mainnet-grade ceremony first and is out of this wave's scope.
+
+**The ceremony mirrors tag issuance's own shape** (`docs/DELEGATION.md` section 4.3): staff open a pet's Owners card and choose "Add secondary owner", picking an existing client who already has a wallet registered through the `/w` ceremony above.
+This opens a `DelegationSession` (mirrors `WalletRegistrationSession`: one-time 32-hex token, 600-second fixed TTL, one-shot complete) and prints a QR (`/d/<token>`).
+The secondary owner's own phone derives its OWN per-tag key material from ITS OWN wallet seed - never the primary's, and nothing of the primary's own secret material ever moves - computes a `commitment`, and signs a `DelegationClaim` EIP-712 struct with the wallet it already registered.
+The server recovers the signer, requires it to equal that already-registered wallet, then an already-whitelisted operator wallet calls the clinic's clone (`VetIssuer.addSecondaryOwner`, gas-sponsored the same way `issueTag` already is) - the clone writes into `DelegationRegistry`.
+Revoking needs no participation from the secondary's own device at all (there is nothing for them to sign): staff pick an active secondary from the Owners card and confirm, and the SAME operator wallet calls `revokeSecondaryOwner`.
+Any currently-Active clinic may add or revoke a secondary on any tag, not only the tag's original issuer (Kenneth's decision) - the same non-issuer-scoped trust boundary `VerificationRegistryConsent` already uses when it resolves a tag's validity.
+
+**The Owners card is chain-authoritative for active-vs-revoked, Mongo-only for identity.**
+`src/lib/delegation/ownersCard.ts`'s `buildSecondaryOwnerRows` joins this clinic's own `DelegationSession` history (the only place that knows which client a commitment belongs to - the chain only ever sees opaque commitments) against one live `DelegationRegistry.delegationLeaves` chain read.
+A secondary added or revoked at a DIFFERENT clinic still shows up correctly (labeled "Added at another clinic" if this clinic has no local record of who it is) rather than silently disagreeing with the chain's own count; a chain-read failure falls back to this clinic's own last-known outcome, honestly suffixed "(unverified)" rather than guessed as current fact.
+
+**`Pet.primaryOwnerClientId`** is optional and back-compat: it is set the FIRST time a pet is issued a tag (`POST /api/tags/issue/start`, both the new-pet and existing-pet branches) and never overwritten or backfilled afterward - a legacy pet issued before this field existed shows an honest "Primary not recorded" rather than a guess.
+Changing the primary owner is a fresh custodial issuance under a NEW `dogTagId` (Kenneth's own ask, verbatim, above) - this field on the OLD tag's pet record is never reassigned by that.
+
+**The co-owner bundle** (`DelegationCoOwnerBundle`, `src/lib/delegation/bundle.ts`) is what the newly-added secondary owner's phone receives once the on-chain write confirms: the tag's root, disclosed attribute openings, the three reserved leaf hashes, any already-masked attribute hashes, the tag's full 16-slot delegation tree, and enough context (`issuerClone`, `chainId`, `petName`, `clinicName`) to act as a view-only co-owner.
+It is built by re-running `buildRedactedExportPayload` - the exact same function `/e/:token` (device recovery) already exports through - so it self-checks with the identical `verifyRedactedArtifact` recompute and never carries any of the primary owner's private material by construction, not merely by convention.
+Served on `GET /d/:token/status` on every poll while confirmed and within the same grace-period window every other ceremony status poll in this app already has, not merely once - a deliberate, disclosed choice: re-running `addSecondaryOwner` for an already-added commitment reverts on chain, so there is no "just try again" recovery path for a bundle lost to a dropped response the way there is for a lost mint QR code.
+
+**Gas sponsorship, verified, not assumed** (plan section 8's own gas-sponsorship audit): every clinic clone data write - `issueTag`, `issueRecord`, revoke/reactivate of either, and now `addSecondaryOwner`/`revokeSecondaryOwner` - is wrapped in the SAME `refundsGas` modifier, so a `RefundSkipped` event from either new function is already picked up by the existing `/activity` page and its worker follower with zero code changes (confirmed by reading `src/worker/index.ts`'s event-filtering list, not assumed).
+Recomputing the full 16-leaf delegation tree on every add/revoke costs roughly 1.1-1.4M gas (15 linked Poseidon calls) - see `docs/DEPLOY-wp4.15.md` (protocol branch) for the full cost writeup and the deployment runbook itself, which is Kenneth's own action with the protocol admin wallet, not part of this app.
+
+**Consent relayer via clone (experimental, feature-flagged, `/verify` page + Settings).**
+The same upgrade that adds `addSecondaryOwner`/`revokeSecondaryOwner` also adds `VetIssuer.relayVerification`, letting the clinic's OWN clone (rather than a raw staff wallet) act as the relayer for a primary owner's consent proof.
+Off by default (`ClinicSettings.consentRelayerViaCloneEnabled`, owner-editable in Settings) and PENDING the DogTag admin separately whitelisting each clinic's clone for `canVerify` - turning it on before that grant exists is refused cleanly by the existing `POST /api/verify/start` preflight (unmodified), never a silently-always-reverting control.
+
+**Vendored specs are BRANCH-sourced, not master-sourced, for this wave** (`protocol/PROVENANCE.md` has the full accounting): `specs/qr-formats.md`, `specs/vet-public-api.yaml`, `specs/events.md`, and both `VetIssuer`/`DelegationRegistry` ABIs mirror the `dogtag-protocol` branch `feature/wp4.15-multi-owner`, which does not yet exist on `master` - every other vendored file is untouched and stays at whatever commit the prior full sync left it at.
+Do not run a full `scripts/sync-to.sh` re-sync while this branch is still unmerged; it would silently regress these files back to their pre-WP4.15 shape.
+
 ## Design decisions
 
 ### Invoice PDF library: pdfkit
