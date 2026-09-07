@@ -1,0 +1,33 @@
+# specs/standards/index.yaml
+#
+# Registry of external veterinary/health-record data standards this protocol recognizes (WP4.14,
+# plans/wp4.14-vaccination-records.md sections 9-10, Kenneth round 2 item 1). A vaccination record's
+# UNCOMMITTED `conformsTo[]` block (specs/leaf-commitment.md section 16) names entries from this list
+# by `id` + `version` to say which external standard(s) the record's data also happens to satisfy,
+# alongside its own committed `credentialSchema.id`/`credentialSchema.version` leaves (the DogTag
+# registry schema it was actually issued against - see specs/schemas/README.md).
+#
+# This index, and every file it points at, is DESCRIPTIVE METADATA ONLY: nothing in
+# packages/dogtag-standard-ts or crates/dogtag-standard-rs parses, validates, or enforces any of it.
+# See specs/standards/README.md for how a record's `conformsTo` refers here and how an app is expected
+# to use `mapping` to render or export a record in one of these standards' own shape.
+version: "1.0.0"
+
+standards:
+  - id: hl7-fhir-immunization
+    version: r4
+    file: hl7-fhir-immunization/r4.yaml
+    name: "HL7 FHIR Immunization"
+    summary: "The HL7 FHIR R4 Immunization resource - explicitly covers animal as well as human immunization. Source of the FHIR-aligned field names this wave's dogtag.vaccination.v1 schema adopts for its new (non-rabies-legacy) keyPaths."
+
+  - id: nasphv-form51
+    version: "2007"
+    file: nasphv-form51/2007.yaml
+    name: "NASPHV Form 51 (Rabies Vaccination Certificate)"
+    summary: "The US National Association of State Public Health Veterinarians' standard rabies vaccination certificate field set, widely required by US state and local rabies-control ordinances."
+
+  - id: eu-pet-passport
+    version: 577-2013-annex-iii-v
+    file: eu-pet-passport/577-2013-annex-iii-v.yaml
+    name: "EU Pet Passport - Commission Implementing Regulation (EU) No 577/2013, Annex III, Section V"
+    summary: "The rabies-vaccination section of the EU pet passport model, plus Annex III Section IV's transponder (microchip) fields; the standard veterinarians use for EU-recognized companion-animal travel."

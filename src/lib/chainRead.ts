@@ -136,6 +136,33 @@ export async function readRecordTypeProfile(cloneAddress: Address): Promise<stri
   })) as string;
 }
 
+/** `VetIssuer.RECORD_TYPE_VACCINATION()` (WP4.14) - the vaccination-record-type constant, read
+ * from the clone itself for the SAME "never a free string" reason `readRecordTypeProfile` is - the
+ * C3 attestation message for a vaccination record (`api/records/[id]/attestation/route.ts`) needs
+ * this exact on-chain value, not a locally re-hashed one. */
+export async function readRecordTypeVaccination(cloneAddress: Address): Promise<string> {
+  return (await roaxPublicClient().readContract({
+    address: cloneAddress,
+    abi: vetIssuerAbi,
+    functionName: "RECORD_TYPE_VACCINATION",
+  })) as string;
+}
+
+/** `VetIssuer.recordTypeOf(root)` (WP4.14) - the per-ROOT record-type mapping
+ * (`contracts/src/VetIssuer.sol`'s `mapping(bytes32 => bytes32) public recordTypeOf`), populated
+ * by BOTH the original tag-issuance path and `issueRecord(recordType, root)`. Returns the all-zero
+ * hash for a root this mapping has never seen - callers MUST treat that as "not this record type",
+ * never as a pass (specs/leaf-commitment.md section 16's on-chain binding rule 2). Read from the
+ * RESOLVED clone (never a clone the caller merely claims), exactly like `readIssuedBy`. */
+export async function readRecordTypeOf(cloneAddress: Address, root: string): Promise<string> {
+  return (await roaxPublicClient().readContract({
+    address: cloneAddress,
+    abi: vetIssuerAbi,
+    functionName: "recordTypeOf",
+    args: [root as `0x${string}`],
+  })) as string;
+}
+
 /** The current ROAX head block number - the wallet-registration EIP-712 message's `blockNumber`
  * field (plans/wp4.2-client-wallet-registration.md: "ROAX head at session creation, server-
  * fetched; session creation FAILS if the RPC is unreachable - chain presence is part of the
@@ -163,6 +190,25 @@ export async function readTxReceiptStatus(txHash: Hex): Promise<"success" | "rev
     if (err instanceof TransactionReceiptNotFoundError) return "pending";
     throw err;
   }
+}
+
+export interface TxAnchoring {
+  blockNumber: number;
+  blockTime: Date;
+}
+
+/**
+ * The mined block number + timestamp of an already-`"success"` transaction (WP4.14 V3's "active +
+ * anchoring from the receipt (block number, block timestamp)"). Only ever called once `readTxReceiptStatus`
+ * has already reported `"success"` for the same hash - a receipt carries a block NUMBER only, so the
+ * timestamp needs a second read (`getBlock`) against that same number. Fail-closed like every other
+ * read in this file: a pending/nonexistent receipt throws via `getTransactionReceipt` itself, never
+ * resolves to a guessed value.
+ */
+export async function readTxAnchoring(txHash: Hex): Promise<TxAnchoring> {
+  const receipt = await roaxPublicClient().getTransactionReceipt({hash: txHash});
+  const block = await roaxPublicClient().getBlock({blockNumber: receipt.blockNumber});
+  return {blockNumber: Number(receipt.blockNumber), blockTime: new Date(Number(block.timestamp) * 1000)};
 }
 
 /** `VetIssuer.issuedBy(root)` - the operator wallet that actually anchored `root` on this clone,

@@ -14,6 +14,7 @@ import {toHex32, fromHex32, type Field} from "../src/field.js";
 import {hexToBytes} from "../src/encode.js";
 import {dogTagIdField, type OpenedLeaf} from "../src/profileBind.js";
 import {verifyRedactedArtifact, type RedactedTagArtifact} from "../src/redactedArtifact.js";
+import {verifyRecordArtifact, type RecordArtifact} from "../src/recordArtifact.js";
 
 const REPO_ROOT = resolve(__dirname, "..", "..", "..");
 const VECTORS_PATH = resolve(REPO_ROOT, "specs", "leaf-commitment-vectors.json");
@@ -94,6 +95,30 @@ interface RedactedArtifactVector {
   valid: boolean;
 }
 
+// WP4.14S - identical wire shape to RedactedArtifactWireLeaf/RedactedArtifactVector above, named
+// separately because it describes a different section (recordArtifactVectors, section 16) whose
+// reservedLeafHashes is always empty rather than always 3 (the "file shape guard" describe block
+// below checks only presence/non-emptiness of the section itself, not that per-entry difference -
+// see test/recordArtifact.test.ts for the semantic check against the real verifyRecordArtifact).
+interface RecordArtifactWireLeaf {
+  keyPath: string;
+  saltHex: string;
+  tag: TypeTag;
+  tagName: string;
+  value: string;
+  expected_leaf_hex: string;
+}
+
+interface RecordArtifactVector {
+  name: string;
+  notes: string;
+  disclosed: RecordArtifactWireLeaf[];
+  obfuscatedLeafHashes: string[];
+  reservedLeafHashes: string[];
+  root_hex: string;
+  valid: boolean;
+}
+
 interface VectorsFile {
   _comment: string;
   field_p: string;
@@ -102,6 +127,7 @@ interface VectorsFile {
   inclusionVectors: InclusionVector[];
   dogTagIdFieldVectors: DogTagIdFieldVector[];
   redactedArtifactVectors: RedactedArtifactVector[];
+  recordArtifactVectors: RecordArtifactVector[];
 }
 
 const FIELD_P = 21888242871839275222246405745257275088548364400416034343698204186575808495617n;
@@ -163,6 +189,7 @@ describe("specs/leaf-commitment-vectors.json - file shape guard", () => {
       "inclusionVectors",
       "dogTagIdFieldVectors",
       "redactedArtifactVectors",
+      "recordArtifactVectors",
     ] as const) {
       expect(Array.isArray(file[key]), `${key} must be an array`).toBe(true);
       expect(file[key].length, `${key} must be non-empty`).toBeGreaterThan(0);
@@ -178,6 +205,7 @@ describe("specs/leaf-commitment-vectors.json - file shape guard", () => {
       "inclusionVectors",
       "dogTagIdFieldVectors",
       "redactedArtifactVectors",
+      "recordArtifactVectors",
     ]);
     for (const key of Object.keys(file)) {
       expect(known.has(key), `unrecognized leaf-commitment-vectors.json key: ${key}`).toBe(true);
@@ -607,6 +635,76 @@ describe("redactedArtifactVectors - the isolating negatives promoted from testve
       ).toEqual(source!.reservedLeafHashes.map((h) => h.toLowerCase()));
       expect(curated.root_hex.toLowerCase(), `${name}.root_hex vs source root`).toBe(source!.root.toLowerCase());
       expect(curated.valid, `${name}.valid`).toBe(source!.valid);
+    }
+  });
+});
+
+describe("recordArtifactVectors - verifyRecordArtifact reproduces every recorded outcome (section 16)", () => {
+  function toOpened(l: RecordArtifactWireLeaf): OpenedLeaf {
+    return {keyPath: l.keyPath, saltHex: l.saltHex, tag: l.tag, value: l.value};
+  }
+
+  it("carries at least 2 masked-but-valid variants and at least 3 deliberately-invalid negatives", () => {
+    const valid = file.recordArtifactVectors.filter((v) => v.valid);
+    const invalid = file.recordArtifactVectors.filter((v) => !v.valid);
+    // The FIRST valid entry is the unmasked base (nothing obfuscated) - not itself a "masked
+    // variant" - so this counts only entries that actually obfuscate at least one leaf.
+    const maskedVariants = valid.filter((v) => v.obfuscatedLeafHashes.length > 0);
+    expect(maskedVariants.length, "masked (obfuscatedLeafHashes non-empty) but still-valid vectors").toBeGreaterThanOrEqual(2);
+    expect(invalid.length).toBeGreaterThanOrEqual(3);
+  });
+
+  for (const v of file.recordArtifactVectors) {
+    it(`${v.name}: verifyRecordArtifact returns ${v.valid}`, () => {
+      const artifact: RecordArtifact = {
+        protocolVersion: "dogtag-v2/1",
+        artifactType: "record",
+        root: v.root_hex,
+        disclosed: v.disclosed.map(toOpened),
+        obfuscatedLeafHashes: v.obfuscatedLeafHashes,
+        reservedLeafHashes: v.reservedLeafHashes,
+      };
+      expect(verifyRecordArtifact(artifact)).toBe(v.valid);
+    });
+  }
+
+  it("every disclosed leaf's expected_leaf_hex matches hashLeaf, independent of verifyRecordArtifact itself", () => {
+    for (const v of file.recordArtifactVectors) {
+      for (const l of v.disclosed) {
+        const scalar = scalarFromVectorValue(l.tag, l.value);
+        const h = hashLeaf(l.keyPath, hexToBytes(l.saltHex), scalar);
+        expect(toHex32(h), `${v.name}: ${l.keyPath}`).toBe(l.expected_leaf_hex.toLowerCase());
+      }
+    }
+  });
+
+  it("the three positive variants (full, masked-clinical-leaf, masked-except-non-maskable) share the identical root - masking never moves it", () => {
+    const names = ["record_full_artifact", "record_masked_clinical_leaf", "record_masked_except_non_maskable"];
+    const roots = new Set(names.map((n) => file.recordArtifactVectors.find((v) => v.name === n)!.root_hex.toLowerCase()));
+    expect(roots.size, `${names.join(", ")} should all share one root`).toBe(1);
+  });
+
+  it("record_negative_masked_dogtagid shares that SAME root - the bookkeeping move, not the root, is what's rejected", () => {
+    const full = file.recordArtifactVectors.find((v) => v.name === "record_full_artifact")!;
+    const negative = file.recordArtifactVectors.find((v) => v.name === "record_negative_masked_dogtagid")!;
+    expect(negative.root_hex.toLowerCase()).toBe(full.root_hex.toLowerCase());
+    expect(verifyRecordArtifact({
+      protocolVersion: "dogtag-v2/1",
+      artifactType: "record",
+      root: negative.root_hex,
+      disclosed: negative.disclosed.map(toOpened),
+      obfuscatedLeafHashes: negative.obfuscatedLeafHashes,
+      reservedLeafHashes: negative.reservedLeafHashes,
+    })).toBe(false);
+  });
+
+  it("every negative vector's root_hex is the GENUINE root of its own posted multiset (isolating, per section 13/16 - never an incidental root mismatch)", () => {
+    for (const v of file.recordArtifactVectors.filter((v) => !v.valid)) {
+      const disclosedHashes = v.disclosed.map((l) => hashLeaf(l.keyPath, hexToBytes(l.saltHex), scalarFromVectorValue(l.tag, l.value)));
+      const obfuscatedFields = v.obfuscatedLeafHashes.map(fromHex32);
+      const reservedFields = v.reservedLeafHashes.map(fromHex32);
+      const recomputedRoot = toHex32(buildMerkle([...reservedFields, ...obfuscatedFields, ...disclosedHashes]).root);
+      expect(recomputedRoot, `${v.name}: root_hex must be the genuine root of its own posted multiset`).toBe(v.root_hex.toLowerCase());
     }
   });
 });

@@ -6,12 +6,12 @@ The payment URIs typically hand off to the user's own wallet app (see "Payment Q
 
 ## The token grammar
 
-This section covers the mint, verify, wallet-registration, tag-export, and tag-import session tokens.
+This section covers the mint, verify, wallet-registration, tag-export, tag-import, and records-verify session tokens.
 The receipt token has its own, deliberately different grammar; see "Receipt URL" below.
 
-Every mint, verify, wallet-registration, tag-export, or tag-import session token in this ecosystem is 32 lowercase hexadecimal characters: `^[0-9a-f]{32}$`.
+Every mint, verify, wallet-registration, tag-export, tag-import, or records-verify session token in this ecosystem is 32 lowercase hexadecimal characters: `^[0-9a-f]{32}$`.
 That is 128 bits of entropy, base16-encoded, always lowercase on the wire.
-A parser MUST reject a mint, verify, wallet-registration, tag-export, or tag-import token that is the wrong length, contains uppercase hex digits, or contains any character outside `[0-9a-f]`, rather than attempting to normalize it.
+A parser MUST reject a mint, verify, wallet-registration, tag-export, tag-import, or records-verify token that is the wrong length, contains uppercase hex digits, or contains any character outside `[0-9a-f]`, rather than attempting to normalize it.
 This grammar is v1-compatible: a v1 QR and a v2 QR use the same token shape, so a mixed fleet of old and new vet deployments during a migration window still produces scannable codes.
 
 ## Mint QR
@@ -104,8 +104,23 @@ An export with no mask chosen is this format's degenerate case: nothing withheld
 The QR shape, token grammar, one-time semantics, and TTL above are all unchanged by masking.
 The scanning app still recomputes and independently verifies (`verifyRedactedArtifact`) before trusting or storing anything, exactly as it would for a fully-disclosed export.
 
-TODO(WP4.10): `specs/vet-public-api.yaml` in this repo still documents `ArtifactExportResponse`'s pre-masking `leaves` field.
-Resync it once the masked-export endpoint schema lands here from the vendored copy.
+### `artifactType`: tag or record (WP4.14)
+
+The same `/e` QR ceremony, the same token grammar, and the same one-time/TTL semantics above also deliver a pet's issued RECORDS (vaccination records and future record types - `specs/leaf-commitment.md` section 16), reusing the ceremony rather than adding a new route (Kenneth round 2 item 9, confirmed round 2: "same QR").
+`ArtifactExportResponse` (`specs/vet-public-api.yaml`) gains an `artifactType` field, `"tag"` or `"record"`, naming which of the two sibling wire shapes the rest of the payload is:
+
+- `artifactType: "tag"` (or the field absent entirely, for a response predating WP4.14) - everything "Masked export" above already describes: a `RedactedTagArtifact`, `reservedLeafHashes` always exactly 3, verified with `verifyRedactedArtifact`.
+- `artifactType: "record"` - a `RecordArtifact` (`specs/leaf-commitment.md` section 16, `specs/schemas/dogtag.record-artifact.v1.schema.json`): `reservedLeafHashes` always empty, the seven non-maskable leaves (`credentialSubject.dogTagId`, `recordType`, `credentialSchema.id`/`credentialSchema.version`, `issuer.chainId`/`issuer.contract`/`issuer.operator`) always present in `disclosed`, and an accompanying UNCOMMITTED block (`conformsTo`/`anchoring`/`presentation`) carried beside the artifact, never hashed. Verified with `verifyRecordArtifact`, never `verifyRedactedArtifact` - the two verifiers are not interchangeable (different reserved-count rule, different non-maskable set, no 64-leaf cap on the record side).
+
+### Record share steps
+
+Staff pick which of a pet's ISSUED RECORDS to share (a pet may have many, one per issuance - WP4.14 plan section 4, unlike a tag artifact's single active-per-pet model) before generating the export QR, then optionally mask a subset of that record's MASKABLE leaves (never one of the seven non-maskable ones - the vet portal's own mask picker refuses that choice before a session is ever created, and `verifyRecordArtifact` refuses it again on the wire regardless).
+Everything else about the ceremony is identical to a tag export: `GET /e/{token}` resolves and atomically consumes the token in one call, the response's `root` is fixed at session-creation time, and the same `404`/`410` error states apply.
+
+On a successful scan, the app shows a confirm screen (clinic name, record type, e.g. "Vaccination record") before doing anything with the data.
+Only after the owner confirms does it rebuild the record's leaf set, recompute `root` from the disclosed leaves via `verifyRecordArtifact`, and independently cross-check the on-chain binding rules `specs/leaf-commitment.md` section 16 states (`rootIssuer[root] == issuer.contract`, `recordTypeOf(root) == keccak256(recordType)`, `isValid(root)`, `issuedBy(root) == issuer.operator`, `issuer.chainId` equals the chain the app is actually connected to) before writing anything to local storage - there is no `profileRoot(dogTagId) == root` check for a record the way there is for a tag, since the chain stores no record-to-dog association at all (the `credentialSubject.dogTagId` leaf is the record's only binding to a dog, and that binding is exactly what a non-maskable, hash-checked leaf inside an already-verified `root` gives a reader - never an independent on-chain lookup).
+The `conformsTo`/`anchoring`/`presentation` block, when present, is stored and displayed alongside the verified artifact but plays no role in whether the record is trusted.
+Unchanged by `artifactType` either way: the token grammar, one-time consumption, and TTL rules below apply identically to a tag share and a record share.
 
 ### Parsing rules
 
@@ -130,13 +145,56 @@ https://<vet>/i/<32hex>
 - Fixed TTL: 600 seconds from creation, same as the export QR above, not extended by resolving.
 - On a successful scan, the app shows a confirmation screen naming the clinic and staff's chosen target, then lets the owner pick which of THEIR OWN local pets to send.
   The vet-chosen target is display context only, never a restriction on which local pet's data the app will submit.
-  The owner re-authenticates (biometric) before the app rebuilds and submits that pet's data.
+  The app rebuilds and submits that pet's data. No biometric gate is required here: this ceremony only discloses already-held, owner-selected profile data (a plain profile-tree rebuild) and never touches the owner's key material. A biometric prompt remains required for any operation that DOES use the owner's key material (for example, proving consent over the owner's own profile tree).
 - The app calls both `GET /i/{token}` and `POST /i/{token}/complete` against the exact host parsed from the QR ("scanned host only", as above) - never a different host, even across the two calls of the same ceremony.
 
 ### Parsing rules
 
 1. The scheme MUST be `https`.
 2. The path MUST match `^/i/[0-9a-f]{32}$` exactly, with no trailing slash, query string, or fragment.
+
+## Records verify QR (WP4.14)
+
+```
+https://<vet>/v/<32hex>
+```
+
+- `<vet>` and `<32hex>` as above (same token grammar as mint, verify, wallet-registration, tag-export, and tag-import).
+- Resolves via `GET /v/{token}` in `specs/vet-public-api.yaml`; submitted via `POST /v/{token}/complete`.
+- Printed or displayed by any clinic staff member (not necessarily a vet) to ask an owner's phone to present ONE of that pet's issued records (a vaccination `RecordArtifact`, `specs/leaf-commitment.md` section 16, or a future record type) for independent on-chain verification - a visiting pet's rabies proof at a boarding facility or a new clinic, say.
+- **Blind presentment**: unlike the export ceremony, staff do not pick a pet or a specific record before generating the code - the session names only which clinic is asking.
+  The owner's device chooses which record, and optionally which of that record's own MASKABLE leaves, to disclose, exactly as if handing over a paper certificate: the clinic does not know in advance what will be shown.
+  The seven non-maskable leaves (`specs/leaf-commitment.md` section 16) can never be withheld, the same rule the export ceremony's own mask picker already enforces.
+- Non-consuming resolve, consuming complete, mirroring `GET /w/{token}` / `POST /w/{token}/complete`'s own shape (not `GET /e/{token}`'s one-shot pattern - unlike an export, this ceremony has something for the phone to submit back): `GET /v/{token}` returns clinic name and session status only, and can be safely retried.
+  `POST /v/{token}/complete` is the action that consumes the token, on every outcome from that point on - a burned token is simply dead, and there is no retry endpoint for this ceremony.
+  A request body that does not even parse as a `RecordArtifact` is the one narrow exception: it is refused BEFORE the token is looked up, so it does NOT consume the token, letting a confused or buggy client retry with a corrected body.
+  Once a body parses as a shape-valid `RecordArtifact`, the token IS consumed even if verification then fails - a wrong-but-well-formed presentment counts as "presented," mirroring how a human ceremony works: you showed the clinic something, right or wrong.
+- Error states: `GET /v/{token}` refuses with `404` (`not_found`: unknown or malformed) or `410` (`expired_or_reused`: naturally expired while still pending) before the owner ever sees a confirm screen.
+  `POST /v/{token}/complete` additionally refuses with `400` (`malformed_artifact`: the request body does not parse as a `RecordArtifact` - does NOT consume the token, see above) on top of the same `404`/`410` above.
+  A shape-valid artifact that then fails verification is NOT an error response: it returns `200` with a `result` object naming the failure stage (see "Verification result" below) - the ceremony's job is to report what it found, not to treat a genuine forgery or a stale anchor as a transport-level failure.
+- Fixed TTL: 600 seconds from creation, same as the wallet-registration/export/import ceremonies above, not extended by resolving.
+- On a successful scan, the app shows a confirm screen (clinic name) then lets the owner pick ONE issued record and, optionally, a mask over that record's own maskable leaves, before posting the resulting `RecordArtifact` body. No biometric gate is required for record presentation: the owner is disclosing data they select field by field on screen, and this ceremony never touches the owner's key material (no `ownerSecret`, no consent key) - the same reasoning, and the same absence of a gate, as the `/i` share-to-vet ceremony above. A biometric prompt remains required for any operation that DOES use the owner's key material.
+- The app calls both `GET /v/{token}` and `POST /v/{token}/complete` against the exact host parsed from the QR ("scanned host only", the same rule every vet-facing ceremony in this catalogue follows).
+- `/v/<token>` and the pre-existing `/v1/...` versioned API namespace (`specs/vet-public-api.yaml`'s booking/payments/entity/consent routes) are unrelated and cannot collide: `v` here stands for "verify" (this ceremony's own single-letter mnemonic, alongside `/p`/`/w`/`/e`/`/i`/`/x`), not a version number, and no URL path segment is ever literally `v1` for this ceremony's own routes.
+
+### Verification result
+
+`POST /v/{token}/complete`'s response (`RecordVerifyCompleteResponse`, `specs/vet-public-api.yaml`) carries a `result` object with a `stage` field, run through the exact five-check on-chain binding rule `specs/leaf-commitment.md` section 16 specifies for any third-party record verifier - applied by the CLINIC'S OWN backend on the phone's behalf, against its own configured chain/factory, never trusting the artifact's own claimed issuer without cross-checking it (the phone needs no RPC access of its own for this ceremony, unlike the export ceremony's app-side cross-check):
+
+- `"crypto_failed"` - the presented artifact fails structural/cryptographic self-verification (`verifyRecordArtifact`) before any chain read is even attempted. This covers: the Merkle root not recomputing from the disclosed leaves; ANY of the seven non-maskable keyPaths (`credentialSubject.dogTagId`, `recordType`, `credentialSchema.id`, `credentialSchema.version`, `issuer.chainId`, `issuer.contract`, `issuer.operator`) masked or missing from `disclosed`; a disclosed `credentialSchema.id` leaf disagreeing with the artifact's own top-level `schemaId`, when present; or the leaf set otherwise being malformed (an owner-control keyPath spoofed, a keyPath disclosed twice, or a keyPath named in both `disclosed` and `obfuscatedLeafHashes`).
+  Because all seven non-maskable leaves are already guaranteed present by this same self-verification, the four leaves the next stages read (`issuer.contract`, `issuer.operator`, `issuer.chainId`, `recordType`) are a verified subset of them, not a separate, narrower requirement.
+- `"wrong_chain"` - the artifact's own `issuer.chainId` leaf does not match the chain the verifying clinic is actually connected to. Checked before any chain read is attempted.
+- `"chain_unreadable"` - a chain read failed or could not be attempted at all (RPC error, timeout, or the clinic's own on-chain factory address is not configured); never conflated with a genuine on-chain absence.
+- `"not_anchored"` - the artifact's crypto and chain are both readable, but they disagree, with a `reason`: `"root_unset"` (this root was never issued by anyone), `"issuer_mismatch"` (the root resolves on-chain to a DIFFERENT clone than the artifact's own `issuer.contract` claims - anti-substitution), `"record_type_mismatch"` (the resolved clone's `recordTypeOf` disagrees with the artifact's own claimed `recordType`), or `"operator_mismatch"` (the resolved clone's `issuedBy` disagrees with the artifact's own claimed `issuer.operator`).
+- `"verified"` - every crypto and chain check agrees; a `validity` field further splits this by walking an ORDERED procedure, stopping at the first step that applies: `"revoked"` (the resolved clone's `isValid(root)` is false, checked FIRST and unconditionally, ignoring both date leaves - the only way this differs from a false-because-never-issued case, since `not_anchored/root_unset` already covers that one), then `"hidden"` (the presenting device withheld `validFrom` and/or `validUntil` - since neither is one of the seven non-maskable leaves, a presenter may disclose everything else and still leave the one clinician-facing window this stage exists to check unreadable; checked BEFORE any date comparison, so a disclosed `validUntil` already past its cutoff still reads `"hidden"`, never `"expired"`, when `validFrom` is masked; reported honestly rather than guessed as `"valid"`), then `"not_yet_valid"` (`validFrom` disclosed and still in the future - never collapsed into `"expired"`), then `"expired"` (past the `validUntil` leaf's UTC end-of-day cutoff; by this step both bounds are already known disclosed), otherwise `"valid"` (both `validFrom` and `validUntil` disclosed, clock inside the window). Full decision procedure: `specs/leaf-commitment.md` section 16, "Reporting validity once binding succeeds".
+
+The stored/returned result also carries `disclosedKeyPaths` (which fields the presented artifact actually disclosed, for display) and `hiddenCount` (how many it withheld, directly the artifact's own `obfuscatedLeafHashes.length` - never a diff against the record type's full schema field set, which would fabricate a number for fields the issuer simply never populated) but never the leaf VALUES themselves - this endpoint is unauthenticated, and the session it writes to is later polled by clinic staff over a separate, deployment-internal API out of scope for this spec.
+Both fields are set regardless of `stage` - even a `crypto_failed` or `not_anchored` presentment still structurally names how many leaves it disclosed and withheld.
+
+### Parsing rules
+
+1. The scheme MUST be `https`.
+2. The path MUST match `^/v/[0-9a-f]{32}$` exactly, with no trailing slash, query string, or fragment.
 
 ## Payment QR (EIP-681)
 

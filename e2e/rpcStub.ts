@@ -2,6 +2,7 @@ import {createServer, type IncomingMessage, type Server, type ServerResponse} fr
 import {randomBytes} from "node:crypto";
 import {decodeFunctionData, encodeFunctionResult} from "viem";
 import type {Abi, Address, Hex} from "viem";
+import {recordTypeKey} from "@dogtag/standard";
 // Playwright loads e2e spec/support files through Node's own native ESM loader (unlike the Next.js
 // app itself, bundled by webpack/turbopack, where a plain JSON import needs no attribute at all -
 // `src/lib/abi.ts`'s own imports of these same files) - Node's native loader requires the explicit
@@ -9,10 +10,11 @@ import type {Abi, Address, Hex} from "viem";
 import dogTagSBTConsentAbiJson from "../protocol/contracts/exports/abi/DogTagSBTConsent.json" with {type: "json"};
 import vetIssuerFactoryAbiJson from "../protocol/contracts/exports/abi/VetIssuerFactory.json" with {type: "json"};
 import vetIssuerAbiJson from "../protocol/contracts/exports/abi/VetIssuer.json" with {type: "json"};
+import entityRegistryAbiJson from "../protocol/contracts/exports/abi/EntityRegistry.json" with {type: "json"};
 
 /**
- * A tiny local JSON-RPC stub standing in for the ROAX chain in e2e - answers exactly the three
- * `eth_call` selectors WP4.4's tag-claim tiers read (`profileRoot`, `rootIssuer`, `isValid`), plus
+ * A tiny local JSON-RPC stub standing in for the ROAX chain in e2e - answers the `eth_call`
+ * selectors the app reads (`profileRoot`, `rootIssuer`, `isValid`, and others added since), plus
  * `eth_blockNumber`/`eth_chainId` (the pre-existing wallet-registration suite's session-creation
  * flow already depends on the first of those). Scripted per-test via a small HTTP control plane
  * (`/__control/scenario`, `/__control/reset`) rather than a mocked transport inside the app process
@@ -42,7 +44,21 @@ import vetIssuerAbiJson from "../protocol/contracts/exports/abi/VetIssuer.json" 
  * direct `viem` client) never preflights, which is exactly why that integration test already
  * passed while the real browser path silently never worked.
  */
-const ABIS: Abi[] = [dogTagSBTConsentAbiJson as unknown as Abi, vetIssuerFactoryAbiJson as unknown as Abi, vetIssuerAbiJson as unknown as Abi];
+// WP4.14V: EntityRegistry added for `isActive(address)` - `preflightIssuance` (shared by the tag
+// mint-session flow and the new record-issuance flow) reads this before either flow allocates
+// anything, but every EXISTING e2e spec bypasses it by seeding a session/artifact directly into
+// Mongo (mint-issue-revert.spec.ts's own doc comment names this explicitly), so this call had never
+// actually been decoded by this stub before - `decodeCall` fell through every ABI here, returned
+// null, and the caller saw a bare "unrecognized selector" JSON-RPC error surfacing as
+// preflightIssuance's own catch-all "Could not reach the chain" message. Purely additive: decoding
+// tries each ABI in order and falls through on failure, so adding a fourth entry cannot change what
+// any existing call already successfully decoded against one of the first three.
+const ABIS: Abi[] = [
+  dogTagSBTConsentAbiJson as unknown as Abi,
+  vetIssuerFactoryAbiJson as unknown as Abi,
+  vetIssuerAbiJson as unknown as Abi,
+  entityRegistryAbiJson as unknown as Abi,
+];
 
 // Overridable for the same reason playwright.config.ts's E2E_WEB_PORT and mongo-fixture.ts's
 // E2E_MONGO_PORT are - a copy of this checkout synced elsewhere needs to run its own stub without
@@ -127,8 +143,26 @@ function defaultResultFor(functionName: string): ScenarioResult {
   // WP4.7 A9 - `operators` is a `mapping(address => bool)` getter; an address never added reads
   // `false` on a real chain, exactly like `isValid`'s own unset-mapping default above.
   if (functionName === "operators") return false;
+  // WP4.14V - `isActive` returns a `bool`, never a bytes32 word: falling through to this function's
+  // own zero-bytes32 default below would fail `encodeResult`'s ABI encoding outright, the identical
+  // class of bug `issuedBy` below already documents. `false` (never activated) is also the correct
+  // "natural" default for an entity account nobody scripted, matching `isValid`/`operators` above.
+  if (functionName === "isActive") return false;
   if (functionName === "rootIssuer") return "0x0000000000000000000000000000000000000000";
-  return `0x${"0".repeat(64)}`; // profileRoot
+  // WP4.14 - `issuedBy` returns an `address`, never a bytes32 word: falling through to this
+  // function's own zero-bytes32 default below would fail `encodeResult`'s ABI encoding outright
+  // (an `address` output slot cannot accept a 32-byte value) the first time any record e2e spec
+  // exercises `POST /api/records/:id/confirm` (or the attestation route) without scripting this
+  // read explicitly. The zero ADDRESS is still the correct "never written" default, matching a root
+  // that was never anchored on this clone.
+  if (functionName === "issuedBy") return "0x0000000000000000000000000000000000000000";
+  // WP4.14 - `RECORD_TYPE_VACCINATION()` is a CONSTANT getter (no args), not a per-root mapping
+  // lookup - a real clone never returns zero for it, unlike `recordTypeOf`/`profileRoot` below,
+  // where zero genuinely is the correct "never written" default. `recordTypeKey` (the identical
+  // vendored `@dogtag/standard` helper `lib/records/reconcile.ts` itself uses) keeps this stub's
+  // default in permanent lockstep with the real value, rather than a second hand-copied hex literal.
+  if (functionName === "RECORD_TYPE_VACCINATION") return recordTypeKey("VACCINATION");
+  return `0x${"0".repeat(64)}`; // profileRoot / recordTypeOf - zero IS the correct "never written" default for both mappings
 }
 
 function decodeCall(data: Hex): {functionName: string; args: readonly unknown[]} | null {

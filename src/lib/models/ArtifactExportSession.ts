@@ -19,7 +19,23 @@ import {getOrCreateModel} from "@/lib/models/registerModel";
 export interface ArtifactExportSessionDoc {
   token: string; // 32 lowercase hex, unique - specs/qr-formats.md's token grammar
   petId: string;
-  root: string; // lowercase - the TagArtifact active for petId at creation time
+  /** WP4.14 V5 - which sibling wire shape this session ultimately serves. ABSENT (every session
+   * created before this wave, and every tag-export session created since - `lib/tags/exportFlow.ts`
+   * never sets this field) means `"tag"`, the identical "absence is the implicit tag case" rule
+   * `specs/vet-public-api.yaml`'s `ArtifactExportResponse.artifactType` and `@dogtag/standard`'s
+   * `RedactedTagArtifact` both already state. Only ever `"record"` when `recordId` (below) is also
+   * set - `lib/records/exportFlow.ts` is the one place that happens. */
+  artifactType?: "tag" | "record";
+  /** WP4.14 V5 - set if and only if `artifactType === "record"`: the `RecordArtifact.recordId` this
+   * session exports. A tag session has no analogous field (`root` below, together with `petId`, is
+   * already sufficient to find the right `TagArtifact` - a pet has only one). `RecordArtifact.root`
+   * is ALSO globally unique on its own (that model's own `unique: true`), so `root` alone would
+   * resolve a record just as unambiguously - `recordId` is stored anyway so this ceremony looks a
+   * record up the same way every other record route in this app already does (`findRecordArtifact`),
+   * with `root` kept as a defensive equality check (`lib/records/exportFlow.ts`'s own store adapter)
+   * rather than a second, independent lookup key. */
+  recordId?: string;
+  root: string; // lowercase - the TagArtifact (or RecordArtifact) root active at creation time
   exp: number; // unix seconds, createdAt + 600
   /**
    * WP4.10V item 3 - the keyPaths staff chose to mask, snapshotted at CREATION time exactly like
@@ -44,6 +60,8 @@ const artifactExportSessionSchema = new Schema<ArtifactExportSessionDoc>(
   {
     token: {type: String, required: true, unique: true},
     petId: {type: String, required: true, index: true},
+    artifactType: {type: String, enum: ["tag", "record"]},
+    recordId: {type: String},
     root: {type: String, required: true},
     exp: {type: Number, required: true},
     mask: [String],
