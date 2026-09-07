@@ -235,6 +235,18 @@ export function AddSecondaryOwnerAction({petId, dogTagIdField, disabled}: {petId
       {(!status || status === "pending") && (
         <>
           <QrSurface data={session.qr} caption="Scan with the secondary owner's DogTag app" expiresAt={session.issuedAt + session.ttlSecs} />
+          {/* Same visible-link convention as WalletsPanel.tsx's wallet-registration QR - lets
+              staff copy/text the link when a QR scan is not practical, and gives e2e coverage a
+              way to read the token without decoding a QR image. */}
+          <a
+            href={session.qr}
+            target="_blank"
+            rel="noreferrer"
+            data-testid="delegation-add-link"
+            className="max-w-xs break-all text-center text-caption text-link hover:underline"
+          >
+            {session.qr}
+          </a>
           <StatusBadge tone="info" label="Waiting for scan..." />
         </>
       )}

@@ -43,7 +43,11 @@ export function OwnersCard({
   return (
     <section className="rounded-card border border-border bg-surface p-5 shadow-card">
       <div className="mb-4 flex items-center justify-between gap-2">
-        <h3 className="text-section-title text-ink">Owners</h3>
+        {/* NOT "Owners" - `PetForm.tsx`'s pre-existing "Owners" FormSection already owns that
+            exact heading for the unrelated many-to-many CRM contacts list (`ownerClientIds`,
+            OwnerPicker). This card is about DogTag primary/secondary ownership specifically -
+            a real naming collision two sections on the same page would otherwise share. */}
+        <h3 className="text-section-title text-ink">DogTag owners</h3>
       </div>
 
       {!data.chainVerified && (
@@ -85,7 +89,7 @@ export function OwnersCard({
                   </div>
                 </div>
                 {canManage && isActive && dogTagIdField && (
-                  <RevokeSecondaryOwnerAction petId={petId} commitment={row.commitment} clientName={row.clientName} />
+                  <RevokeSecondaryOwnerAction petId={petId} dogTagIdField={dogTagIdField} commitment={row.commitment} clientName={row.clientName} />
                 )}
               </li>
             );

@@ -25,7 +25,17 @@ interface StaffStatus {
  * `POST /api/pets/:id/delegations {mode:"revoke"}` creates the session already `"claimed"`, so
  * this component can call the operator wallet immediately.
  */
-export function RevokeSecondaryOwnerAction({petId, commitment, clientName}: {petId: string; commitment: string; clientName?: string}) {
+export function RevokeSecondaryOwnerAction({
+  petId,
+  dogTagIdField,
+  commitment,
+  clientName,
+}: {
+  petId: string;
+  dogTagIdField: string;
+  commitment: string;
+  clientName?: string;
+}) {
   const router = useRouter();
   const snackbar = useSnackbar();
   const {address, chainId} = useAccount();
@@ -87,16 +97,6 @@ export function RevokeSecondaryOwnerAction({petId, commitment, clientName}: {pet
       const settings = settingsRes.ok ? await settingsRes.json() : null;
       if (!settings?.cloneAddress) {
         snackbar.show("This clinic has not completed setup", "danger");
-        return;
-      }
-      // Need dogTagIdField to build the call - read it back off the pet the row already knows,
-      // via the session the start call just created (the staff status poll's first tick carries
-      // no dogTagIdField, so the wagmi call args come from the DEDICATED pet lookup instead).
-      const petRes = await fetch(`/api/pets/${petId}`);
-      const pet = petRes.ok ? await petRes.json() : null;
-      const dogTagIdField: string | undefined = pet?.dogTag?.dogTagIdField;
-      if (!dogTagIdField) {
-        snackbar.show("Could not determine this tag's on-chain id", "danger");
         return;
       }
 

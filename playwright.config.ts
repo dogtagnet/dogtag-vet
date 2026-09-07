@@ -58,6 +58,9 @@ export default defineConfig({
       ENTITY_REGISTRY_ADDRESS: "0x9b15a2df4e38547cbbbd635a4cd4531355bb4247",
       DOGTAG_SBT_ADDRESS: "0x276101555b2cd92be0fb85ff908e02281d6a3cf9",
       VERIFICATION_REGISTRY_ADDRESS: "0x41e96ad9e93ecb722e69aec6c0d4b4f15040ddd0",
+      // WP4.15 multi-owner (PLANNED) - server-only, no NEXT_PUBLIC_ twin (src/lib/env.ts's own doc
+      // comment: the browser write targets the clinic's own clone, never this address directly).
+      DELEGATION_REGISTRY_ADDRESS: "0x5f4e5a6d7c8b9a0f1e2d3c4b5a6f7e8d9c0b1a2f",
       NEXT_PUBLIC_VET_ISSUER_FACTORY_ADDRESS: "0x1bd279d3c9fc85eb3e4d304ee890435b6a5ca4cc",
       NEXT_PUBLIC_ENTITY_REGISTRY_ADDRESS: "0x9b15a2df4e38547cbbbd635a4cd4531355bb4247",
       NEXT_PUBLIC_DOGTAG_SBT_ADDRESS: "0x276101555b2cd92be0fb85ff908e02281d6a3cf9",

@@ -9,6 +9,19 @@ import type {Abi, Address, Hex} from "viem";
 import dogTagSBTConsentAbiJson from "../protocol/contracts/exports/abi/DogTagSBTConsent.json" with {type: "json"};
 import vetIssuerFactoryAbiJson from "../protocol/contracts/exports/abi/VetIssuerFactory.json" with {type: "json"};
 import vetIssuerAbiJson from "../protocol/contracts/exports/abi/VetIssuer.json" with {type: "json"};
+// WP4.15 multi-owner (PLANNED) - the branch-vendored 2.1.0 VetIssuer ABI above already carries
+// addSecondaryOwner/revokeSecondaryOwner/relayVerification (writes, no special decode needed - the
+// generic eth_sendTransaction handler below already covers any write); this one is new.
+import delegationRegistryAbiJson from "../protocol/contracts/exports/abi/DelegationRegistry.json" with {type: "json"};
+// WP4.15 multi-owner (PLANNED) - PRE-EXISTING gap this wave found and fixed: `EntityRegistry`'s
+// ABI was never in this stub at all, so `readEntityActive`/`readCanVerify` (both against
+// `EntityRegistry`) could never resolve through it - `preflightIssuance`'s `isActive` check (the
+// SAME shared function `/api/tags/issue/start` already runs) has apparently never been exercised
+// through a REAL e2e ceremony start before this wave; every prior mint e2e spec seeds a session
+// directly at a later status instead of calling `/start` for real (see e.g. `mint-issue-
+// revert.spec.ts`'s own header comment on why). Needed for THIS wave's own ceremony-start tests,
+// and fixes the same gap for any future spec that wants to drive a real `/start` call too.
+import entityRegistryAbiJson from "../protocol/contracts/exports/abi/EntityRegistry.json" with {type: "json"};
 
 /**
  * A tiny local JSON-RPC stub standing in for the ROAX chain in e2e - answers exactly the three
@@ -42,7 +55,13 @@ import vetIssuerAbiJson from "../protocol/contracts/exports/abi/VetIssuer.json" 
  * direct `viem` client) never preflights, which is exactly why that integration test already
  * passed while the real browser path silently never worked.
  */
-const ABIS: Abi[] = [dogTagSBTConsentAbiJson as unknown as Abi, vetIssuerFactoryAbiJson as unknown as Abi, vetIssuerAbiJson as unknown as Abi];
+const ABIS: Abi[] = [
+  dogTagSBTConsentAbiJson as unknown as Abi,
+  vetIssuerFactoryAbiJson as unknown as Abi,
+  vetIssuerAbiJson as unknown as Abi,
+  delegationRegistryAbiJson as unknown as Abi,
+  entityRegistryAbiJson as unknown as Abi,
+];
 
 // Overridable for the same reason playwright.config.ts's E2E_WEB_PORT and mongo-fixture.ts's
 // E2E_MONGO_PORT are - a copy of this checkout synced elsewhere needs to run its own stub without
@@ -50,7 +69,12 @@ const ABIS: Abi[] = [dogTagSBTConsentAbiJson as unknown as Abi, vetIssuerFactory
 export const RPC_STUB_PORT = Number(process.env.E2E_RPC_STUB_PORT ?? 45_601);
 export const RPC_STUB_URL = `http://127.0.0.1:${RPC_STUB_PORT}`;
 
-type ScenarioResult = string | boolean;
+// WP4.15 multi-owner (PLANNED) - widened for `delegationLeaves`'s `bytes32[16]` single-array
+// output (`DelegationRegistry.sol`'s only function with a non-scalar return). A plain JS `number`
+// or numeric string already round-trips fine for `secondaryCount`'s `uint256` (confirmed directly
+// against viem's `encodeFunctionResult` before adding any scenario for it), so no separate bigint
+// case is needed.
+type ScenarioResult = string | boolean | readonly string[];
 
 const scenarios = new Map<string, ScenarioResult>();
 /** Set to force every subsequent `eth_call` to fail (simulates an unreachable RPC) - a deliberate
@@ -122,13 +146,43 @@ function scenarioKey(functionName: string, address: string, args: readonly unkno
   return `${functionName}:${address.toLowerCase()}:${canonicalArgKey(args)}`;
 }
 
+// WP4.15 multi-owner (PLANNED) - `DelegationRegistry.EMPTY_DELEGATION_ROOT`, the fold of sixteen
+// all-zero leaves (`docs/DELEGATION.md` section 4.2; `src/lib/delegation/constants.ts`'s own
+// `EMPTY_DELEGATION_ROOT`, independently derivation-tested there against the vendored
+// `@dogtag/standard`). Inlined here rather than imported - this file loads through Node's native
+// ESM loader (this file's own header comment), which does not resolve the `@/` path alias the rest
+// of this app's source uses.
+const EMPTY_DELEGATION_ROOT = "0x08cec144526c6d771c4aad65ad4e8054bc21e6f09b8bdf27c13ba39643fa8ddc";
+const ZERO_HEX32 = `0x${"0".repeat(64)}`;
+
 function defaultResultFor(functionName: string): ScenarioResult {
   if (functionName === "isValid") return false;
   // WP4.7 A9 - `operators` is a `mapping(address => bool)` getter; an address never added reads
   // `false` on a real chain, exactly like `isValid`'s own unset-mapping default above.
   if (functionName === "operators") return false;
   if (functionName === "rootIssuer") return "0x0000000000000000000000000000000000000000";
-  return `0x${"0".repeat(64)}`; // profileRoot
+  // WP4.15 multi-owner (PLANNED) - `isSecondary`/`secondaryCount` follow the identical
+  // never-touched-mapping convention every other reader above already does; `delegationRoot`
+  // mirrors `DelegationRegistry.sol`'s own accessor (`secondaryCount == 0` -> the empty constant,
+  // never a bare `0`); `delegationLeaves` is all-zero, matching a tag with no secondaries at all.
+  if (functionName === "isSecondary") return false;
+  if (functionName === "secondaryCount") return "0";
+  if (functionName === "delegationRoot") return EMPTY_DELEGATION_ROOT;
+  if (functionName === "delegationLeaves") return Array.from({length: 16}, () => ZERO_HEX32);
+  // WP4.15 multi-owner (PLANNED) - `EntityRegistry.isActive`/`canVerify`, newly reachable through
+  // this stub (see the `entityRegistryAbiJson` import's own doc comment). Same never-configured-
+  // mapping convention as `operators`/`isValid` above.
+  if (functionName === "isActive") return false;
+  if (functionName === "canVerify") return false;
+  // WP4.15 multi-owner (PLANNED) - `DogTagSBTConsent.status(dogTagId) -> uint8`, newly reachable
+  // by any real (not merely seeded-at-a-later-state) issuance/delegation ceremony that checks tag
+  // lifecycle status. `"0"` is `Status.Active` (`contracts/src/DogTagSBTConsent.sol`'s own enum
+  // order) - matching a real chain's default for a freshly-issued tag, never the terminal
+  // Deceased(3)/Revoked(4) values `isTerminalSbtStatus` (`src/lib/delegation/constants.ts`) checks
+  // for. The bare `ZERO_HEX32` fallback below is a valid `bytes32` (`profileRoot`'s own shape) but
+  // is NOT a valid small-integer encoding for a `uint8` return - status needs its own case.
+  if (functionName === "status") return "0";
+  return ZERO_HEX32; // profileRoot
 }
 
 function decodeCall(data: Hex): {functionName: string; args: readonly unknown[]} | null {
