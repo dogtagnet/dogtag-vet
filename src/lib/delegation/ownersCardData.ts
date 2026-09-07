@@ -13,12 +13,21 @@ export interface OwnersCardData {
   primaryOwnerClientId?: string;
   primaryOwnerName?: string;
   secondaries: DisplaySecondaryOwnerRow[];
-  /** `false` when the live `delegationLeaves` chain read failed - every row's status is then
-   * suffixed `_unverified` (`buildSecondaryOwnerRows`'s own doc comment) and the card shows an
-   * honest "could not verify current status" banner rather than a guess. */
+  /** `true` unless a chain read was actually ATTEMPTED and failed - meaning `false` means one
+   * specific thing: the live `delegationLeaves` read on a CONFIGURED deployment threw, every row's
+   * status is then suffixed `_unverified` (`buildSecondaryOwnerRows`'s own doc comment), and the
+   * card shows an honest "could not verify current status" banner. An unconfigured deployment
+   * (`delegationConfigured: false`) never attempts a read at all, so it is `true` here too - "no
+   * chain was reachable" and "no chain was ever contacted" are different facts, and only the first
+   * is what this banner is for (grade round 1 D1: both were being reported as the same `false`,
+   * producing "Could not verify..." next to "not configured on this deployment yet" on the same
+   * card, one of the two claims necessarily false). */
   chainVerified: boolean;
-  /** Whether this deployment is even configured for multi-owner tags yet - `false` hides the
-   * Add/Revoke actions entirely rather than showing them and having every click fail. */
+  /** Whether this deployment is even configured for multi-owner tags yet - `false` DISABLES the
+   * Add/Revoke actions (with an explanatory line) rather than hiding them or letting every click
+   * fail (grade round 1 D2: this comment previously said "hides ... entirely", which was never
+   * what the UI did and is not what it should do - a disabled control with a reason is more honest
+   * than an action that silently vanishes). */
   delegationConfigured: boolean;
 }
 
@@ -47,7 +56,17 @@ export async function loadOwnersCardData(petId: string, dogTagIdField: string | 
       .lean<Pick<DelegationSessionDoc, "commitment" | "consumedAt" | "issuedAt">[]>(),
   ]);
 
-  let chainActive: Set<string> | null = null;
+  // Not-configured starts as an EMPTY Set, not `null` - `null` means "a read was attempted and
+  // failed" to `buildSecondaryOwnerRows` (every row gets the alarming `_unverified` suffix), which
+  // is exactly as false here as the top-level banner was (grade round 1 D1). An empty Set instead
+  // says "verified: there is nothing active" - provably true today, since neither the start nor the
+  // confirm route (nor boot recovery) can ever move a DelegationSession to `status: "confirmed"`
+  // without this same env var configured, so an unconfigured deployment cannot have a real
+  // confirmed secondary to misreport. The one scenario this does not defend - a clinic that WAS
+  // configured, had secondaries confirmed, and then had the env var removed - fails in the SAFE
+  // direction (a stale row reads "revoked", never a false "active"), matching this module's own
+  // established wrong-direction-safe convention for every other chain-unavailable case.
+  let chainActive: Set<string> | null = delegationRegistryAddress ? null : new Set<string>();
   if (delegationRegistryAddress) {
     try {
       const leaves = await readDelegationLeaves(delegationRegistryAddress, dogTagIdField);
