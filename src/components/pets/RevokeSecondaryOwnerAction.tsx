@@ -30,11 +30,16 @@ export function RevokeSecondaryOwnerAction({
   dogTagIdField,
   commitment,
   clientName,
+  disabled,
 }: {
   petId: string;
   dogTagIdField: string;
   commitment: string;
   clientName?: string;
+  /** Grade round 1 D2: `OwnersCard.tsx` passes `!data.delegationConfigured` here, the same
+   * disabled-with-a-reason treatment `AddSecondaryOwnerAction` already had - this component was
+   * previously not gated on `delegationConfigured` at all, so the two actions disagreed. */
+  disabled?: boolean;
 }) {
   const router = useRouter();
   const snackbar = useSnackbar();
@@ -79,6 +84,21 @@ export function RevokeSecondaryOwnerAction({
     }, 2000);
   }
 
+  /** Grade round 1 D6: once `registrationId` is set, the render logic below (unlike
+   * `AddSecondaryOwnerAction`'s "claimed" state, which still shows a clickable "Add on chain"
+   * button a rejected wallet prompt simply leaves in place) has no button at all - only a
+   * "Revoking..." badge or an "error" badge the server-side session can never actually reach on
+   * this path (nothing ever writes `status:"error"` for a client-side wallet rejection; the
+   * session just stays "claimed" forever). Called from both the confirmed-nothing-was-broadcast
+   * early return (no clinic clone configured) and the catch (wallet rejected, or any other client-
+   * side failure) so the row always has a way back to idle instead of a permanent dead end. */
+  function backToIdle() {
+    stopPolling();
+    setRegistrationId(null);
+    setStatus(null);
+    setPendingTxHash(undefined);
+  }
+
   async function handleRevoke() {
     if (!address) return;
     setConfirming(false);
@@ -102,6 +122,7 @@ export function RevokeSecondaryOwnerAction({
       const settings = settingsRes.ok ? await settingsRes.json() : null;
       if (!settings?.cloneAddress) {
         snackbar.show("This clinic has not completed setup", "danger");
+        backToIdle();
         return;
       }
 
@@ -122,6 +143,7 @@ export function RevokeSecondaryOwnerAction({
       setPendingTxHash(hash);
     } catch (err) {
       snackbar.show(err instanceof Error ? err.message : "Transaction failed", "danger");
+      backToIdle();
     } finally {
       setStarting(false);
     }
@@ -150,7 +172,7 @@ export function RevokeSecondaryOwnerAction({
 
   if (!confirming) {
     return (
-      <Button variant="ghost" size="sm" onClick={() => setConfirming(true)}>
+      <Button variant="ghost" size="sm" onClick={() => setConfirming(true)} disabled={disabled}>
         Revoke
       </Button>
     );

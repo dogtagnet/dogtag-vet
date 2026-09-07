@@ -81,6 +81,13 @@ const scenarios = new Map<string, ScenarioResult>();
  * scenario, not a bug in the stub, so tests can prove the fail-closed "chain unreadable ->
  * tagResolution: unknown, verificationError: true" path without an actual network outage. */
 let forceCallFailure = false;
+/** Grade round 1 D6 - set to force the next `eth_sendTransaction` to fail, standing in for a
+ * rejected wallet prompt (MetaMask's own "User rejected the request" surfaces to the app the exact
+ * same way: `writeContractAsync` throws before ever obtaining a hash). This stub sits between the
+ * app and any connector, so it cannot distinguish "the human clicked Reject" from "the RPC refused
+ * the request" - both are a thrown error at the same call site, which is the only thing
+ * `RevokeSecondaryOwnerAction`'s own catch branch can ever observe either way. */
+let forceSendTransactionFailure = false;
 let blockNumber = 1_000n;
 
 /** WP4.5 track 3 - `txHash` (lowercase) -> mined receipt status, scripted per test via
@@ -253,6 +260,7 @@ export function startRpcStub(): Server {
     if (req.method === "POST" && req.url === "/__control/reset") {
       scenarios.clear();
       forceCallFailure = false;
+      forceSendTransactionFailure = false;
       receipts.clear();
       gasEstimate = 200_000n;
       lastSendTransaction = null;
@@ -274,6 +282,11 @@ export function startRpcStub(): Server {
     }
     if (req.method === "POST" && req.url === "/__control/force-call-failure") {
       forceCallFailure = true;
+      sendJson(res, 200, {ok: true});
+      return;
+    }
+    if (req.method === "POST" && req.url === "/__control/force-send-transaction-failure") {
+      forceSendTransactionFailure = true;
       sendJson(res, 200, {ok: true});
       return;
     }
@@ -407,6 +420,13 @@ export function startRpcStub(): Server {
      * matching `POST .../tx`'s own `/^0x[0-9a-fA-F]{64}$/` validation. Never auto-mines a receipt
      * for it - `setRpcReceipt` stays the one way a test puts a hash into `receipts`. */
     if (rpcRequest.method === "eth_sendTransaction") {
+      if (forceSendTransactionFailure) {
+        // One-shot, not sticky - mirrors a single rejected prompt, not a permanently broken wallet,
+        // so a test can assert on the app's recovery UI and then (if it wants to) retry cleanly.
+        forceSendTransactionFailure = false;
+        replyError("stub: simulated wallet rejection");
+        return;
+      }
       lastSendTransaction = (rpcRequest.params?.[0] as Record<string, unknown> | undefined) ?? null;
       const hash = fakeTxHash();
       lastSentTxHash = hash;
@@ -465,6 +485,13 @@ export async function resetRpcStub(): Promise<void> {
 
 export async function forceRpcCallFailure(): Promise<void> {
   await fetch(`${RPC_STUB_URL}/__control/force-call-failure`, {method: "POST"});
+}
+
+/** Grade round 1 D6 - the NEXT `eth_sendTransaction` fails (one-shot; see the flag's own doc
+ * comment for why this stub cannot distinguish a rejected prompt from an RPC-level refusal, and why
+ * that distinction does not matter to the app code under test either way). */
+export async function forceRpcSendTransactionFailure(): Promise<void> {
+  await fetch(`${RPC_STUB_URL}/__control/force-send-transaction-failure`, {method: "POST"});
 }
 
 /** Scripts one `eth_call` read: the next call to `functionName` against `address` with exactly

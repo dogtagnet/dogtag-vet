@@ -96,7 +96,13 @@ export function OwnersCard({
                   </div>
                 </div>
                 {canManage && isActive && dogTagIdField && (
-                  <RevokeSecondaryOwnerAction petId={petId} dogTagIdField={dogTagIdField} commitment={row.commitment} clientName={row.clientName} />
+                  <RevokeSecondaryOwnerAction
+                    petId={petId}
+                    dogTagIdField={dogTagIdField}
+                    commitment={row.commitment}
+                    clientName={row.clientName}
+                    disabled={!data.delegationConfigured}
+                  />
                 )}
               </li>
             );
