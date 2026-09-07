@@ -235,19 +235,23 @@ export type GetDeviceStatusResult =
  * so the route can build that bundle (petId, commitment, clinicName, ...) without a second store
  * round trip.
  *
- * **Deviation from `specs/qr-formats.md`'s "carries a `bundle` once (and only once)" phrasing**
- * (disclosed, not silent): this function's OWN `readyForBundle` flag - and therefore the route's
- * decision to attach the bundle - is `true` on EVERY poll while `status === "confirmed"` and still
- * within the grace window, not merely the first. The spec's own grace-period rule for THIS exact
- * endpoint ("keeps answering for a grace period after the token is consumed... so the secondary
- * owner's app can keep polling the same token through on-chain confirmation") already establishes
- * that this endpoint is built for a device to keep asking after the fact - a strict "once" would
- * mean a bundle lost to a dropped response, a killed app, or a flaky connection is gone forever,
- * with no recovery: re-running `addSecondaryOwner` for the identical commitment reverts
- * `DuplicateActiveCommitment` (`DelegationRegistry.sol`), so there is no "just try the ceremony
- * again" fallback the way there is for, say, a lost mint QR. Repeating a value that never changes
- * (the bundle's contents are fixed the moment the write confirms) is harmless; losing it
- * permanently is not.
+ * **Conformant with `specs/qr-formats.md`'s "carries a `bundle` once (and only once) it reports
+ * `added`"** (grade round 1 D4 - a prior version of this comment mis-read that phrase as a delivery
+ * COUNT and described this as a disclosed deviation from it; it is not one, and nothing about the
+ * behavior below has changed). "Once (and only once)" is the subordinating conjunction - "when, and
+ * only when, it reports added" - not "exactly one response ever carries it": `docs/DELEGATION.md`
+ * section 4.3 step 9 states the same rule with no count language at all, the very next spec
+ * sentence is about which ENDPOINT hosts the bundle rather than a delivery budget, and neither
+ * `DelegationCoOwnerBundle` nor `DelegationSession` carries any delivered/served flag, which a
+ * genuine one-shot rule would require somewhere. This function's `readyForBundle` flag - and
+ * therefore the route's decision to attach the bundle - is `true` on EVERY poll while
+ * `status === "confirmed"` and still within the grace window, exactly matching "whenever, and only
+ * whenever, it reports added". The spec's own grace-period rule for THIS exact endpoint ("keeps
+ * answering for a grace period after the token is consumed... so the secondary owner's app can keep
+ * polling the same token through on-chain confirmation") already establishes that this endpoint is
+ * built for a device to keep asking after the fact - repeating a value that never changes (the
+ * bundle's contents are fixed the moment the write confirms) is exactly what that grace period is
+ * for.
  */
 export async function getDelegationSessionStatusForDevice(
   store: DelegationFlowStore,
