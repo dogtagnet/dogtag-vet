@@ -46,9 +46,16 @@ export function OwnersCard({
         {/* NOT "Owners" - `PetForm.tsx`'s pre-existing "Owners" FormSection already owns that
             exact heading for the unrelated many-to-many CRM contacts list (`ownerClientIds`,
             OwnerPicker). This card is about DogTag primary/secondary ownership specifically -
-            a real naming collision two sections on the same page would otherwise share. */}
+            a real naming collision two sections on the same page would otherwise share. The
+            helper text right below makes the distinction visible on the page itself, not just to
+            a code reader - `PetForm`'s section renders unconditionally further down this same
+            page (`pets/[id]/page.tsx`), so a vet skimming the two headings side by side needs the
+            one-line pointer as much as this comment. */}
         <h3 className="text-section-title text-ink">DogTag owners</h3>
       </div>
+      <p className="mb-4 text-caption text-ink-faint">
+        Chain-verified DogTag ownership - separate from the client contacts list further down this page.
+      </p>
 
       {!data.chainVerified && (
         <Banner tone="warn" title="Could not verify current secondary owners">

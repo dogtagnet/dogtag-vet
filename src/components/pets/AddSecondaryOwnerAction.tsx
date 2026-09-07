@@ -93,6 +93,15 @@ export function AddSecondaryOwnerAction({petId, dogTagIdField, disabled}: {petId
       const status = (await res.json()) as StaffStatus;
       setSession((prev) => (prev ? {...prev, status} : prev));
       if (status.status === "confirmed") {
+        // Not pure overlap with the `receipt.isSuccess` effect below: `bootRecovery.ts`'s
+        // `recoverStuckDelegationSessions()` can flip this session to "confirmed" in Mongo on its
+        // own, independent of wagmi ever resolving a receipt in THIS tab (5-minute default stale
+        // threshold - very plausible with a tab still open at the counter). When that happens,
+        // this poll branch is the ONLY path that ever notices and cleans up the UI. On the common
+        // fast path, where the receipt effect's own `/confirm` POST is what flips this session,
+        // the next poll tick just observes the same already-idempotent result - a second toast/
+        // refresh in that ordering is cosmetic and deliberately left rather than cross-effect
+        // de-duplicated for a redundancy that is otherwise load-bearing.
         stopPolling();
         snackbar.show("Secondary owner added", "ok");
         router.refresh();

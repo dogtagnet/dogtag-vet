@@ -65,6 +65,11 @@ export function RevokeSecondaryOwnerAction({
       const body = (await res.json()) as StaffStatus;
       setStatus(body);
       if (body.status === "confirmed") {
+        // Deliberate overlap with the `receipt.isSuccess` effect below, not an oversight -
+        // see `AddSecondaryOwnerAction.tsx`'s identical branch for the full reasoning
+        // (`bootRecovery.ts`'s worker-driven stale-session recovery can confirm this session
+        // while this tab is still open and polling, independent of wagmi ever resolving a
+        // receipt here).
         stopPolling();
         snackbar.show("Secondary owner revoked", "ok");
         router.refresh();
