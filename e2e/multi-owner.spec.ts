@@ -162,6 +162,18 @@ test.beforeEach(async ({page}) => {
   await configurePreflight();
 });
 
+/** Bumped on every `buildVerifiableProfile` call so each one folds to a genuinely DIFFERENT root -
+ * `TagArtifact.root` carries a unique index (see that model's own schema), and this suite calls
+ * `seedPetAndSecondaryClient` (every call builds a profile for the same fictional "Blaze") more
+ * than once per file. Fixed salts alone (mirroring `tag-custody.spec.ts`'s own convention, which
+ * gets away with it because its own calls vary `name` per test) would collide across THIS file's
+ * multiple tests, which all use the identical "Blaze"/"dog" pair. Starting from `Date.now()` rather
+ * than a fixed `0` also keeps a run from colliding with a DIFFERENT spec file's own hand-rolled
+ * fixture (or a stale row from an earlier run of this exact file, if the e2e database were ever
+ * not fully torn down) - `0` would silently reproduce the very first, most guessable root a
+ * copy-pasted version of this same helper elsewhere might also produce. */
+let profileNonce = Date.now() % 97;
+
 /** A genuine (leaves, reservedLeafHashes, root) triple the real `verifyLeafCommitment` accepts -
  * mirrors `tag-custody.spec.ts`'s own `buildVerifiableProfile` (the "keep a separate copy"
  * convention this file's own header comment already follows for the EIP-712 types). Needed so the
@@ -169,7 +181,8 @@ test.beforeEach(async ({page}) => {
  * its own root via `verifyRedactedArtifact` and fails its self-check on anything less than genuine
  * crypto, unlike the rest of this suite's opaque, uninterpreted `commitment` values. */
 function buildVerifiableProfile(name: string, species: string): {leaves: OpenedLeaf[]; reservedLeafHashes: string[]; root: string} {
-  const salt = (n: number) => new Uint8Array(16).fill(n);
+  const nonce = profileNonce++;
+  const salt = (n: number) => new Uint8Array(16).fill((n + nonce) % 256);
   const saltHexOf = (n: number) => ("0x" + Array.from(salt(n)).map((b) => b.toString(16).padStart(2, "0")).join("")) as `0x${string}`;
   const leaves: OpenedLeaf[] = [
     {keyPath: "credentialSubject.name", saltHex: saltHexOf(11), tag: TypeTag.String, value: name},
