@@ -52,6 +52,13 @@ export function RevokeSecondaryOwnerAction({
   const [registrationId, setRegistrationId] = useState<string | null>(null);
   const [status, setStatus] = useState<StaffStatus | null>(null);
   const [pendingTxHash, setPendingTxHash] = useState<`0x${string}` | undefined>(undefined);
+  /** Coordinator's own fix-round instruction (grade round 1 D6): "a rejected wallet prompt must
+   * return the Revoke action to idle with an inline error" - the pre-existing transient
+   * `snackbar.show(...)` alone (still fired alongside this, unchanged) is easy to miss if the
+   * staff member looked away, and leaves nothing on the row itself to explain why "Revoke" is
+   * showing again. Cleared at the top of every fresh `handleRevoke()` attempt so a retry never
+   * shows a stale message next to an in-flight one. */
+  const [inlineError, setInlineError] = useState<string | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | undefined>(undefined);
 
   const receipt = useWaitForTransactionReceipt({hash: pendingTxHash, chainId: roax.id});
@@ -103,6 +110,7 @@ export function RevokeSecondaryOwnerAction({
     if (!address) return;
     setConfirming(false);
     setStarting(true);
+    setInlineError(null);
     try {
       const startRes = await fetch(`/api/pets/${petId}/delegations`, {
         method: "POST",
@@ -122,6 +130,7 @@ export function RevokeSecondaryOwnerAction({
       const settings = settingsRes.ok ? await settingsRes.json() : null;
       if (!settings?.cloneAddress) {
         snackbar.show("This clinic has not completed setup", "danger");
+        setInlineError("This clinic has not completed setup");
         backToIdle();
         return;
       }
@@ -142,7 +151,9 @@ export function RevokeSecondaryOwnerAction({
       });
       setPendingTxHash(hash);
     } catch (err) {
-      snackbar.show(err instanceof Error ? err.message : "Transaction failed", "danger");
+      const message = err instanceof Error ? err.message : "Transaction failed";
+      snackbar.show(message, "danger");
+      setInlineError(message);
       backToIdle();
     } finally {
       setStarting(false);
@@ -172,9 +183,20 @@ export function RevokeSecondaryOwnerAction({
 
   if (!confirming) {
     return (
-      <Button variant="ghost" size="sm" onClick={() => setConfirming(true)} disabled={disabled}>
-        Revoke
-      </Button>
+      <div className="flex flex-col items-end gap-1">
+        <Button variant="ghost" size="sm" onClick={() => setConfirming(true)} disabled={disabled}>
+          Revoke
+        </Button>
+        {/* Grade round 1 D6's own "with an inline error" requirement - FormSection.tsx's
+            established lightweight inline-error convention (text-caption/text-danger), not the
+            heavier Banner component (design-system.md reserves Banner for setup prompts and
+            standing-condition warnings, not a single transient action's own failure). */}
+        {inlineError && (
+          <p data-testid="revoke-inline-error" className="text-caption text-danger">
+            {inlineError}
+          </p>
+        )}
+      </div>
     );
   }
 

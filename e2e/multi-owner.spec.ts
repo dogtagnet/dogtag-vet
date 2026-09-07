@@ -476,6 +476,15 @@ test("Revoke a secondary owner: a rejected wallet prompt returns the row to idle
   await expect(ownersCard(page).getByRole("button", {name: "Revoke"})).toBeVisible({timeout: 10_000});
   await expect(page.getByText("Revoking...")).toHaveCount(0);
 
+  // The coordinator's own fix-round instruction: idle "with an inline error", not merely idle -
+  // a transient snackbar alone is easy to miss and leaves nothing on the row explaining why
+  // "Revoke" reappeared. Not pinning exact text (wagmi/viem's own error formatting for a
+  // simulated RPC rejection is verbose and not this test's concern) - only that a real, non-empty
+  // message rendered on the row itself.
+  const inlineError = ownersCard(page).getByTestId("revoke-inline-error");
+  await expect(inlineError).toBeVisible();
+  expect((await inlineError.textContent())?.trim().length).toBeGreaterThan(0);
+
   // Proves this is a real return to idle, not a coincidental re-render: the SAME real write,
   // retried, still succeeds cleanly (the one-shot failure already reset itself on the stub).
   await ownersCard(page).getByRole("button", {name: "Revoke"}).click();
