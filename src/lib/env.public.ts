@@ -35,6 +35,23 @@
  * Every injected field is validated independently before use (see the `*Or` helpers below) - a
  * malformed or missing field on `window.__DOGTAG_VET_PUBLIC_CONFIG__` falls back to the build-time
  * value for THAT field alone, never throws, and never corrupts a sibling field.
+ *
+ * Known gap, disclosed rather than silently left: `roaxExplorerUrl` reaches rendered `<a href>`
+ * output through `chains.ts`'s `roax.blockExplorers` -> `explorer.ts`'s `explorerUrl()` ->
+ * `AddressChip`/`HashCell` (via `MonoValue`) for every `chain="roax"` chip - so a deployment whose
+ * runtime explorer URL differs from its build-time fallback gets an attribute-level hydration
+ * difference on those links (React corrects it after hydration; this is not the structural,
+ * whole-subtree mismatch `usePublicEnv` exists to prevent). Not fixed the way `SetupWizard` was:
+ * `AddressChip`/`HashCell` also render from genuine Server Components (e.g.
+ * `src/app/(app)/settings/page.tsx`, `src/app/pay/[id]/page.tsx`), where a hook is structurally
+ * unavailable, and having this module prefer a dynamic server-side env read when `window` is
+ * undefined would make `publicEnvServerFallback` stop matching what the server actually rendered -
+ * reintroducing the exact mismatch `usePublicEnv`'s three-argument `useSyncExternalStore` was added
+ * to kill, for every OTHER field, just to fix this one. `roax.id`/`roax.rpcUrls` carry the same
+ * theoretical divergence but never reach rendered output this way: every render that shows `chain
+ * {roax.id}` as text is itself gated behind client-only state (`isConnected`/`wrongNetwork` from
+ * wagmi, `qr && session` from a fetch) that is always false on both the server pass and the
+ * client's first hydration pass, so the branch that would show a stale value never paints first.
  */
 
 interface InjectedPublicConfig {
