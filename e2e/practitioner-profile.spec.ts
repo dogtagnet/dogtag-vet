@@ -371,4 +371,69 @@ test.describe.serial("WP4.13 - practitioner first/last name, title, accreditatio
     // and e2e/vet-wallet-status.spec.ts depend on for THEIR OWN unnamed vets.
     await expect(cardAfterClear.getByText(LEGACY_VET_EMAIL.split("@")[0]!, {exact: true})).toBeVisible();
   });
+
+  test("a fast fill on a Practitioner profiles field immediately after the page settles is not silently reverted by the draft-resync effect (WP4.17A N13)", async ({page}) => {
+    // devLogin BEFORE any direct-Mongo staff seed - same discipline test 1's own comment above
+    // documents and this test would otherwise silently violate when run in isolation (`-g`):
+    // "owner@example.com is the FIRST staff row this deployment ever creates" only bootstraps that
+    // session to the owner role while the staffs collection is still genuinely empty; seeding a
+    // row first (even a plain "vet") would make this test's own owner sign-in land as a NON-owner
+    // instead, leaving every Practitioner profiles field permanently disabled - confirmed the hard
+    // way (`getByLabel("First name")` timing out on a disabled input) before this line was moved.
+    await devLogin(page, "owner@example.com");
+
+    // Self-contained, direct Mongo seed (same convention as the legacy-displayName test above) -
+    // this test does not depend on any earlier test in this file for its OWN practitioner row.
+    const staffId = randomUUID();
+    const email = "vet-wp417-fastfill@example.com";
+    const originalWallet = "0x1111111111111111111111111111111111111111";
+    const client = await mongo();
+    await client.db().collection("staffs").insertOne({
+      staffId,
+      email,
+      role: "vet",
+      disabled: false,
+      bookable: true,
+      firstName: "Old",
+      lastName: "Name",
+      walletAddress: originalWallet,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+    await client.close();
+
+    // No intervening awaited round trip between `goto` and `fill` - the exact window
+    // vet-wallet-status.spec.ts's own third test uses to race MyWalletSection's mount-time
+    // resync effect (WP4.17A fix round 1b): `useEffect` always fires once after the component's
+    // FIRST render too, and a fast fill landing in the gap between initial paint and that
+    // effect's deferred flush must not be silently reverted back to the stored value.
+    // StaffSection.tsx's ProfileTextField/WalletAddressField mount in the SAME page load as
+    // MyWalletSection, so the identical race applies (grade round 2 N13).
+    await page.goto("/settings");
+    const card = practitionerCard(page, email);
+    await card.getByLabel("First name").fill("Quick");
+    await expect(card.getByLabel("First name")).toHaveValue("Quick");
+    await Promise.all([
+      page.waitForResponse((res) => isStaffPatch(res.url()) && res.request().method() === "PATCH"),
+      card.getByLabel("First name").blur(),
+    ]);
+    await expect(card.getByLabel("First name")).toHaveValue("Quick");
+    await page.reload();
+    await expect(practitionerCard(page, email).getByLabel("First name")).toHaveValue("Quick");
+
+    // Same race, same guard, on WalletAddressField - StaffSection.tsx's second site (N13 names
+    // both).
+    const newWallet = "0x2222222222222222222222222222222222222222";
+    await page.goto("/settings");
+    const card2 = practitionerCard(page, email);
+    await card2.getByLabel("Wallet address").fill(newWallet);
+    await expect(card2.getByLabel("Wallet address")).toHaveValue(newWallet);
+    await Promise.all([
+      page.waitForResponse((res) => isStaffPatch(res.url()) && res.request().method() === "PATCH"),
+      card2.getByLabel("Wallet address").blur(),
+    ]);
+    await expect(card2.getByLabel("Wallet address")).toHaveValue(newWallet);
+    await page.reload();
+    await expect(practitionerCard(page, email).getByLabel("Wallet address")).toHaveValue(newWallet);
+  });
 });
