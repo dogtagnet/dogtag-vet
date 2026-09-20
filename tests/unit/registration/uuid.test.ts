@@ -1,6 +1,6 @@
 import {describe, expect, it} from "vitest";
 import {registrationIdToHex32, uuidToBytes16} from "@/lib/registration/uuid";
-import vectors from "../../../protocol/specs/eip712-client-registration-vectors.json";
+import vectors from "../vectors/eip712-client-registration-vectors.json";
 
 interface ClientRegistrationVector {
   message: {registrationId: string};

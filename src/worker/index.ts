@@ -12,6 +12,8 @@
  *    identical recovery for a `RecordArtifact` left `issuing` (`recoverInterruptedRecords`,
  *    `src/lib/records/bootRecovery.ts`) - back to `draft` on a confirmed revert, since a record's
  *    leaves/root are already computed and already verified, so no redraft is ever needed.
+ *    WP4.15 (PLANNED) adds the same recovery for a `DelegationSession` left `"submitting"`
+ *    (`recoverStuckDelegationSessions`, `src/lib/delegation/bootRecovery.ts`).
  * 2. The chain-activity follower for `/activity` (`runActivityFollowerLoop`): chunked `getLogs`
  *    over this clinic's clone (`TagIssued`/`TagRevoked`/`TagReactivated`/`RecordIssued`/
  *    `RecordRevoked`/`RecordReactivated`/`FundsReceived`/`RefundSkipped`), plus `StatusChanged` on
@@ -32,6 +34,7 @@ import {roaxPublicClient} from "@/lib/chainRead";
 import {vetIssuerAbi, dogTagSBTConsentAbi, verificationRegistryConsentAbi} from "@/lib/abi";
 import {recoverInterruptedSessions} from "@/lib/mint/bootRecovery";
 import {recoverInterruptedRecords} from "@/lib/records/bootRecovery";
+import {recoverStuckDelegationSessions} from "@/lib/delegation/bootRecovery";
 import {runPaymentWatcherOnce} from "@/lib/payments/watcher";
 import type {Log} from "viem";
 
@@ -137,6 +140,15 @@ async function followOnce(): Promise<void> {
             fromBlock: cursor,
             toBlock,
           })) as DecodedEventLog[];
+          // WP4.15 multi-owner (PLANNED) item V5 - "verification history shows the role (primary/
+          // secondary) once the delegate circuit ships". Today's `Verified` event (the primary
+          // owner's own 7-signal consent proof) carries no role signal at all - `docs/DELEGATION.md`
+          // section 4.4's future delegate consent proof adds `role` as its NINTH public signal, on
+          // a Stage C registry contract that does not exist yet (needs a mainnet-grade ceremony
+          // first). Once it ships, the analogous event on that new contract gains a `role` field
+          // this same fold would decode and `/activity`'s Timeline (`toActivityDoc` above) would
+          // surface it - there is nothing to display before then, so this comment is the "document"
+          // half of V5 rather than a UI stub for a field that cannot exist yet.
           verifyLogs = all.filter((l) => knownDogTagIds.has(String(l.args?.dogTagId)));
         }
       } catch (err) {
@@ -181,6 +193,7 @@ async function main() {
   await connectToDatabase();
   await recoverInterruptedSessions();
   await recoverInterruptedRecords();
+  await recoverStuckDelegationSessions();
 
   const env = getServerEnv();
   console.log(`[worker] starting chain-activity follower (poll every ${env.ACTIVITY_POLL_MS}ms)`);

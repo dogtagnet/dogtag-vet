@@ -950,11 +950,40 @@ interface IDogTagSBTMint {
     function mintCustodial(uint256 id, bytes32 root) external;
 }
 
+/// @notice The `DelegationRegistry` surface {addSecondaryOwner}/{revokeSecondaryOwner} write through
+/// (`contracts/src/DelegationRegistry.sol`; `docs/DELEGATION.md` sections 4.3, 4.5).
+interface IDelegationRegistry {
+    function add(uint256 dogTagId, bytes32 commitment) external;
+    function revoke(uint256 dogTagId, bytes32 commitment) external;
+}
+
+/// @notice The `VerificationRegistryConsent` surface {relayVerification} relays a consent proof through,
+/// naming THIS CLONE as `relayer` (`contracts/src/VerificationRegistryConsent.sol`; `docs/DELEGATION.md`
+/// section 7's "relayVerification is a new relayer" note).
+interface IVerificationRegistryConsentRelay {
+    function recordVerificationZK(
+        uint256[2] calldata a,
+        uint256[2][2] calldata b,
+        uint256[2] calldata c,
+        uint256[7] calldata pub
+    ) external;
+}
+
 /// @title VetIssuer - per-entity issuer, UUPS behind a per-clone `ERC1967Proxy`.
 ///
 /// @notice Replaces v1 `DogTagIssuer` clones. One `VetIssuer` proxy per approved entity, deployed by
 /// `VetIssuerFactory`. Whitelisted operators issue and revoke dogtags and credential records; the clone
 /// pays its operators' gas out of its own native balance.
+///
+/// # v2.1.0 (WP4.15): vet-issued secondary owners, and relaying a consent proof
+///
+/// Storage-compatible upgrade of the SAME per-clone proxy (no new clone type): {initializeDelegation}
+/// (`reinitializer(2)`, `onlyFactoryAdmin`) wires this clone to a shared `DelegationRegistry` and to
+/// `VerificationRegistryConsent`; {addSecondaryOwner}/{revokeSecondaryOwner} let any currently-Active
+/// clinic add or remove a secondary owner's key commitment on any `dogTagIdField`, sponsored the same way
+/// as {issueTag}; {relayVerification} lets this clone submit a consent proof as `VerificationRegistryConsent`'s
+/// `relayer`, sponsored the same way. See `docs/DELEGATION.md` for the full model and
+/// `docs/DEPLOY-wp4.15.md` for the upgrade + per-clone follow-up runbook.
 ///
 /// @dev This clone's authorization (`onlyFactoryAdmin`/`onlyOperator`) and reentrancy guard
 /// (`refundsGas`'s `_refundLock`) are hand-rolled rather than pulled from `Ownable`/`ReentrancyGuard`: the
@@ -1029,6 +1058,17 @@ contract VetIssuer is Initializable, UUPSUpgradeable {
 
     uint256 private _refundLock; // 0 = unlocked, 1 = locked - hand-rolled `nonReentrant` for {refundsGas}
 
+    // ---- WP4.15 (v2.1.0): storage APPENDED here, after every v2.0.0 field and before `__gap`, which
+    // shrinks by exactly 2 slots (40 -> 38) to make room - see `__gap`'s own doc comment. ----
+
+    /// @notice The `DelegationRegistry` {addSecondaryOwner}/{revokeSecondaryOwner} write through. Zero
+    /// until {initializeDelegation} runs on this clone (every clone upgraded to v2.1.0 needs that
+    /// one-time follow-up call - see `docs/DEPLOY-wp4.15.md`).
+    address public delegationRegistry;
+    /// @notice The `VerificationRegistryConsent` {relayVerification} relays a consent proof through,
+    /// naming this clone as `relayer`. Zero until {initializeDelegation} runs on this clone.
+    address public verificationRegistry;
+
     event VetIssuerInitialized(address indexed vetOwner, address indexed factory);
     event OperatorSet(address indexed operator, bool allowed);
     event VetOwnerSet(address indexed oldOwner, address indexed newOwner);
@@ -1058,6 +1098,8 @@ contract VetIssuer is Initializable, UUPSUpgradeable {
     error NotAuthorizedToUpgrade();
     error Reentrant();
     error WithdrawFailed();
+    error DelegationRegistryNotConfigured();
+    error VerificationRegistryNotConfigured();
 
     /// @dev The implementation is locked at construction; only clones (behind their own `ERC1967Proxy`)
     /// initialize.
@@ -1259,6 +1301,87 @@ contract VetIssuer is Initializable, UUPSUpgradeable {
     }
 
     // ---------------------------------------------------------------------------------------------
+    // Delegation (v2.1.0, WP4.15) - vet-issued secondary owners, and relaying a consent proof
+    // ---------------------------------------------------------------------------------------------
+
+    /// @notice One-time, per-clone follow-up to a v2.1.0 upgrade: wires this clone to the shared
+    /// `DelegationRegistry` and `VerificationRegistryConsent` deployments.
+    /// @dev `reinitializer(2)`: callable once per clone, only after that clone's original `initialize`
+    /// (version 1) has run. `VetIssuerFactory.upgradeClone(s)` (frozen, byte-identical this wave) calls
+    /// `upgradeToAndCall(newImpl, "")` with EMPTY data, so this cannot run atomically with the bytecode
+    /// upgrade itself - it is a deliberate second transaction, which is why it is ALSO `onlyFactoryAdmin`:
+    /// without that guard, any address could win a race to call this first with an address of its own
+    /// choosing, since `reinitializer(2)` alone gates versioning, not the caller's identity. The same key
+    /// that calls `upgradeClone` calls this next, for every existing clone AND for every clone deployed
+    /// after this upgrade ships (`VetIssuerFactory.deployVet`'s `initData` is fixed to the version-1
+    /// `initialize` call only - see `docs/DEPLOY-wp4.15.md` for the required per-clone follow-up).
+    function initializeDelegation(address delegationRegistry_, address verificationRegistry_)
+        external
+        onlyFactoryAdmin
+        reinitializer(2)
+    {
+        if (delegationRegistry_ == address(0) || verificationRegistry_ == address(0)) {
+            revert ZeroAddress();
+        }
+        delegationRegistry = delegationRegistry_;
+        verificationRegistry = verificationRegistry_;
+    }
+
+    /// @notice Add `commitment` as a secondary owner of `dogTagIdField`, via the vet-issued ceremony
+    /// (`docs/DELEGATION.md` section 4.3). No ZK consent from the primary is required for this call
+    /// (Kenneth's decision, plan section 9 item 1) - the clinic's attestation, with the primary present,
+    /// is the trust model, identical to issuance's own.
+    /// @dev `onlyActiveOperator refundsGas`, the same gate and gas sponsorship as {issueTag}/{issueRecord}.
+    /// Any currently-Active clinic may call this for any `dogTagIdField`, not only the tag's original
+    /// issuer (plan section 9 item 2) - this clone therefore does NOT check its own {rootOfTag} here,
+    /// which would incorrectly reject a non-issuing clinic's otherwise-legitimate call.
+    function addSecondaryOwner(uint256 dogTagIdField, bytes32 commitment)
+        external
+        onlyActiveOperator
+        refundsGas
+    {
+        if (delegationRegistry == address(0)) revert DelegationRegistryNotConfigured();
+        IDelegationRegistry(delegationRegistry).add(dogTagIdField, commitment);
+    }
+
+    /// @notice Revoke `commitment` as a secondary owner of `dogTagIdField` (`docs/DELEGATION.md` section
+    /// 4.5). Needs no participation from the secondary owner's own device - staff and the operator wallet
+    /// alone suffice, exactly like {addSecondaryOwner}.
+    /// @dev `onlyActiveOperator refundsGas`, same non-issuer-scoped writer predicate as {addSecondaryOwner}.
+    function revokeSecondaryOwner(uint256 dogTagIdField, bytes32 commitment)
+        external
+        onlyActiveOperator
+        refundsGas
+    {
+        if (delegationRegistry == address(0)) revert DelegationRegistryNotConfigured();
+        IDelegationRegistry(delegationRegistry).revoke(dogTagIdField, commitment);
+    }
+
+    /// @notice Relay a primary or (once Stage C ships) delegate consent proof to
+    /// `VerificationRegistryConsent.recordVerificationZK`, with THIS CLONE as `msg.sender` - i.e. as the
+    /// proof's `relayer` (`pub[2]`), gas-sponsored the same way every other clone data-write is.
+    /// @dev The owner's app MUST set the public signal `pub[2]` (`relayer`) to THIS CLONE's own address
+    /// before proving, since `recordVerificationZK` requires `address(uint160(pub[2])) == msg.sender` and
+    /// `msg.sender` there is this clone when reached through this function. The protocol admin must ALSO
+    /// separately whitelist this clone as a verifier for the relevant purpose
+    /// (`EntityRegistry.setVerifierCapability(purpose, address(this), true)`) - `recordVerificationZK`'s
+    /// `restrictToApprovedRelayers` gate checks `entityRegistry.canVerify(purpose, msg.sender)` against
+    /// WHOEVER called it, which is this clone here, not the app or the operator wallet. Neither
+    /// requirement is enforced by this function itself - see `docs/DELEGATION.md` section 7 and
+    /// `docs/DEPLOY-wp4.15.md`'s verification checklist.
+    function relayVerification(
+        uint256[2] calldata a,
+        uint256[2][2] calldata b,
+        uint256[2] calldata c,
+        uint256[7] calldata pub
+    ) external onlyActiveOperator refundsGas {
+        if (verificationRegistry == address(0)) {
+            revert VerificationRegistryNotConfigured();
+        }
+        IVerificationRegistryConsentRelay(verificationRegistry).recordVerificationZK(a, b, c, pub);
+    }
+
+    // ---------------------------------------------------------------------------------------------
     // Gas sponsorship
     // ---------------------------------------------------------------------------------------------
 
@@ -1291,7 +1414,7 @@ contract VetIssuer is Initializable, UUPSUpgradeable {
     /// @notice The implementation's semantic version. Overridden by any future implementation this
     /// contract is upgraded to.
     function version() external pure virtual returns (string memory) {
-        return "2.0.0";
+        return "2.1.0";
     }
 
     /// @dev Either the factory itself (batch `upgradeClones`) or the factory's current owner (targeted
@@ -1301,6 +1424,9 @@ contract VetIssuer is Initializable, UUPSUpgradeable {
     }
 
     /// @dev Reserved storage so a future version can add fields without shifting the layout of anything
-    /// declared after this contract in an upgrade.
-    uint256[40] private __gap;
+    /// declared after this contract in an upgrade. Was `uint256[40]` through v2.0.0; v2.1.0 (WP4.15)
+    /// appends {delegationRegistry}/{verificationRegistry} (2 slots) directly above and shrinks this by
+    /// the same 2, so the LAST reserved slot's absolute position is unchanged - see
+    /// `test/VetIssuerStorageLayout.t.sol` for the `forge inspect storage-layout` proof.
+    uint256[38] private __gap;
 }

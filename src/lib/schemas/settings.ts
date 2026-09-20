@@ -53,5 +53,7 @@ export const clinicSettingsInputSchema = z.object({
       baseSepolia: z.string().url().optional(),
     })
     .optional(),
+  // WP4.15 multi-owner (PLANNED) - see ClinicSettings.ts's own doc comment on this field.
+  consentRelayerViaCloneEnabled: z.boolean().optional(),
 });
 export type ClinicSettingsInput = z.infer<typeof clinicSettingsInputSchema>;

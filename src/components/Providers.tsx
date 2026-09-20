@@ -11,7 +11,9 @@ import {SnackbarProvider} from "@/components/ui/Snackbar";
 /** The only routes anything reads `useAccount()`/`useConnect()` at all
  * (`TagIssueWizard`/`TagsTable` under `/tags`, `VerifySessionPanel` under `/verify`,
  * `SetupWizard` under `/setup`, `MyWalletSection`'s "Use connected wallet" button under
- * `/settings`, WP4.14 `IssueRecordForm`/`RecordsCard` under `/pets/:id`'s Records tab) - see
+ * `/settings`, WP4.14 `IssueRecordForm`/`RecordsCard` under `/pets/:id`'s Records tab, and -
+ * WP4.15 multi-owner (PLANNED) - `AddSecondaryOwnerAction`/`RevokeSecondaryOwnerAction` on that
+ * same pet page's Owners card) - see
  * `E2EMockWalletAutoConnect`'s own doc comment on why the auto-connect effect is scoped to exactly
  * these instead of running on every page. WP4.16: `/settings`'s OTHER wallet surface,
  * `OperatorsSection`, reads on-chain operator status with a bare `useReadContract` and has needed
@@ -20,7 +22,8 @@ import {SnackbarProvider} from "@/components/ui/Snackbar";
  *
  * `/pets/:id` ONLY, not bare `/pets` (the list) or `/pets/new` (the create form) - neither of
  * those renders anything wagmi-aware (`PetForm` has no `useAccount`/`useConnect` at all, and
- * neither does the list page), so neither has any reason to pay for an auto-connect attempt. A
+ * neither does the list page - the WP4.15 Owners card, like WP4.14's records tab, renders only on
+ * the pet detail page too), so neither has any reason to pay for an auto-connect attempt. A
  * plain `startsWith("/pets")` would also catch them; scoped to `/pets/:id` instead to match this
  * function's own stated principle above - no auto-connect on a page that never reads wagmi
  * state. (`mint-issue-revert.spec.ts`'s "pet form round-trips..." test was investigated as a

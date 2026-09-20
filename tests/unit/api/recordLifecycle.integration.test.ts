@@ -9,7 +9,9 @@ import {startEphemeralMongod, stopEphemeralMongod, type EphemeralMongod} from ".
  * chain-before-trusting-the-tx pattern, keyed by RECORD id rather than pet id (a pet has many
  * independent records - see the route's own header comment for why).
  *
- * ISOLATION: own ephemeral mongod, port 44138 (44117-44137 already taken by sibling suites).
+ * ISOLATION: own ephemeral mongod, port 44143 (WP4.17A D7: moved off 44138, which duplicated
+ * primaryOwnerClientIdIssuanceStart.integration.test.ts's own port - see this file's own
+ * port-constant comment).
  */
 vi.mock("@/auth", () => ({auth: vi.fn()}));
 vi.mock("@/lib/chainRead", async (importOriginal) => {
@@ -25,7 +27,9 @@ import {RecordArtifact, type RecordArtifactDoc} from "@/lib/models/RecordArtifac
 import {ChainActivity, type ChainActivityDoc} from "@/lib/models/ChainActivity";
 import {POST as lifecyclePOST} from "@/app/api/records/[id]/lifecycle/route";
 
-const MONGO_PORT = 44_138;
+// WP4.17A D7 - was 44138, duplicating primaryOwnerClientIdIssuanceStart.integration.test.ts's own
+// port (see recordIssuance.integration.test.ts's identical comment for the full audit).
+const MONGO_PORT = 44_143;
 
 // 0x + 40 hex chars, generated + regex-verified with `python3 -c` before use (a too-short/non-hex
 // placeholder is an easy transcription mistake - see recordIssuance.integration.test.ts's own
@@ -43,7 +47,7 @@ beforeAll(async () => {
   await connectToDatabase();
   expect(mongoose.connection.port).toBe(MONGO_PORT);
   await RecordArtifact.init();
-}, 30_000);
+}, 90_000);
 
 afterAll(async () => {
   await mongoose.connection.close();

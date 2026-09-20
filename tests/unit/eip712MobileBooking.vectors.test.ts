@@ -1,10 +1,10 @@
 import {describe, expect, it} from "vitest";
 import {domainSeparator, getTypesForEIP712Domain, hashStruct, hashTypedData} from "viem";
 import type {Address, Hex} from "viem";
-import vectors from "../../protocol/specs/eip712-mobile-booking-vectors.json";
+import vectors from "./vectors/eip712-mobile-booking-vectors.json";
 
 /**
- * Pins `protocol/specs/eip712-mobile-booking-vectors.json` against drift.
+ * Pins `tests/unit/vectors/eip712-mobile-booking-vectors.json` against drift.
  *
  * That file is a known-answer vector set for the WP4.4 "MobileBooking" EIP-712 struct
  * (plans/wp4.4-mobile-booking-protocol.md, section 2 "The wallet claim is SIGNED, never trusted
@@ -84,7 +84,7 @@ interface MobileBookingVector {
 // `resolveJsonModule` + vitest's JSON handling give it back exactly as parsed, untyped.
 const typedVectors = vectors as unknown as MobileBookingVector[];
 
-describe("protocol/specs/eip712-mobile-booking-vectors.json", () => {
+describe("tests/unit/vectors/eip712-mobile-booking-vectors.json", () => {
   it("has at least 6 vectors", () => {
     expect(typedVectors.length).toBeGreaterThanOrEqual(6);
   });

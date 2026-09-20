@@ -20,7 +20,7 @@ import type {Hex} from "viem";
  * NORMATIVE: this is the exact algorithm the DogTag app must reproduce, byte-for-byte, before
  * signing a `MobileBooking` message - a mismatch here means a genuinely-signed claim recovers to
  * the wrong digest and the server rejects the whole booking (Q2). See docs/mobile-booking.md and
- * `protocol/specs/mobile-booking-hash-vectors.json` (a known-answer fixture for cross-language
+ * `tests/unit/vectors/mobile-booking-hash-vectors.json` (a known-answer fixture for cross-language
  * parity, mirroring how the MobileBooking EIP-712 struct itself is vectored).
  *
  * Normalization (applied here, not left to the caller, so there is exactly one place this can

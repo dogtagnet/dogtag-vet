@@ -1,6 +1,6 @@
 "use client";
 
-import {useEffect, useState} from "react";
+import {useEffect, useRef, useState} from "react";
 import {useRouter} from "next/navigation";
 import {DataTable} from "@/components/ui/DataTable";
 import {FormField, FormSection} from "@/components/ui/FormSection";
@@ -89,7 +89,25 @@ function ProfileTextField({
   onEdit?: () => void;
 }) {
   const [value, setValue] = useState(storedValue ?? "");
-  useEffect(() => setValue(storedValue ?? ""), [storedValue]);
+  // WP4.17A N13 - the same mount-time draft-resync race WP4.17A fix round 1b root-caused and
+  // fixed in MyWalletSection.tsx: `useEffect` always fires once after the component's FIRST
+  // render too, not only on a dependency change, and a fast fill (Playwright, or a real password
+  // manager/autofill) landing in the gap between initial paint and this effect's deferred flush
+  // gets silently reverted back to `storedValue`, even though `value` was already correctly
+  // seeded by the `useState` initializer above. A previous-value comparison is used here rather
+  // than MyWalletSection's own skip-the-first-invocation flag (grade round 2 N13's own recipe):
+  // a flag only ever skips exactly once, so it is not robust if this effect is ever invoked more
+  // than once for the same mount (React StrictMode's development-only double-invoke does exactly
+  // this) - a value comparison stays correct regardless of how many times it runs, since it acts
+  // only when `storedValue` has genuinely changed from what this field last synced to.
+  const prevStoredValueRef = useRef(storedValue ?? "");
+  useEffect(() => {
+    const next = storedValue ?? "";
+    if (prevStoredValueRef.current !== next) {
+      prevStoredValueRef.current = next;
+      setValue(next);
+    }
+  }, [storedValue]);
   return (
     <Input
       id={id}
@@ -128,7 +146,17 @@ function WalletAddressField({
   onEdit?: () => void;
 }) {
   const [value, setValue] = useState(staff.walletAddress ?? "");
-  useEffect(() => setValue(staff.walletAddress ?? ""), [staff.walletAddress]);
+  // WP4.17A N13 - same race and same fix as ProfileTextField's identical guard above; see its
+  // doc comment for the full reasoning (MyWalletSection.tsx race, and previous-value comparison
+  // over a skip-first-run flag for StrictMode robustness).
+  const prevWalletAddressRef = useRef(staff.walletAddress ?? "");
+  useEffect(() => {
+    const next = staff.walletAddress ?? "";
+    if (prevWalletAddressRef.current !== next) {
+      prevWalletAddressRef.current = next;
+      setValue(next);
+    }
+  }, [staff.walletAddress]);
   return (
     <Input
       id={id}

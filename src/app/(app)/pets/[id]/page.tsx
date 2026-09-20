@@ -1,14 +1,22 @@
 import {notFound} from "next/navigation";
 import {PageHeader} from "@/components/shell/PageHeader";
 import {connectToDatabase} from "@/lib/db";
+import {auth} from "@/auth";
 import {Client, type ClientDoc} from "@/lib/models/Client";
 import {Pet, type PetDoc} from "@/lib/models/Pet";
+import {Staff, type StaffDoc} from "@/lib/models/Staff";
+import {getClinicSettings} from "@/lib/models/ClinicSettings";
 import {getBookingSettings} from "@/lib/models/Availability";
 import {findActiveTagArtifact} from "@/lib/tags/artifact";
+import {resolveOperatorStatus} from "@/lib/issuanceOperatorStatus";
+import {isVetOrOwner} from "@/lib/staffRoleTone";
+import {loadOwnersCardData} from "@/lib/delegation/ownersCardData";
 import {PetForm} from "@/app/(app)/pets/PetForm";
 import {PetTagCard} from "@/components/pets/PetTagCard";
 import {PetDetailTabs} from "@/components/pets/PetDetailTabs";
+import {OwnersCard} from "@/components/pets/OwnersCard";
 import {RecordsCard} from "@/components/pets/RecordsCard";
+import {VetWalletStatusBanner} from "@/app/(app)/tags/VetWalletStatusBanner";
 import {toPlain} from "@/lib/toPlain";
 
 export default async function PetDetailPage({params}: {params: Promise<{id: string}>}) {
@@ -25,14 +33,38 @@ export default async function PetDetailPage({params}: {params: Promise<{id: stri
   const activeArtifact = await findActiveTagArtifact(pet.petId);
   const maskedFieldCount = activeArtifact?.obfuscatedLeafHashes?.length ?? 0;
 
+  // WP4.15 multi-owner (PLANNED) - the Owners card, gated on the SAME vet/owner + K2 whitelist
+  // signal every other issuance surface shares (`/tags`, `/tags/issue`), never a second,
+  // independently-derived check.
+  const session = await auth();
+  const canManage = isVetOrOwner(session?.user?.role);
+  const [settings, staffRow, ownersCardData] = await Promise.all([
+    getClinicSettings(),
+    canManage ? Staff.findOne({staffId: session?.user?.staffId}).lean<StaffDoc>() : Promise.resolve(null),
+    loadOwnersCardData(pet.petId, pet.dogTag?.dogTagIdField, pet.primaryOwnerClientId),
+  ]);
+  const operatorStatus = canManage ? await resolveOperatorStatus({walletAddress: staffRow?.walletAddress, cloneAddress: settings.cloneAddress}) : null;
+  const primaryOwnerLabel = ownersCardData.primaryOwnerName ?? (ownersCardData.primaryOwnerClientId ? "Unknown client" : undefined);
+
   return (
     <>
       <PageHeader title={pet.name} description="Pet record." />
+      {canManage && operatorStatus && pet.dogTag?.dogTagIdField && (
+        <VetWalletStatusBanner status={operatorStatus.status} recordedAddress={operatorStatus.recordedAddress} />
+      )}
       <PetDetailTabs
         profileTab={
           <>
-            <div className="mb-6 max-w-2xl">
+            <div className="mb-6 max-w-2xl space-y-6">
               <PetTagCard petId={pet.petId} dogTag={pet.dogTag ?? {}} timeZone={timezone} maskedFieldCount={maskedFieldCount} />
+              <OwnersCard
+                petId={pet.petId}
+                dogTagIdField={pet.dogTag?.dogTagIdField}
+                primaryOwnerLabel={primaryOwnerLabel}
+                data={ownersCardData}
+                canManage={canManage}
+                timeZone={timezone}
+              />
             </div>
             <PetForm pet={pet} initialOwners={owners} />
           </>

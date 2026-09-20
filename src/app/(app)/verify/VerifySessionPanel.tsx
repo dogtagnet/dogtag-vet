@@ -9,7 +9,7 @@ import {QrSurface} from "@/components/ui/QrSurface";
 import {StatusBadge} from "@/components/ui/StatusBadge";
 import {HashCell} from "@/components/ui/HashCell";
 import {useSnackbar} from "@/components/ui/Snackbar";
-import {verificationRegistryConsentAbi} from "@/lib/abi";
+import {verificationRegistryConsentAbi, vetIssuerAbi} from "@/lib/abi";
 import {roax} from "@/lib/chains";
 import {legacyTxWithGas} from "@/lib/chainWrite";
 import {publicEnv} from "@/lib/env.public";
@@ -41,13 +41,32 @@ interface SessionState {
  * VALUES here are left untouched (an existing deployment or e2e spec may already depend on the
  * exact wire string) - only the DISPLAY labels were honestly clarified, per the plan's own
  * non-negotiable, so staff cannot mistake this dropdown for the real credential feature.
+ *
+ * WP4.15 multi-owner (PLANNED) item V5: an OPTIONAL, clinic-wide-defaulted mode targets the
+ * clinic's own clone as the relayer instead (`docs/DELEGATION.md` section 7's "relayVerification
+ * is a new relayer") - `useClone` below, initialized from `consentRelayerViaCloneEnabled`
+ * (Settings) but independently toggleable per session. When on: `handleStart` posts the CLONE's
+ * address as `relayerAddress` (so the phone's proof targets it, and `POST /api/verify/start`'s
+ * existing, UNMODIFIED `readCanVerify` preflight fails closed with a clear message if the admin
+ * has not yet whitelisted this clone - exactly the same gate an unwhitelisted staff wallet already
+ * hits today); `handleSubmit` calls the clone's `relayVerification` instead of
+ * `recordVerificationZK` directly, so the operator wallet (which already holds gas and is already
+ * whitelisted as an OPERATOR, a completely separate axis from `canVerify`) submits the tx while
+ * the CLONE is what `VerificationRegistryConsent` sees as `msg.sender`.
  */
-export function VerifySessionPanel() {
+export function VerifySessionPanel({
+  cloneAddress,
+  consentRelayerViaCloneEnabled,
+}: {
+  cloneAddress?: string;
+  consentRelayerViaCloneEnabled: boolean;
+}) {
   const {address, chainId} = useAccount();
   const {writeContractAsync} = useWriteContract();
   const publicClient = usePublicClient();
   const snackbar = useSnackbar();
 
+  const [useClone, setUseClone] = useState(consentRelayerViaCloneEnabled);
   const [purpose, setPurpose] = useState("");
   const [recordType, setRecordType] = useState("DOG_PROFILE");
   const [petQuery, setPetQuery] = useState("");
@@ -81,6 +100,7 @@ export function VerifySessionPanel() {
 
   async function handleStart() {
     if (!address || !selectedPet) return;
+    const relayerAddress = useClone && cloneAddress ? cloneAddress : address;
     setStarting(true);
     try {
       const res = await fetch("/api/verify/start", {
@@ -89,7 +109,7 @@ export function VerifySessionPanel() {
         body: JSON.stringify({
           purpose,
           recordType,
-          relayerAddress: address,
+          relayerAddress,
           petId: selectedPet.petId,
         }),
       });
@@ -113,21 +133,30 @@ export function VerifySessionPanel() {
     if (!session?.proof || !address) return;
     setSubmitting(true);
     try {
+      const a = session.proof.a.map(BigInt) as [bigint, bigint];
+      const b = session.proof.b.map((pair) => pair.map(BigInt)) as [[bigint, bigint], [bigint, bigint]];
+      const c = session.proof.c.map(BigInt) as [bigint, bigint];
+      const pub = session.proof.pubSignals.map(BigInt) as [bigint, bigint, bigint, bigint, bigint, bigint, bigint];
+
+      // The relayer this session was STARTED with decides the write path - `session.relayerAddress`
+      // (server-trusted, from the session row) rather than re-reading `useClone` here, since the
+      // toggle could in principle change between starting a session and submitting its proof.
+      const viaClone = Boolean(cloneAddress) && session.relayerAddress.toLowerCase() === cloneAddress?.toLowerCase();
       const hash = await writeContractAsync(
         // Headroom over the bare estimate - see legacyTxWithGas's doc comment for the incident
         // txs the refund tail starved at the wallet's own estimate.
-        await legacyTxWithGas(publicClient, {
-          address: publicEnv.verificationRegistryAddress as `0x${string}`,
-          abi: verificationRegistryConsentAbi,
-          functionName: "recordVerificationZK",
-          args: [
-            session.proof.a.map(BigInt) as [bigint, bigint],
-            session.proof.b.map((pair) => pair.map(BigInt)) as [[bigint, bigint], [bigint, bigint]],
-            session.proof.c.map(BigInt) as [bigint, bigint],
-            session.proof.pubSignals.map(BigInt) as [bigint, bigint, bigint, bigint, bigint, bigint, bigint],
-          ],
-          account: address,
-        }),
+        await legacyTxWithGas(
+          publicClient,
+          viaClone
+            ? {address: cloneAddress as `0x${string}`, abi: vetIssuerAbi, functionName: "relayVerification", args: [a, b, c, pub], account: address}
+            : {
+                address: publicEnv.verificationRegistryAddress as `0x${string}`,
+                abi: verificationRegistryConsentAbi,
+                functionName: "recordVerificationZK",
+                args: [a, b, c, pub],
+                account: address,
+              },
+        ),
       );
       setPendingTxHash(hash);
     } catch (err) {
@@ -233,6 +262,15 @@ export function VerifySessionPanel() {
             )}
           </div>
         </FormField>
+        {cloneAddress && (
+          <FormField
+            label="Use this clinic's clone as the relayer"
+            htmlFor="use-clone-relayer"
+            helperText="Experimental (WP4.15) - needs the DogTag admin to separately whitelist this clone for canVerify. Off uses your connected wallet as the relayer, as before."
+          >
+            <input id="use-clone-relayer" type="checkbox" checked={useClone} onChange={(e) => setUseClone(e.target.checked)} />
+          </FormField>
+        )}
       </FormSection>
       <div className="flex justify-end">
         <Button onClick={handleStart} disabled={starting || !purpose || !selectedPet}>

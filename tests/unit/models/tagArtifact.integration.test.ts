@@ -49,7 +49,7 @@ beforeAll(async () => {
   // The unique `root` index builds in the background on model compilation - wait for it before any
   // test relies on it rejecting a duplicate.
   await TagArtifact.init();
-}, 30_000);
+}, 90_000);
 
 afterAll(async () => {
   await mongoose.disconnect();

@@ -47,10 +47,18 @@ See `docs/DEPLOY.md` for the full quickstart, the Kubernetes path (`helm/dogtag-
 `protocol/` is vendored by `dogtag-protocol/scripts/sync-to.sh`, which mirrors `contracts/exports`, `contracts/flattened`, `packages/dogtag-standard-ts`, `specs/`, and `design/design-system.md` wholesale (`rsync --delete`) and regenerates `protocol/PROVENANCE.md` from scratch every time.
 It holds the contract ABIs, the wire-authoritative OpenAPI spec (`protocol/specs/vet-public-api.yaml`), the QR and issuer-attestation format specs, and the `@dogtag/standard` crypto library, wired in as a pnpm workspace package.
 
-**Local deviations the sync does not preserve** (re-apply by hand after every re-sync, since `PROVENANCE.md`'s own generated text is overwritten wholesale and cannot carry this note itself):
-1. The four EIP-712 vector files under `protocol/specs/` (`eip712-client-registration-vectors.json`, `eip712-client-registration-signature-vectors.json`, `eip712-mobile-booking-vectors.json`, `mobile-booking-hash-vectors.json`) were authored directly into this app's vendored tree by an earlier commit and never existed in `dogtag-protocol` itself - at least 8 of this repo's own test files depend on them. A re-sync deletes all four outright (`git checkout --` restores them from this repo's own history immediately after, since they are tracked here). Relocating them to a proper, non-vendored home is a follow-up, not yet done.
+**No local deviations remain inside `protocol/` as of WP4.17A0.**
+A deviation used to live here: four hand-authored EIP-712/booking-hash known-answer vector files (`eip712-client-registration-vectors.json`, `eip712-client-registration-signature-vectors.json`, `eip712-mobile-booking-vectors.json`, `mobile-booking-hash-vectors.json`) lived directly under `protocol/specs/`.
+They never existed in `dogtag-protocol` itself, so every real `rsync --delete` sync deleted all four outright, worked around each time by a `git checkout --` restore immediately after.
+WP4.17A0 relocated all four to `tests/unit/vectors/` (see that directory's own README) and updated every importing test and doc reference to the new path.
+That directory sits outside every path `scripts/sync-to.sh` touches, so `protocol/` is now a plain, unmodified mirror end to end and a future re-sync needs no manual restoration step.
+(`protocol/specs/vet-public-api.yaml` was hand-edited ahead of master through WP4.9V/WP4.10V, but WP4.12V's item 1 brought it fully current - see `protocol/PROVENANCE.md` - so it has been a plain mirror since, not a standing deviation.)
 
-So "nothing in this app should ever need to change what lives inside it" is no longer quite true: exactly one thing does, by design, and needs re-applying after every re-sync until the vector files move out of `protocol/` for good. (`protocol/specs/vet-public-api.yaml` was hand-edited ahead of master through WP4.9V/WP4.10V, but WP4.12V's item 1 brought it fully current - see `protocol/PROVENANCE.md` - so it is a plain mirror today, not a standing deviation; if a future wave hand-edits it ahead again before the next upstream sync, restate this as a conditional, not as present fact.)
+**As of WP4.17A0, every file under `protocol/` is mirrored from a single commit on the `dogtag-protocol` BRANCH `feature/wp4.15-multi-owner`, not from `master`.**
+That branch has not merged into `master` yet, so this remains the same deliberate, disclosed branch-sourced vendor WP4.15V first set up (Kenneth's own `docs/DEPLOY-wp4.15.md` runbook, on that same branch, is still pending).
+What changed in WP4.17A0 is that the tree is no longer mixed: WP4.15V had left five files at branch tip `e654924` while everything else stayed at whatever `master` commit WP4.12V had last synced.
+WP4.17A0 ran a full `scripts/sync-to.sh`, so every vendored file - specs, contract exports, the flattened contracts, and the TS package (`dist/` freshly rebuilt) - now comes from the same single branch tip.
+See `protocol/PROVENANCE.md` for the exact commit.
 
 ## Tag data custody
 
@@ -197,6 +205,47 @@ Staff start a session naming no pet or record in advance ("blind presentment" - 
 Every chain read is wrapped fail-closed (`chain_unreadable`, never a silent pass); a genuine anchor mismatch is `not_anchored` with a specific reason, never collapsed into a bare "invalid"; and only once every check agrees does `isValid` get to mean anything, splitting into `valid`/`expired`/`revoked` rather than a bare boolean - the same "never a bare true/false" standard `/verify/redacted` already holds itself to.
 The presented artifact's disclosed field NAMES are kept for the staff-facing result (`disclosedKeyPaths`), alongside a plain `hiddenCount` (the artifact's own `obfuscatedLeafHashes.length`, set regardless of stage - the plan's own explicit ask); the field VALUES themselves are not kept, since this endpoint is unauthenticated and any staff member can later poll the session.
 Formalized in `dogtag-protocol` (`specs/qr-formats.md`'s "Records verify QR", `specs/vet-public-api.yaml`'s `records-verify` tag) so the mobile client has a real spec to build the phone side against, rather than a guess.
+
+## Multi-owner: vet-issued secondary owners (WP4.15, PLANNED - not deployed on any real chain yet)
+
+Kenneth's ask, verbatim: "primary owner continue as what we have, but add in feature to have distinguishable secondary owners to the same dogtag ID.
+revocable individually by the primary owner.
+Changing primary owner means re-issuing a new dogtag id."
+
+**Nothing about the primary owner's own tree, circuit, or privacy changes.**
+A secondary owner ("delegate") lives entirely OUTSIDE the profile tree, in a new, small, per-tag Merkle set of delegate key commitments with its own root (`delegationRoot`), held in a brand-new `DelegationRegistry` contract - see `docs/DELEGATION.md` (vendored from the `dogtag-protocol` branch `feature/wp4.15-multi-owner`) for the full model and the reasoning behind keeping this outside the frozen tree entirely.
+This is Stage A/B of that design: custody-only secondary owners, added and revoked by a vet ceremony with no ZK consent proof of their own (Kenneth's decision - the clinic's attestation with the primary present is sufficient, the same trust model tag issuance itself already runs on).
+The future delegate CONSENT proof (a secondary owner producing their own ZK proof) needs a mainnet-grade ceremony first and is out of this wave's scope.
+
+**The ceremony mirrors tag issuance's own shape** (`docs/DELEGATION.md` section 4.3): staff open a pet's Owners card and choose "Add secondary owner", picking an existing client who already has a wallet registered through the `/w` ceremony above.
+This opens a `DelegationSession` (mirrors `WalletRegistrationSession`: one-time 32-hex token, 600-second fixed TTL, one-shot complete) and prints a QR (`/d/<token>`).
+The secondary owner's own phone derives its OWN per-tag key material from ITS OWN wallet seed - never the primary's, and nothing of the primary's own secret material ever moves - computes a `commitment`, and signs a `DelegationClaim` EIP-712 struct with the wallet it already registered.
+The server recovers the signer, requires it to equal that already-registered wallet, then an already-whitelisted operator wallet calls the clinic's clone (`VetIssuer.addSecondaryOwner`, gas-sponsored the same way `issueTag` already is) - the clone writes into `DelegationRegistry`.
+Revoking needs no participation from the secondary's own device at all (there is nothing for them to sign): staff pick an active secondary from the Owners card and confirm, and the SAME operator wallet calls `revokeSecondaryOwner`.
+Any currently-Active clinic may add or revoke a secondary on any tag, not only the tag's original issuer (Kenneth's decision) - the same non-issuer-scoped trust boundary `VerificationRegistryConsent` already uses when it resolves a tag's validity.
+
+**The Owners card is chain-authoritative for active-vs-revoked, Mongo-only for identity.**
+`src/lib/delegation/ownersCard.ts`'s `buildSecondaryOwnerRows` joins this clinic's own `DelegationSession` history (the only place that knows which client a commitment belongs to - the chain only ever sees opaque commitments) against one live `DelegationRegistry.delegationLeaves` chain read.
+A secondary added or revoked at a DIFFERENT clinic still shows up correctly (labeled "Added at another clinic" if this clinic has no local record of who it is) rather than silently disagreeing with the chain's own count; a chain-read failure falls back to this clinic's own last-known outcome, honestly suffixed "(unverified)" rather than guessed as current fact.
+
+**`Pet.primaryOwnerClientId`** is optional and back-compat: it is set the FIRST time a pet is issued a tag (`POST /api/tags/issue/start`, both the new-pet and existing-pet branches) and never overwritten or backfilled afterward - a legacy pet issued before this field existed shows an honest "Primary not recorded" rather than a guess.
+Changing the primary owner is a fresh custodial issuance under a NEW `dogTagId` (Kenneth's own ask, verbatim, above) - this field on the OLD tag's pet record is never reassigned by that.
+
+**The co-owner bundle** (`DelegationCoOwnerBundle`, `src/lib/delegation/bundle.ts`) is what the newly-added secondary owner's phone receives once the on-chain write confirms: the tag's root, disclosed attribute openings, the three reserved leaf hashes, any already-masked attribute hashes, the tag's full 16-slot delegation tree, and enough context (`issuerClone`, `chainId`, `petName`, `clinicName`) to act as a view-only co-owner.
+It is built by re-running `buildRedactedExportPayload` - the exact same function `/e/:token` (device recovery) already exports through - so it self-checks with the identical `verifyRedactedArtifact` recompute and never carries any of the primary owner's private material by construction, not merely by convention.
+Served on `GET /d/:token/status` whenever, and only whenever, the session reports `added` and is still within the same grace-period window every other ceremony status poll in this app already has - conformant with `specs/qr-formats.md`'s own "once (and only once) it reports `added`" phrasing, not a deviation from it (grade round 1 D4 corrected this paragraph; "once" there means "when", not a delivery count, and nothing about the behavior itself changed).
+That grace window is exactly why a bundle can be served on more than one poll: re-running `addSecondaryOwner` for an already-added commitment reverts on chain, so there is no "just try again" recovery path for a bundle lost to a dropped response the way there is for a lost mint QR code, and repeating a value that never changes after confirmation is harmless.
+If the bundle cannot be built on a given poll (a missing custody record, an unreadable chain), the response carries `bundleUnavailable: true` instead of silently omitting `bundle` with no signal either way (grade round 1 D3).
+
+**Gas sponsorship, verified, not assumed** (plan section 8's own gas-sponsorship audit): every clinic clone data write - `issueTag`, `issueRecord`, revoke/reactivate of either, and now `addSecondaryOwner`/`revokeSecondaryOwner` - is wrapped in the SAME `refundsGas` modifier, so a `RefundSkipped` event from either new function is already picked up by the existing `/activity` page and its worker follower with zero code changes (confirmed by reading `src/worker/index.ts`'s event-filtering list, not assumed).
+Recomputing the full 16-leaf delegation tree on every add/revoke costs roughly 1.1-1.4M gas (15 linked Poseidon calls) - see `docs/DEPLOY-wp4.15.md` (protocol branch) for the full cost writeup and the deployment runbook itself, which is Kenneth's own action with the protocol admin wallet, not part of this app.
+
+**Consent relayer via clone (experimental, feature-flagged, `/verify` page + Settings).**
+The same upgrade that adds `addSecondaryOwner`/`revokeSecondaryOwner` also adds `VetIssuer.relayVerification`, letting the clinic's OWN clone (rather than a raw staff wallet) act as the relayer for a primary owner's consent proof.
+Off by default (`ClinicSettings.consentRelayerViaCloneEnabled`, owner-editable in Settings) and PENDING the DogTag admin separately whitelisting each clinic's clone for `canVerify` - turning it on before that grant exists is refused cleanly by the existing `POST /api/verify/start` preflight (unmodified), never a silently-always-reverting control.
+
+**Vendored specs are BRANCH-sourced, not master-sourced, for this wave** (`protocol/PROVENANCE.md` has the full accounting): `specs/qr-formats.md`, `specs/vet-public-api.yaml`, `specs/events.md`, and both `VetIssuer`/`DelegationRegistry` ABIs mirror the `dogtag-protocol` branch `feature/wp4.15-multi-owner`, which does not yet exist on `master` - every other vendored file is untouched and stays at whatever commit the prior full sync left it at.
+Do not run a full `scripts/sync-to.sh` re-sync while this branch is still unmerged; it would silently regress these files back to their pre-WP4.15 shape.
 
 ## Design decisions
 

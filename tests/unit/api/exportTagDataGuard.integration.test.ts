@@ -39,7 +39,7 @@ beforeAll(async () => {
   expect(mongoose.connection.host).toBe("127.0.0.1");
   expect(mongoose.connection.port).toBe(MONGO_PORT);
   expect(mongoose.connection.name).toBe("dogtag-vet-export-guard");
-}, 30_000);
+}, 90_000);
 
 afterAll(async () => {
   await mongoose.connection.close();

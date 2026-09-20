@@ -729,7 +729,37 @@ test("a started session's resolve JSON carries color/registrationId/registration
  * client state left over from the save.
  */
 test("pet form round-trips color/registrationId/registrationAuthority", async ({page}) => {
+  // Generous, not the 60s default: two passes over the heaviest module graph in this suite (the
+  // untimed warm-up below, then the real flow) - see that warm-up's own comment for the measured
+  // cost. This is headroom for the deliberately-untimed SETUP step to survive under load, not the
+  // padded-assertion-timeout move this fix round explicitly rejected (see the toHaveURL comment
+  // below): the fix is that the compile no longer sits inside any timed assertion at all; this
+  // number only keeps Playwright's own hard default (60s test budget, 30s APIRequestContext
+  // default) from tripping on the untimed step itself.
+  test.setTimeout(90_000);
   const client = await createClient(page, "WP412V Pet Form Client");
+
+  // WP4.17A fix round 1b - root cause, not a bigger timeout: this test is the first thing in the
+  // whole suite to open a `/pets/:id` detail page (grepped - no earlier test in this file or, in a
+  // full-suite run, no test alphabetically before this file ever does), so the toHaveURL wait below
+  // was racing Next dev's FIRST on-demand webpack compile of that route's module graph. Traced with
+  // request/response/console instrumentation during this fix round: that graph pulls in the full
+  // crypto stack (circomlibjs/ffjavascript, wagmi, walletconnect, the coinbase/base-org connectors)
+  // via IssueRecordForm/RecordsCard, made the compile alone take 7.4s, and the click-to-settled-URL
+  // wall clock 12.85s - consuming 85% of the 15s budget on an otherwise idle box, not merely under
+  // load. Same technique as calendar-services.spec.ts's own beforeEach ("Warms Next dev's on-demand
+  // compile... BEFORE any timed UI assertion depends on it... A plain awaited request has no such
+  // tight budget, so pay the compile here instead"): a throwaway pet plus one `page.request.get`,
+  // side-effect-free (this test's own owner client just briefly owns 2 pets; no assertion below
+  // queries by count) and never touching the `page` under test's own URL/state, pays the compile
+  // cost here so the real, timed create-via-UI flow below never races it. The 60s override on this
+  // one request is APIRequestContext's own default (not a timed assertion this test is judged by)
+  // - this fix round measured the equivalent path at ~11s server-side on an idle box, and this
+  // spec's own documented failure history runs at 10 to 40x the load of that measurement.
+  const warmup = await page.request.post("/api/pets", {data: {name: "WP412V Warmup Pet (discard)", ownerClientIds: [client.clientId]}});
+  expect(warmup.ok()).toBe(true);
+  const {petId: warmupPetId} = await warmup.json();
+  await page.request.get(`/pets/${warmupPetId}`, {timeout: 60_000});
 
   await page.goto(`/pets/new?ownerClientId=${client.clientId}`);
   await page.getByLabel("Name").fill("WP412V Pet Form Pet");

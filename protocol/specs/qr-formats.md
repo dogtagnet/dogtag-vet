@@ -6,12 +6,12 @@ The payment URIs typically hand off to the user's own wallet app (see "Payment Q
 
 ## The token grammar
 
-This section covers the mint, verify, wallet-registration, tag-export, tag-import, and records-verify session tokens.
+This section covers the mint, verify, wallet-registration, delegation, tag-export, tag-import, and records-verify session tokens.
 The receipt token has its own, deliberately different grammar; see "Receipt URL" below.
 
-Every mint, verify, wallet-registration, tag-export, tag-import, or records-verify session token in this ecosystem is 32 lowercase hexadecimal characters: `^[0-9a-f]{32}$`.
+Every mint, verify, wallet-registration, delegation, tag-export, tag-import, or records-verify session token in this ecosystem is 32 lowercase hexadecimal characters: `^[0-9a-f]{32}$`.
 That is 128 bits of entropy, base16-encoded, always lowercase on the wire.
-A parser MUST reject a mint, verify, wallet-registration, tag-export, tag-import, or records-verify token that is the wrong length, contains uppercase hex digits, or contains any character outside `[0-9a-f]`, rather than attempting to normalize it.
+A parser MUST reject a mint, verify, wallet-registration, delegation, tag-export, tag-import, or records-verify token that is the wrong length, contains uppercase hex digits, or contains any character outside `[0-9a-f]`, rather than attempting to normalize it.
 This grammar is v1-compatible: a v1 QR and a v2 QR use the same token shape, so a mixed fleet of old and new vet deployments during a migration window still produces scannable codes.
 
 ## Mint QR
@@ -74,6 +74,109 @@ https://<vet>/w/<32hex>
 
 1. The scheme MUST be `https`.
 2. The path MUST match `^/w/[0-9a-f]{32}$` exactly, with no trailing slash, query string, or fragment.
+
+## Delegation session QR
+
+> **PLANNED - NOT YET DEPLOYED (WP4.15).** This section is the WP4.15 wire contract for the app
+> waves (WP4.15V vet, WP4.15M mobile), written before either app-side implementation exists. The
+> endpoints it names (`/d/{token}`, `/d/{token}/complete`, `/d/{token}/status`) do not exist on any
+> deployed vet platform yet - they ship with WP4.15B (contracts) and the app waves that follow it.
+> See `docs/DELEGATION.md` for the full multi-owner model this QR is one piece of.
+
+```
+https://<vet>/d/<32hex>
+```
+
+- `<vet>` and `<32hex>` as above (same token grammar as mint and verify).
+- Resolves via `GET /d/{token}` in `specs/vet-public-api.yaml`; submitted via `POST
+  /d/{token}/complete`; polled via `GET /d/{token}/status`.
+- Printed or displayed by vet staff from a pet's record ("Add secondary owner") to add a
+  distinguishable secondary owner on that dogtag - `docs/DELEGATION.md` section 4.3 is the
+  normative ceremony this QR opens. **This QR is for adding only**: revoking a secondary owner
+  needs no participation from their device (`docs/DELEGATION.md` section 4.5) and has no QR of its
+  own - it is a vet-staff-and-operator-wallet action with no public API surface, the same way this
+  catalogue never exposes a QR for the vet-staff-only halves of any other ceremony. The secondary
+  human must already be a client with a wallet registered through the wallet-registration ceremony
+  above; staff pick that client's record before generating this code, the same way an import
+  session's staff pick a target pet before generating `/i`.
+- Non-consuming resolve, consuming complete: `GET /d/{token}` only returns the session's display
+  context (clinic name, the pet's canonical `dogTagIdField`, the session's
+  `registrationId`/`issuedAt`/`blockNumber`/`deadline`, a masked form of the target client's name)
+  and can be safely retried, mirroring `GET /w/{token}`'s shape. `POST /d/{token}/complete` is the action that
+  consumes the token, on every outcome, success or refusal alike - a burned token is simply dead,
+  and there is no retry endpoint for this ceremony, mirroring `POST /w/{token}/complete`'s own rule.
+- Error states: `GET /d/{token}` refuses with `404` (unknown or malformed) or `410` (already
+  consumed by a prior success or failure, or naturally expired) before the secondary owner ever sees
+  a consent screen, mirroring `GET /w/{token}`. `POST /d/{token}/complete` additionally refuses with
+  `400` (`signature_invalid`: a malformed request body, or a recovered signer that does not equal
+  the target client's already-registered wallet) or `409` (`already_secondary`: this commitment, or
+  this client, is already an active secondary owner of this tag), on top of the same `404`/`410`
+  above. Every `POST` outcome consumes the token, including a failed `signature_invalid` attempt.
+  `GET /d/{token}/status` refuses with `404` (unknown or malformed) or `410` (never claimed and
+  expired, or past the post-add grace period), mirroring `GET /p/{token}/status`.
+- Fixed TTL: 600 seconds from creation, not extended by resolving, like the wallet-registration
+  ceremony above and the export and import ceremonies below, and unlike the mint QR's
+  TTL-extension-on-first-resolve.
+- On a successful scan, the app calls `GET /d/{token}` for the session context, then shows a consent
+  screen (clinic name, pet name, "is this you?" against the masked target-client name) before doing
+  anything else. Only after the secondary owner passes a biometric gate does the app derive its own
+  per-tag delegate key material (`docs/DELEGATION.md` section 4.1), compute its `commitment`
+  (section 4.2), build and sign the `DelegationClaim` EIP-712 struct (the ordered type list is
+  `docs/DELEGATION.md` section 4.3 step 4) with the wallet it already registered through `/w`, and
+  `POST` `{commitment, wallet, signature}` to `/complete`. The server independently rebuilds the
+  exact same domain and struct from its own server-trusted session state plus the posted
+  `commitment`/`wallet`, recovers the signer, and requires both that the recovered signer equals the
+  claimed `wallet` and that `wallet` is already one of the target client's registered wallets -
+  never a wallet the request merely asserts.
+- No ZK consent is required from the primary owner for this ceremony (`docs/DELEGATION.md` section
+  4.3): the clinic's attestation, with the primary present, is sufficient, the same trust model tag
+  issuance itself already runs on.
+- The app calls `GET /d/{token}`, `POST /d/{token}/complete`, and `GET /d/{token}/status` against
+  the exact host parsed from the QR, never a host it already has stored or discovered for a clinic
+  of the same name ("scanned host only" - the same rule every vet-facing ceremony in this catalogue
+  follows).
+
+### Parsing rules
+
+1. The scheme MUST be `https`.
+2. The path MUST match `^/d/[0-9a-f]{32}$` exactly, with no trailing slash, query string, or fragment.
+
+### The co-owner bundle
+
+`GET /d/{token}/status` never carries a `bundle` before it reports `added` - the data it carries does
+not exist until the on-chain write actually lands: unlike a mint session (whose attribute data is
+already known at resolve time, well before `custodial-bind`), a delegation session's bundle depends
+on the confirmed on-chain state the write produces. Status, not the earlier resolve or complete
+calls, is therefore the bundle's home. Once `added`, the response carries `bundle` - the payload the
+newly-added secondary owner's device needs to act as a view-only co-owner - PROVIDED the vet also
+holds custody of the tag's artifact; when `added` but custody is missing, the response instead
+carries `bundleUnavailable: true` and no `bundle` key
+(`specs/vet-public-api.yaml` `DelegationSessionStatusResponse`). This wave's contract for the app
+waves is the bundle's *shape*, defined below; wiring the phone's polling loop to it is WP4.15M's job.
+
+The bundle contains **public data only**: the tag's `protocolVersion`, its canonical
+`dogTagIdField`, its root `R`, attribute openings for display (the same `OpenedLeaf` shape a `/e`
+export already uses), the three reserved leaf **hashes** (never their openings), the
+`obfuscatedLeafHashes` for any attribute staff masked before the ceremony (WP4.10V partial
+custody), and all 16 current values of this tag's delegation tree
+(`DelegationCoOwnerBundle.delegationLeaves` in `specs/vet-public-api.yaml`), zero-valued wherever a
+slot is empty or revoked. A device that receives this bundle runs the same `verifyRedactedArtifact`
+check on `disclosed`/`obfuscatedLeafHashes`/`reservedLeafHashes` a `/e` export already needs before
+trusting `root` - masked or not, so a co-owner's device is never left holding a `root` it cannot
+independently confirm. All 16 delegation-tree values, including the zeros, are required: this
+codebase's own `buildMerkle` (`packages/dogtag-standard-ts/src/merkle.ts`) sorts all 16 ascending
+and folds bottom-up with its commutative pair hash, so a surviving delegate recomputes their own
+sibling path by replaying that same sort-and-fold over this array - folding fewer than 16 values
+produces a different tree than the one `delegationRoot` actually commits to, and no fixed array
+position is load-bearing (`docs/DELEGATION.md` section 4.2). Publishing the array reveals only
+which slots are occupied and their opaque commitments, never who any delegate is (`docs/DELEGATION.md`
+section 4.5).
+
+The bundle **never** contains the primary owner's `ownerSecret`, the primary's consent private key,
+either owner's wallet seed, or either owner's `ownerSalt`/`secretSalt` - none of the primary's
+private material is in it, and the secondary owner already holds their own seed on their own device.
+A secondary owner who receives this bundle is custody-only until `docs/DELEGATION.md` section 4.4
+ships: they can view tag data, but cannot yet produce their own ZK consent proof.
 
 ## Export QR (device recovery)
 

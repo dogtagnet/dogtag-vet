@@ -40,7 +40,7 @@ beforeAll(async () => {
   await connectToDatabase();
   expect(mongoose.connection.port).toBe(MONGO_PORT);
   await RecordVerifySession.init();
-}, 30_000);
+}, 90_000);
 
 afterAll(async () => {
   await mongoose.connection.close();

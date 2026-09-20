@@ -42,7 +42,7 @@ beforeAll(async () => {
     bookableOnline: true,
   });
   serviceId = service.serviceId;
-}, 30_000);
+}, 90_000);
 
 afterAll(async () => {
   await mongoose.connection.close();

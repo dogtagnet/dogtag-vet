@@ -10,6 +10,18 @@ import {recordTypeKey} from "@dogtag/standard";
 import dogTagSBTConsentAbiJson from "../protocol/contracts/exports/abi/DogTagSBTConsent.json" with {type: "json"};
 import vetIssuerFactoryAbiJson from "../protocol/contracts/exports/abi/VetIssuerFactory.json" with {type: "json"};
 import vetIssuerAbiJson from "../protocol/contracts/exports/abi/VetIssuer.json" with {type: "json"};
+// WP4.15 multi-owner (PLANNED) - the branch-vendored 2.1.0 VetIssuer ABI above already carries
+// addSecondaryOwner/revokeSecondaryOwner/relayVerification (writes, no special decode needed - the
+// generic eth_sendTransaction handler below already covers any write); this one is new.
+import delegationRegistryAbiJson from "../protocol/contracts/exports/abi/DelegationRegistry.json" with {type: "json"};
+// WP4.15 multi-owner (PLANNED) - PRE-EXISTING gap this wave found and fixed: `EntityRegistry`'s
+// ABI was never in this stub at all, so `readEntityActive`/`readCanVerify` (both against
+// `EntityRegistry`) could never resolve through it - `preflightIssuance`'s `isActive` check (the
+// SAME shared function `/api/tags/issue/start` already runs) has apparently never been exercised
+// through a REAL e2e ceremony start before this wave; every prior mint e2e spec seeds a session
+// directly at a later status instead of calling `/start` for real (see e.g. `mint-issue-
+// revert.spec.ts`'s own header comment on why). Needed for THIS wave's own ceremony-start tests,
+// and fixes the same gap for any future spec that wants to drive a real `/start` call too.
 import entityRegistryAbiJson from "../protocol/contracts/exports/abi/EntityRegistry.json" with {type: "json"};
 
 /**
@@ -57,6 +69,7 @@ const ABIS: Abi[] = [
   dogTagSBTConsentAbiJson as unknown as Abi,
   vetIssuerFactoryAbiJson as unknown as Abi,
   vetIssuerAbiJson as unknown as Abi,
+  delegationRegistryAbiJson as unknown as Abi,
   entityRegistryAbiJson as unknown as Abi,
 ];
 
@@ -66,13 +79,25 @@ const ABIS: Abi[] = [
 export const RPC_STUB_PORT = Number(process.env.E2E_RPC_STUB_PORT ?? 45_601);
 export const RPC_STUB_URL = `http://127.0.0.1:${RPC_STUB_PORT}`;
 
-type ScenarioResult = string | boolean;
+// WP4.15 multi-owner (PLANNED) - widened for `delegationLeaves`'s `bytes32[16]` single-array
+// output (`DelegationRegistry.sol`'s only function with a non-scalar return). A plain JS `number`
+// or numeric string already round-trips fine for `secondaryCount`'s `uint256` (confirmed directly
+// against viem's `encodeFunctionResult` before adding any scenario for it), so no separate bigint
+// case is needed.
+type ScenarioResult = string | boolean | readonly string[];
 
 const scenarios = new Map<string, ScenarioResult>();
 /** Set to force every subsequent `eth_call` to fail (simulates an unreachable RPC) - a deliberate
  * scenario, not a bug in the stub, so tests can prove the fail-closed "chain unreadable ->
  * tagResolution: unknown, verificationError: true" path without an actual network outage. */
 let forceCallFailure = false;
+/** Grade round 1 D6 - set to force the next `eth_sendTransaction` to fail, standing in for a
+ * rejected wallet prompt (MetaMask's own "User rejected the request" surfaces to the app the exact
+ * same way: `writeContractAsync` throws before ever obtaining a hash). This stub sits between the
+ * app and any connector, so it cannot distinguish "the human clicked Reject" from "the RPC refused
+ * the request" - both are a thrown error at the same call site, which is the only thing
+ * `RevokeSecondaryOwnerAction`'s own catch branch can ever observe either way. */
+let forceSendTransactionFailure = false;
 let blockNumber = 1_000n;
 
 /** WP4.5 track 3 - `txHash` (lowercase) -> mined receipt status, scripted per test via
@@ -138,6 +163,15 @@ function scenarioKey(functionName: string, address: string, args: readonly unkno
   return `${functionName}:${address.toLowerCase()}:${canonicalArgKey(args)}`;
 }
 
+// WP4.15 multi-owner (PLANNED) - `DelegationRegistry.EMPTY_DELEGATION_ROOT`, the fold of sixteen
+// all-zero leaves (`docs/DELEGATION.md` section 4.2; `src/lib/delegation/constants.ts`'s own
+// `EMPTY_DELEGATION_ROOT`, independently derivation-tested there against the vendored
+// `@dogtag/standard`). Inlined here rather than imported - this file loads through Node's native
+// ESM loader (this file's own header comment), which does not resolve the `@/` path alias the rest
+// of this app's source uses.
+const EMPTY_DELEGATION_ROOT = "0x08cec144526c6d771c4aad65ad4e8054bc21e6f09b8bdf27c13ba39643fa8ddc";
+const ZERO_HEX32 = `0x${"0".repeat(64)}`;
+
 function defaultResultFor(functionName: string): ScenarioResult {
   if (functionName === "isValid") return false;
   // WP4.7 A9 - `operators` is a `mapping(address => bool)` getter; an address never added reads
@@ -149,6 +183,26 @@ function defaultResultFor(functionName: string): ScenarioResult {
   // "natural" default for an entity account nobody scripted, matching `isValid`/`operators` above.
   if (functionName === "isActive") return false;
   if (functionName === "rootIssuer") return "0x0000000000000000000000000000000000000000";
+  // WP4.15 multi-owner (PLANNED) - `isSecondary`/`secondaryCount` follow the identical
+  // never-touched-mapping convention every other reader above already does; `delegationRoot`
+  // mirrors `DelegationRegistry.sol`'s own accessor (`secondaryCount == 0` -> the empty constant,
+  // never a bare `0`); `delegationLeaves` is all-zero, matching a tag with no secondaries at all.
+  if (functionName === "isSecondary") return false;
+  if (functionName === "secondaryCount") return "0";
+  if (functionName === "delegationRoot") return EMPTY_DELEGATION_ROOT;
+  if (functionName === "delegationLeaves") return Array.from({length: 16}, () => ZERO_HEX32);
+  // WP4.15 multi-owner (PLANNED) - `EntityRegistry.canVerify`, newly reachable through this stub
+  // (see the `entityRegistryAbiJson` import's own doc comment) alongside `isActive` above
+  // (WP4.14V). Same never-configured-mapping convention as `operators`/`isValid` above.
+  if (functionName === "canVerify") return false;
+  // WP4.15 multi-owner (PLANNED) - `DogTagSBTConsent.status(dogTagId) -> uint8`, newly reachable
+  // by any real (not merely seeded-at-a-later-state) issuance/delegation ceremony that checks tag
+  // lifecycle status. `"0"` is `Status.Active` (`contracts/src/DogTagSBTConsent.sol`'s own enum
+  // order) - matching a real chain's default for a freshly-issued tag, never the terminal
+  // Deceased(3)/Revoked(4) values `isTerminalSbtStatus` (`src/lib/delegation/constants.ts`) checks
+  // for. The bare `ZERO_HEX32` fallback below is a valid `bytes32` (`profileRoot`'s own shape) but
+  // is NOT a valid small-integer encoding for a `uint8` return - status needs its own case.
+  if (functionName === "status") return "0";
   // WP4.14 - `issuedBy` returns an `address`, never a bytes32 word: falling through to this
   // function's own zero-bytes32 default below would fail `encodeResult`'s ABI encoding outright
   // (an `address` output slot cannot accept a 32-byte value) the first time any record e2e spec
@@ -162,7 +216,7 @@ function defaultResultFor(functionName: string): ScenarioResult {
   // vendored `@dogtag/standard` helper `lib/records/reconcile.ts` itself uses) keeps this stub's
   // default in permanent lockstep with the real value, rather than a second hand-copied hex literal.
   if (functionName === "RECORD_TYPE_VACCINATION") return recordTypeKey("VACCINATION");
-  return `0x${"0".repeat(64)}`; // profileRoot / recordTypeOf - zero IS the correct "never written" default for both mappings
+  return ZERO_HEX32; // profileRoot / recordTypeOf - zero IS the correct "never written" default for both mappings
 }
 
 function decodeCall(data: Hex): {functionName: string; args: readonly unknown[]} | null {
@@ -233,6 +287,7 @@ export function startRpcStub(): Server {
     if (req.method === "POST" && req.url === "/__control/reset") {
       scenarios.clear();
       forceCallFailure = false;
+      forceSendTransactionFailure = false;
       receipts.clear();
       gasEstimate = 200_000n;
       lastSendTransaction = null;
@@ -254,6 +309,11 @@ export function startRpcStub(): Server {
     }
     if (req.method === "POST" && req.url === "/__control/force-call-failure") {
       forceCallFailure = true;
+      sendJson(res, 200, {ok: true});
+      return;
+    }
+    if (req.method === "POST" && req.url === "/__control/force-send-transaction-failure") {
+      forceSendTransactionFailure = true;
       sendJson(res, 200, {ok: true});
       return;
     }
@@ -387,6 +447,13 @@ export function startRpcStub(): Server {
      * matching `POST .../tx`'s own `/^0x[0-9a-fA-F]{64}$/` validation. Never auto-mines a receipt
      * for it - `setRpcReceipt` stays the one way a test puts a hash into `receipts`. */
     if (rpcRequest.method === "eth_sendTransaction") {
+      if (forceSendTransactionFailure) {
+        // One-shot, not sticky - mirrors a single rejected prompt, not a permanently broken wallet,
+        // so a test can assert on the app's recovery UI and then (if it wants to) retry cleanly.
+        forceSendTransactionFailure = false;
+        replyError("stub: simulated wallet rejection");
+        return;
+      }
       lastSendTransaction = (rpcRequest.params?.[0] as Record<string, unknown> | undefined) ?? null;
       const hash = fakeTxHash();
       lastSentTxHash = hash;
@@ -445,6 +512,13 @@ export async function resetRpcStub(): Promise<void> {
 
 export async function forceRpcCallFailure(): Promise<void> {
   await fetch(`${RPC_STUB_URL}/__control/force-call-failure`, {method: "POST"});
+}
+
+/** Grade round 1 D6 - the NEXT `eth_sendTransaction` fails (one-shot; see the flag's own doc
+ * comment for why this stub cannot distinguish a rejected prompt from an RPC-level refusal, and why
+ * that distinction does not matter to the app code under test either way). */
+export async function forceRpcSendTransactionFailure(): Promise<void> {
+  await fetch(`${RPC_STUB_URL}/__control/force-send-transaction-failure`, {method: "POST"});
 }
 
 /** Scripts one `eth_call` read: the next call to `functionName` against `address` with exactly

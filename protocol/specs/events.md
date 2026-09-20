@@ -1,7 +1,7 @@
 # DogTag v2 contract events
 
 This document explains the semantics of every v2 contract event, and is a complete, field-by-field companion to the generated machine manifest at `contracts/exports/events.json` (contract, event name, full signature, topic0 for every event in the v2 set).
-Every event `events.json` lists appears below with a matching signature, and nothing below is absent from, or extra to, that manifest.
+Every event `events.json` lists appears below with a matching signature, and nothing below is absent from, or extra to, that manifest, with one named exception: the section marked PLANNED describes a contract that is not deployed yet, so its events cannot be in `events.json` until it ships - see that section for details.
 The admin indexer is the primary consumer of most of these events; this document also covers the standard OpenZeppelin administrative events every contract inherits and the `ProtocolRegistry` discovery/governance events, both of which sit outside the indexer's own tag-lifecycle stream described next.
 
 ## Why the indexer treats these as one stream
@@ -73,6 +73,9 @@ Admin-driven deployment and per-clone bookkeeping for `VetIssuer`.
   Fired by `addOperator` / `removeOperator`, both `onlyFactoryAdmin`.
   Load-bearing for whitelist reconstruction: this clone exposes no enumerable operator list, so knowing who was whitelisted at any past moment - not only who is whitelisted now - means replaying every `OperatorSet` from this clone's deployment block forward.
   Both the indexer and an offline verifier reconstructing whether a signer was whitelisted at issuance time (`specs/issuer-attestation.md`, "Whitelisted at anchor time") depend on this event for exactly that reason.
+  Concretely, in `dogtag-admin`: `Entity.chain.operators` is folded from this event (`src/lib/indexer/fold-operator.ts`), keyed off `allowed`, so the admin's own record of who is whitelisted on a clone follows the chain rather than only what a browser session happened to write through its own add/remove UI.
+  This is forward-only: the indexer's folds run only on each cycle's newly-finalized slice, so an `OperatorSet` already finalized before dogtag-admin's worker adopts this fold is never replayed.
+  `Entity.chain.operators` rows a browser session wrote before that point are therefore not retroactively reconciled against the chain; only operator changes finalized after the worker adopts this fold are guaranteed to match it.
 - `VetOwnerSet(address indexed oldOwner, address indexed newOwner)`.
   Fired by `setVetOwner`, called directly by `VetIssuerFactory.syncCloneOwner` (or by the factory admin) as part of the same account-rotation flow `CloneOwnerSynced` completes.
   The indexer uses this to confirm the clone's own record of who it issues for agrees with the factory's `cloneOf` and the registry's account key, after a rotation.
@@ -153,6 +156,44 @@ Admin-driven deployment and per-clone bookkeeping for `VetIssuer`.
 - `RoleGranted(bytes32 indexed role, address indexed account, address indexed sender)`, `RoleRevoked(bytes32 indexed role, address indexed account, address indexed sender)`, `RoleAdminChanged(bytes32 indexed role, bytes32 indexed previousAdminRole, bytes32 indexed newAdminRole)`, `DefaultAdminTransferScheduled(address indexed newAdmin, uint48 acceptSchedule)`, `DefaultAdminTransferCanceled()`, `DefaultAdminDelayChangeScheduled(uint48 newDelay, uint48 effectSchedule)`, `DefaultAdminDelayChangeCanceled()`.
   Standard `AccessControl`/`AccessControlDefaultAdminRules` events, gating the two-step `DEFAULT_ADMIN_ROLE` handover (this registry defines no role beyond `DEFAULT_ADMIN_ROLE` itself).
   See *Inherited administrative events* below for what each one means.
+
+## DelegationRegistry (PLANNED - WP4.15B, not yet deployed)
+
+This contract does not exist yet. It is staged for WP4.15B (`plans/wp4.15-multi-owner.md` section
+11.2, item B1; see `docs/DELEGATION.md` for the full multi-owner model it is part of). The two
+events below are not yet in `contracts/exports/events.json` and cannot fire on any deployed chain
+until this contract ships; they are documented here now so the admin indexer's eventual integration
+has a stable, decided target to build against, the same way `specs/vet-public-api.yaml`'s `/d/`
+paths give the app waves a stable target ahead of their own implementation.
+
+- `SecondaryOwnerAdded(uint256 indexed dogTagId, bytes32 indexed commitment, address clone)`.
+  Fired by `add`, callable only by an active clinic clone
+  (`factory.isClone(msg.sender) && entityRegistry.isActive(VetIssuer(msg.sender).vetOwner())`,
+  mirroring `VetIssuer.onlyActiveOperator`'s own trust boundary). `commitment` is the added
+  delegate's `Poseidon2(Ax, Ay)` public key commitment (`docs/DELEGATION.md` section 4.2) - opaque,
+  never a wallet address or any other owner-identifying value. `dogTagId` is indexed and public, the
+  same way every other event in this document already exposes it (see "Event fields that are
+  deliberately absent" below); this event additionally reveals the *count* of secondary owners on a
+  tag over time to anyone watching this contract's log, which is accepted per Kenneth's decision
+  (`plans/wp4.15-multi-owner.md` section 9 item 6).
+- `SecondaryOwnerRevoked(uint256 indexed dogTagId, bytes32 indexed commitment, address clone)`.
+  Fired by `revoke`, same writer predicate as `add` - any currently-Active clinic may revoke, not
+  only the one that added the delegate (`plans/wp4.15-multi-owner.md` section 9 item 2). Zeroes
+  `commitment`'s leaf in place and recomputes `delegationRoot(dogTagId)` (`docs/DELEGATION.md`
+  section 4.5) - the leaf's storage slot is not removed or compacted, only zeroed.
+
+Neither event names the secondary owner's wallet address, matching every other event in this
+document's owner-blind convention - `commitment` is the same kind of opaque hash `owner.consentKey`
+already is for the primary owner, never a reversible identifier on its own.
+
+**`dogTagId` here is the canonical field-form value, the same one every other event in this document
+carries** (grade-round-1 ruling, `plans/wp4.15-multi-owner.md` section 13): naming is per-contract in
+this codebase, not global - `VetIssuer`'s own events use `dogTagIdField` as their parameter name,
+while `DogTagSBTConsent`'s and `VerificationRegistryConsent`'s events use `dogTagId`, and both name
+the identical field-form value regardless of which name the parameter carries. `DelegationRegistry`
+is a new contract, not part of `VetIssuer`, so it follows the latter convention - `dogTagId` stands
+here, unrelated to (and not in conflict with) the `dogTagIdField` naming the PLANNED `Delegation*`
+API schemas use in `specs/vet-public-api.yaml`, which name a value on a different layer.
 
 ## ProtocolRegistry
 

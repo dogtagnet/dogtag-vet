@@ -22,8 +22,13 @@ WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY --from=deps /app/protocol/packages/dogtag-standard-ts/node_modules ./protocol/packages/dogtag-standard-ts/node_modules
 COPY . .
-# Build-time env: none of these need real values to produce a build, only to run - see
-# .env.example for what the running container actually needs.
+# Build-time env: genuinely none needed. The ROAX RPC/chain id/explorer and the five protocol
+# contract addresses this app serves to the browser are injected into every page at REQUEST time
+# by PublicConfigInitScript (src/components/PublicConfigInitScript.tsx), which reads this
+# container's own real runtime env through src/lib/env.ts - never a build-time-inlined
+# NEXT_PUBLIC_ literal (WP4.17 D2). This image is built exactly once and the identical artifact is
+# deployed to every environment (dev/staging/prod), each supplying its own env at
+# `docker run`/Compose/Helm time; see .env.example for what the running container needs.
 RUN pnpm build
 
 FROM base AS runner

@@ -14,6 +14,7 @@ import {resolveOperatorStatus} from "@/lib/issuanceOperatorStatus";
 import {listRecentAbuse} from "@/lib/abuseLog";
 import {AbuseLogSection} from "@/app/(app)/settings/AbuseLogSection";
 import {BookingConfigSection} from "@/app/(app)/settings/BookingConfigSection";
+import {ConsentRelayerSection} from "@/app/(app)/settings/ConsentRelayerSection";
 import {IcsFeedSection} from "@/app/(app)/settings/IcsFeedSection";
 import {MyProfileSection} from "@/app/(app)/settings/MyProfileSection";
 import {MyWalletSection} from "@/app/(app)/settings/MyWalletSection";
@@ -109,6 +110,7 @@ export default async function SettingsPage() {
         <OperatorsSection staff={staff} cloneAddress={settings.cloneAddress} isOwner={isOwner} />
         <BookingConfigSection settings={bookingSettings} rules={rules} exceptions={exceptions} practitioners={practitioners} isOwner={isOwner} />
         <IcsFeedSection initialToken={settings.icsFeedToken} publicBaseUrl={env.PUBLIC_BASE_URL} />
+        <ConsentRelayerSection initial={Boolean(settings.consentRelayerViaCloneEnabled)} isOwner={isOwner} />
         <AbuseLogSection entries={abuseEntries} timeZone={bookingSettings.timezone} />
       </div>
     </>

@@ -114,6 +114,37 @@
   },
   {
     "type": "function",
+    "name": "addSecondaryOwner",
+    "inputs": [
+      {
+        "name": "dogTagIdField",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "commitment",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "delegationRegistry",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "factory",
     "inputs": [],
     "outputs": [
@@ -149,6 +180,24 @@
       },
       {
         "name": "factory_",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "initializeDelegation",
+    "inputs": [
+      {
+        "name": "delegationRegistry_",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "verificationRegistry_",
         "type": "address",
         "internalType": "address"
       }
@@ -351,6 +400,34 @@
   },
   {
     "type": "function",
+    "name": "relayVerification",
+    "inputs": [
+      {
+        "name": "a",
+        "type": "uint256[2]",
+        "internalType": "uint256[2]"
+      },
+      {
+        "name": "b",
+        "type": "uint256[2][2]",
+        "internalType": "uint256[2][2]"
+      },
+      {
+        "name": "c",
+        "type": "uint256[2]",
+        "internalType": "uint256[2]"
+      },
+      {
+        "name": "pub",
+        "type": "uint256[7]",
+        "internalType": "uint256[7]"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "removeOperator",
     "inputs": [
       {
@@ -373,6 +450,24 @@
       },
       {
         "name": "reasonCode",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "revokeSecondaryOwner",
+    "inputs": [
+      {
+        "name": "dogTagIdField",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "commitment",
         "type": "bytes32",
         "internalType": "bytes32"
       }
@@ -498,6 +593,19 @@
     ],
     "outputs": [],
     "stateMutability": "payable"
+  },
+  {
+    "type": "function",
+    "name": "verificationRegistry",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
   },
   {
     "type": "function",
@@ -876,6 +984,11 @@
   },
   {
     "type": "error",
+    "name": "DelegationRegistryNotConfigured",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "ERC1967InvalidImplementation",
     "inputs": [
       {
@@ -980,6 +1093,11 @@
   {
     "type": "error",
     "name": "UnknownTag",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "VerificationRegistryNotConfigured",
     "inputs": []
   },
   {

@@ -82,6 +82,20 @@ export interface ClinicSettingsDoc {
    * Lives here rather than a dedicated collection since this deployment only ever follows one
    * clone, so there is exactly one cursor to keep, same singleton as everything else here. */
   activityCursorBlock?: number;
+  /**
+   * WP4.15 multi-owner (PLANNED) - opts this clinic's `/verify` consent-relayer flow into
+   * targeting its OWN clone as the on-chain relayer (`VetIssuer.relayVerification`, `docs/
+   * DELEGATION.md` section 7's "relayVerification is a new relayer") instead of the connected
+   * staff wallet submitting `recordVerificationZK` directly. Off by default, and pending a real
+   * whitelisting step this app cannot perform itself: the protocol admin must separately grant
+   * `EntityRegistry.canVerify(purpose, thisClinicsClone)` before ANY session started with this
+   * flag on can actually confirm on chain - `POST /api/verify/start`'s existing `readCanVerify`
+   * preflight (unmodified) already fails closed with a clear message if that grant is missing, the
+   * exact same way it already does for an unwhitelisted staff wallet today - so turning this flag
+   * on before the admin grant exists is honestly refused, never a silent revert (the WP4.16
+   * OperatorsSection lesson: never ship a control whose write always fails on a real chain).
+   */
+  consentRelayerViaCloneEnabled?: boolean;
   updatedAt: Date;
 }
 
@@ -161,6 +175,7 @@ const clinicSettingsSchema = new Schema<ClinicSettingsDoc>(
     },
     icsFeedToken: {type: String, index: true, sparse: true, unique: true},
     activityCursorBlock: Number,
+    consentRelayerViaCloneEnabled: Boolean,
   },
   {timestamps: {createdAt: false, updatedAt: true}},
 );
