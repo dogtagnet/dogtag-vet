@@ -20,7 +20,9 @@ This is the fastest path to a running clinic instance, and the one this project 
    - `PUBLIC_BASE_URL` - the URL this instance will actually be reachable at (see "Getting a public URL" below if you do not have one yet).
    - `AUTH_SECRET` - generate one with `openssl rand -base64 32`.
    - `AUTH_GOOGLE_ID` and `AUTH_GOOGLE_SECRET`, or `EMAIL_SERVER` and `EMAIL_FROM` - at least one staff sign-in method.
+   - `AUTH_TRUST_HOST=1` - required once this app sits behind a reverse proxy or tunnel (Cloudflare Tunnel, nginx) that terminates TLS and forwards the original host header, which every path this guide recommends does (see "Trusted proxy hops" below); Auth.js v5 refuses to serve `/api/auth/*` at all without it in that setup.
    - `VET_ISSUER_FACTORY_ADDRESS`, `ENTITY_REGISTRY_ADDRESS`, `DOGTAG_SBT_ADDRESS`, `VERIFICATION_REGISTRY_ADDRESS` - the protocol contract addresses on ROAX.
+   - `DELEGATION_REGISTRY_ADDRESS` - the WP4.15 multi-owner DelegationRegistry contract address, required for the Owners card and the `/d/*` delegation routes.
 
    `.env.example` documents every other value and its default; leave the rest alone until you have a specific reason to change them.
 3. Start the stack.
@@ -59,18 +61,19 @@ Two ways to get one without owning server infrastructure:
 
 No inbound firewall rule or port forward is needed anywhere in this path - `cloudflared` makes an outbound connection to Cloudflare, which is what a residential or clinic-office network almost always allows by default.
 
-### Operator wallet gas
+### Wallet gas for on-chain writes
 
-The wallet you connect during setup submits every on-chain write this app makes - issuing a tag, revoking or reactivating one, and relaying a verification signature - so it needs a native PLASMA balance to pay gas.
-Gas is fronted by that operator wallet and refunded by the clinic's clone on success.
-A failed attempt is not refunded - keep the wallet topped up rather than relying on refunds to cover the next attempt.
+There is no single stored "relayer wallet". Every on-chain write this app makes - issuing a tag or a record, revoking or reactivating one, relaying a verification signature, and (WP4.15) adding or revoking a secondary owner - is signed by whichever browser wallet is connected in that staff member's own session at the time (`TagIssueWizard`, `TagsTable`, `VerifySessionPanel`, `IssueRecordForm`, `RecordsCard`, `AddSecondaryOwnerAction`, and `RevokeSecondaryOwnerAction` each submit through their own connected wallet).
+`ClinicSettings.operatorWallet` remembers only the last-connected address, for display continuity between visits - nothing reads it back to sign anything.
+Whichever wallet submits a write needs its own native PLASMA balance to pay gas for it; gas is fronted by that wallet and refunded by the clinic's clone on success.
+A failed attempt is not refunded - keep whichever wallets your staff actually use topped up rather than relying on refunds to cover the next attempt.
 
 ### Vet role, issuance operators, and per-practitioner scheduling
 
 This section covers two related, Settings-page-only features - neither needs an environment variable or a redeploy.
-Note the naming collision with "Operator wallet gas" just above: that section is about the ONE relayer wallet you connected during setup, which fronts gas for every on-chain write this app makes.
+Note the naming collision with "Wallet gas for on-chain writes" just above: that section is about paying gas from whichever browser wallet happens to be connected when a write is submitted.
 This section is about a DIFFERENT, per-vet concept the app calls an "issuance operator" - a wallet the contract's `VetIssuer` clone whitelists to issue tags and records at all.
-The two are unrelated; a staff member's wallet being an issuance operator does not give it any gas-fronting role, and the relayer wallet from setup does not need to also be an issuance operator.
+The two are unrelated; a staff member's wallet being an issuance operator does not give it any special gas-fronting role, and whichever wallet happened to complete setup does not need to also be an issuance operator.
 
 **Granting a vet the ability to issue tags (WP4.16: through the DogTag admin portal, not this app):**
 
@@ -78,13 +81,13 @@ Only the DogTag protocol admin's own wallet may call `addOperator`/`removeOperat
 This app's Settings page cannot grant or revoke that whitelist itself; the "Issuance operators" panel below only ever reads and displays the current on-chain answer.
 
 1. Invite the staff member from Settings ("Invite by email"), choosing role Vet (or Owner, which already carries this ability).
-   A plain Staff role can never issue tags or records, on any chain - `/tags` and `/tags/issue` redirect them, and the three issuance API routes reject them with a 403, regardless of any on-chain whitelist state.
-2. Record that staff member's own wallet address on their row in the staff roster (the "Wallet address" field) - this is the address that will actually submit their `issueTag`/`issueRecord` transactions from their own browser session once whitelisted, not the relayer wallet from setup.
+   A plain Staff role can never issue tags or records, on any chain - `/tags` and `/tags/issue` redirect them, and the issuance, records and delegation API routes reject them with a 403, regardless of any on-chain whitelist state.
+2. Record that staff member's wallet address in their "Practitioner profiles" entry below the staff roster (the "Wallet address" field) - this is informational, the address the admin's whitelist decision below is checked against, not something this app reads back to sign anything; whichever wallet the vet actually has connected in their browser is what submits their `issueTag`/`issueRecord` transactions.
    The vet does not need you for this step at all: once invited, they can record (or clear) their own wallet themselves from their own "My issuance wallet" card on Settings, including a "Use connected wallet" button that fills it from their own connected browser wallet - see the README's own section on this. Either path writes to the identical field; use whichever is more convenient for a given vet.
 3. File the actual whitelist request in the DogTag admin portal, not here: sign in to the admin portal with this clinic's own account (the one used to apply for this clinic originally), go to its status page, and use the "Issuance operators" section there to submit the vet's details (name, title, accreditation number, and the SAME wallet address you just recorded in step 2) as a request to whitelist that wallet.
    The DogTag protocol admin reviews that queue and, when satisfied, approves it from their own admin session - that approval is what actually submits the `addOperator` transaction, signed by the admin's own wallet, never yours.
-4. Wait for the admin's transaction to confirm; back in this app, the "Issuance operators" panel's row for that staff member flips from Inactive to Active once its `operators(address)` read reflects it - normally within a few seconds of the admin's transaction confirming (the same short cache this whole app shares for this check), with nothing further needed from you.
-   The app's own role gate (`/tags`, `/tags/issue`, the three issuance API routes) checks ONLY the app-side Vet/Owner role, not this on-chain grant - a Vet whose role is already set reaches those pages fine even before this step, but every actual issuance transaction they submit reverts on-chain until this grant lands, since the contract enforces its own operator whitelist independently of anything this app shows them.
+4. Wait for the admin's transaction to confirm; back in this app, the "Issuance operators" panel's row for that staff member flips from Inactive to Active once its `operators(address)` read reflects it - normally within a few seconds of the admin's transaction confirming (that panel runs its own independent, client-side `operators(address)` read; there is no shared cache with any other surface, each one - this panel, the vet's own "My issuance wallet" card, the `/tags`/`/tags/issue` banner - polls the chain on its own), with nothing further needed from you.
+   The app's own role gate (`/tags`, `/tags/issue`, the issuance, records and delegation API routes) checks ONLY the app-side Vet/Owner role, not this on-chain grant - a Vet whose role is already set reaches those pages fine even before this step, but every actual issuance transaction they submit reverts on-chain until this grant lands, since the contract enforces its own operator whitelist independently of anything this app shows them.
 5. To revoke a vet's issuance access, file the same kind of request in the admin portal (its request form's own "Remove this wallet's issuance access" option instead of the whitelist one) and wait for the admin to approve it the same way.
    This app has no self-service "Remove operator" action of its own any more - treat revocation as taking however long the admin takes to act on that request, not something you can do instantly the moment a vet leaves.
    Demoting a vet's app-side role to Staff (or disabling their account) is immediate and independent of this - do that right away when a vet leaves, and file the on-chain removal request separately, since the app-side role change alone does not touch the chain and the contract will keep honoring a stale operator grant until the admin actually revokes it.
@@ -95,6 +98,7 @@ The vet does not need to ask you whether step 4 has landed: their own "My issuan
 
 This mode switch is safe to flip on a running clinic with existing data - it changes how NEW availability is computed and how the calendar displays appointments, and it does not rewrite, delete, or reinterpret anything already in the database.
 Before switching, confirm at least one Staff row has role Vet or Owner, is marked "Bookable", and has at least one weekly-hours rule of their own set in the "Weekly hours" picker (select that practitioner from the picker above it first) - the Settings page refuses the switch with an explicit message until this is true, so there is no way to flip it into a broken state through the UI.
+A database created before this feature existed also needs a one-time index migration: it still physically carries the old single-field unique index on `AvailabilityException.date` (Mongo never drops an index just because a schema stops declaring it), which keeps rejecting a second practitioner's exception on a date already taken until it is dropped. Check first, from a `mongosh` shell against this deployment's database: `db.availabilityexceptions.getIndexes().filter(i => i.name === "date_1")` - if the one result's `unique` field is `true`, run `db.availabilityexceptions.dropIndex("date_1")` once; a brand-new database (or one already migrated) has no `unique: true` index named `date_1` to find, so there is nothing to do. See `src/lib/models/Availability.ts`'s own "LIVE-DB MIGRATION NOTE" for the full detail, including why re-running the drop on an already-migrated database is safe to check for but harmful to run speculatively.
 Any appointment that already exists with no practitioner assigned becomes "Unassigned" the moment the mode switches, and per D3's design it blocks that same time slot for every practitioner (never a silent double-book) until staff open it and assign one - expect a "Unassigned appointments need a practitioner" banner on the calendar immediately after switching if any such appointments fall in the visible date range, and treat clearing that banner (assigning a real practitioner to each) as the last step of the migration, not an optional cleanup.
 If two or more of those legacy appointments land at the EXACT same instant (only possible if the Whole-clinic window's own capacity was ever set above 1), assigning any one of them will correctly refuse with a conflict for as long as any of the others at that same instant is still unassigned - D3 treats every unassigned appointment as blocking, including against each other, so the system will never silently pick a winner between two appointments competing for one practitioner's single slot. This is not a bug and not a sign the migration is stuck, and note that adding another bookable practitioner does NOT clear it - each unassigned appointment blocks every practitioner, including a newly added one, so both remain unassignable while both are live. Resolve it the way the software actually allows: cancel all but one of the overlapping appointments (an appointment's time cannot be edited after creation - there is no reschedule action, and a cancellation cannot be undone), then assign the remaining one normally. If a cancelled one still needs to happen, re-create it from the calendar with a practitioner chosen at creation time, which is a staff booking and so is allowed to sit alongside the existing one.
 Switching back to Whole clinic at any time is equally safe and immediate - it simply stops consulting per-practitioner rules/exceptions and per-practitioner appointment assignment, reverting to the exact clinic-wide computation this app used before this feature existed; no data is lost either direction, so the switch can be rehearsed on a live deployment during a quiet period before committing to it.
@@ -134,17 +138,18 @@ Verify the chart with `helm lint helm/dogtag-vet` and `helm template dogtag-vet 
 
 The Docker Compose path runs Mongo in a container with a Docker volume, which is fine for a single clinic and simple to back up (see "Backups" below), but a managed Mongo (MongoDB Atlas, or your cloud provider's managed offering) removes the database from your own operational surface entirely - no volume to babysit, automatic backups, easier scaling.
 
-To use one: create a database, get its connection string, and set `MONGODB_URI` to it (in `.env` for Compose, or `env.MONGODB_URI` / a Secret key for Helm) instead of the compose-provided `mongodb://mongo:27017/dogtag-vet`.
+To use one: create a database and get its connection string.
+For Helm, that is all - set `env.MONGODB_URI` (or a Secret key) to it instead of your own Mongo's URI.
+For Compose, setting `MONGODB_URI` in `.env` is NOT enough on its own: `docker-compose.yml` hard-codes `MONGODB_URI` under `environment:` for both the `web` and `worker` services, and Compose's `environment:` block always overrides `env_file` - so the hard-coded value wins regardless of what `.env` says. Edit or remove those two `environment: MONGODB_URI` entries (and, since you no longer need the bundled database, the `depends_on: mongo` line and the `mongo` service and its volume) in `docker-compose.yml` itself before setting `MONGODB_URI` in `.env` to your managed connection string.
 Nothing else in this app changes - it is plain `mongoose` against a standard connection string either way.
-If you switch to a managed Mongo under Docker Compose, you can also drop the `mongo` service and its volume from `docker-compose.yml` entirely.
 
 ## Protecting your deployment
 
 This code is open source and the APIs are known to everyone - a self-hosting vet (git clone + setup) needs perimeter protection beyond the in-process fixed-window limiter described below, because the booking/registration endpoints are open by design (the QR-based flows carry one-time tokens, but nothing gates who can even attempt to start one).
 Treat everything in this section as a checklist to complete before pointing any real client traffic at a fresh deployment, not just background reading.
 
-Every public API route (`/p/`, `/x/`, `/w/`, `/v1/booking/*`, `/v1/verify/consent`, `/v1/payments/*/public`, `/v1/entity`, `/r/pay/*`, `/profiles/issue/custodial-bind`) already rate-limits and caps request body size at the application layer (`src/lib/rateLimit.ts`, `src/lib/bodyLimit.ts`) and records rejected requests to an abuse log visible on the Settings page.
-The client-facing HTML pages that front those routes - `/book` (the booking form) and `/booking/*` (the status/cancel page a confirmation email links to) - carry no application-layer rate limit of their own; they are static-ish page renders, and every write or lookup they trigger goes through the limited API routes above, so the exposure is the same page-load cost any public page has.
+Every public API route (`/p/`, `/x/`, `/w/`, `/d/`, `/e/`, `/i/`, `/v/`, `/v1/booking/*`, `/v1/verify/consent`, `/v1/payments/*/public`, `/v1/entity`, `/r/pay/*`, `/profiles/issue/custodial-bind`) already rate-limits and caps request body size at the application layer (`src/lib/rateLimit.ts`, `src/lib/bodyLimit.ts`) and records rejected requests to an abuse log visible on the Settings page.
+The client-facing HTML pages that front those routes - `/book` (the booking form) and `/booking/*` (the status/cancel page a confirmation email links to) - carry no application-layer rate limit of their own. `/book`'s own writes go through the limited API routes above; `/booking/{id}` is different - its initial render performs its own direct, token-checked read of the Appointment (`src/app/booking/[id]/page.tsx`), not a call through a rate-limited route, while its Cancel button does call the limited `POST /v1/booking/appointments/{id}/cancel`. Both pages are unauthenticated page-loads guarded only by a per-appointment token in the URL, so rely on the Cloudflare/nginx tier below for their rate limiting, the same as the token-guessing surface it already covers.
 That log keys each entry by the requester's IP address and self-prunes after 14 days, which is the entirety of this deployment's retention policy for that data.
 A reverse proxy in front of the app is still worth having, both to absorb traffic before it reaches this single Node process at all and for TLS termination.
 
@@ -176,7 +181,7 @@ This is the recommended perimeter for any deployment reachable over the public i
    An attacker who finds the origin IP can bypass every Cloudflare rule below entirely by connecting straight to it.
 2. **Rate limiting rules** (Security > WAF > Rate limiting rules) - add a rule per sensitive path group, tighter than the application's own limits so abusive traffic is stopped at the edge instead of reaching this process at all:
    - `/v1/booking/book`, `/profiles/issue/custodial-bind`, `/v1/verify/consent` (the write/session-start endpoints): a low limit, e.g. 5 requests per minute per IP.
-   - `/p/*`, `/x/*`, `/w/*`, `/v1/booking/appointments/*`, `/booking/*` (token-guessing surface): a moderate limit, e.g. 20 requests per minute per IP - `/v1/booking/appointments/{id}` and its `/cancel` companion are gated by the same kind of per-resource token as `/p/`/`/x/`/`/w/`, so they belong in this tier, not the general one below; a rotating, unguessable token is the real defense in every case here, the rate limit is defense in depth, not the only control.
+   - `/p/*`, `/x/*`, `/w/*`, `/d/*`, `/e/*`, `/i/*`, `/v/*`, `/v1/booking/appointments/*`, `/booking/*` (token-guessing surface): a moderate limit, e.g. 20 requests per minute per IP - `/v1/booking/appointments/{id}` and its `/cancel` companion, and the WP4.9-to-4.15 single-use ceremony routes `/d/*` (delegation), `/e/*` (record export), `/i/*` (tag import), and `/v/*` (verify export), are all gated by the same kind of per-resource token as `/p/`/`/x/`/`/w/`, so they belong in this tier, not the general one below; a rotating, unguessable token is the real defense in every case here, the rate limit is defense in depth, not the only control.
    - `/book` (the public booking form page itself, as opposed to the `/v1/booking/*` API it calls): Cloudflare's default rate limiting is usually sufficient - it is a page render, not a write.
    - Everything else under `/v1/*` and `/r/*` (including the read-only `/v1/booking/availability` and `/v1/booking/services`): Cloudflare's default rate limiting is usually sufficient; add a rule only if you see abuse in the logs.
 3. **Bot Fight Mode** (Security > Bots) - turn it on.
@@ -209,7 +214,7 @@ server {
         proxy_set_header X-Forwarded-Proto $scheme;
     }
 
-    location ~ ^/(p|x|w)/ {
+    location ~ ^/(p|x|w|d|e|i|v)/ {
         limit_req zone=dogtag_tokens burst=10 nodelay;
         proxy_pass http://127.0.0.1:3000;
         proxy_set_header Host $host;
