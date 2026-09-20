@@ -10,7 +10,7 @@ import {
   fromWireMessage,
   toWireMessage,
 } from "@/lib/registration/eip712";
-import vectors from "../../../protocol/specs/eip712-client-registration-vectors.json";
+import vectors from "../vectors/eip712-client-registration-vectors.json";
 
 /**
  * `tests/unit/eip712ClientRegistration.vectors.test.ts` pins the fixture against a SEPARATE,

@@ -13,7 +13,7 @@ import {computeMobileBookingHash} from "@/lib/booking/bookingHash";
  * INDEPENDENTLY first, then hashes the fixed-size (6*32-byte) concatenation of those six digests -
  * no delimiter, so no cross-field ambiguity is possible regardless of field content. This is the
  * NORMATIVE definition the iOS app must mirror byte-for-byte to produce a signature this server's
- * independent recomputation will accept; `protocol/specs/mobile-booking-hash-vectors.json` (a
+ * independent recomputation will accept; `tests/unit/vectors/mobile-booking-hash-vectors.json` (a
  * separate known-answer fixture, mirroring how the MobileBooking EIP-712 struct itself is
  * vectored) pins exact input/output pairs for cross-language parity testing.
  */

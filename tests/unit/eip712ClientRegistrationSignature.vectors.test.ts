@@ -2,7 +2,7 @@ import {describe, expect, it} from "vitest";
 import {hashTypedData, isHex, recoverAddress, size} from "viem";
 import {privateKeyToAccount} from "viem/accounts";
 import type {Address, Hex} from "viem";
-import vectors from "../../protocol/specs/eip712-client-registration-signature-vectors.json";
+import vectors from "./vectors/eip712-client-registration-signature-vectors.json";
 
 /**
  * WP4.5 track3-sig fix 5 - the cross-repo SIGNATURE vectors file, distinct from (and a companion
@@ -86,7 +86,7 @@ function buildDomainAndMessage(vector: SignatureVector) {
   return {domain, message};
 }
 
-describe("protocol/specs/eip712-client-registration-signature-vectors.json", () => {
+describe("tests/unit/vectors/eip712-client-registration-signature-vectors.json", () => {
   it("has at least 6 vectors", () => {
     expect(typedVectors.length).toBeGreaterThanOrEqual(6);
   });

@@ -11,7 +11,7 @@ import {
   mobileBookingPayloadSchema,
   toWireMessage,
 } from "@/lib/booking/mobileEip712";
-import vectors from "../../../protocol/specs/eip712-mobile-booking-vectors.json";
+import vectors from "../vectors/eip712-mobile-booking-vectors.json";
 
 /**
  * `tests/unit/eip712MobileBooking.vectors.test.ts` pins the fixture against a SEPARATE,

@@ -82,7 +82,7 @@ Every registered wallet carries a receipt, persisted alongside it on `Client.wal
 
 (`revokedAt` appears ONLY on a revoked wallet's export, as a unix-seconds number - an unrevoked export omits the key entirely, and the verifier rejects a literal `null`.)
 
-`receipt.payloadJson` is a deterministic, fixed-key-order JSON encoding of exactly the `{domain, message}` pair that was signed - the same shape as one entry in `protocol/specs/eip712-client-registration-vectors.json`, minus the `expected` block.
+`receipt.payloadJson` is a deterministic, fixed-key-order JSON encoding of exactly the `{domain, message}` pair that was signed - the same shape as one entry in `tests/unit/vectors/eip712-client-registration-vectors.json`, minus the `expected` block.
 `receiptHash` is `keccak256` of a deterministic encoding of `{payloadJson, recoveredAt, signature}` - the chain-ready anchor point mentioned in "Purpose" above.
 
 This whole structure is designed to be re-verifiable **offline, forever**: nothing about verifying it requires this vet's database, this vet's server being online, or even this vet still existing.

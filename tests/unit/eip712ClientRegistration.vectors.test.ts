@@ -1,10 +1,10 @@
 import {describe, expect, it} from "vitest";
 import {domainSeparator, getTypesForEIP712Domain, hashStruct, hashTypedData} from "viem";
 import type {Address, Hex} from "viem";
-import vectors from "../../protocol/specs/eip712-client-registration-vectors.json";
+import vectors from "./vectors/eip712-client-registration-vectors.json";
 
 /**
- * Pins `protocol/specs/eip712-client-registration-vectors.json` against drift.
+ * Pins `tests/unit/vectors/eip712-client-registration-vectors.json` against drift.
  *
  * That file is a known-answer vector set for the WP4.2 "ClientRegistration" EIP-712 struct
  * (plans/wp4.2-client-wallet-registration.md, "The signed message" - normative), generated once by
@@ -85,7 +85,7 @@ interface ClientRegistrationVector {
 // `resolveJsonModule` + vitest's JSON handling give it back exactly as parsed, untyped.
 const typedVectors = vectors as unknown as ClientRegistrationVector[];
 
-describe("protocol/specs/eip712-client-registration-vectors.json", () => {
+describe("tests/unit/vectors/eip712-client-registration-vectors.json", () => {
   it("has at least 6 vectors", () => {
     expect(typedVectors.length).toBeGreaterThanOrEqual(6);
   });

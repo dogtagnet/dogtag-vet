@@ -43,7 +43,7 @@ An unsigned wallet claim would let anyone book as someone else's client record, 
 
 **Domain**: `{name: "DogTagMobileBooking", version: "1", chainId: <ROAX chain id>, verifyingContract: <this clinic's own on-chain clone address>}`.
 **Struct**: `MobileBooking { address clinic; bytes32 bookingHash; address wallet; uint64 issuedAt; uint64 deadline }`.
-The production TypeScript copy lives in `src/lib/booking/mobileEip712.ts`; known-answer vectors are pinned in `protocol/specs/eip712-mobile-booking-vectors.json`.
+The production TypeScript copy lives in `src/lib/booking/mobileEip712.ts`; known-answer vectors are pinned in `tests/unit/vectors/eip712-mobile-booking-vectors.json`.
 
 `clinic` and `bookingHash` are never accepted from the wire - the server always derives both itself (`clinic` from `ClinicSettings.cloneAddress`; `bookingHash` below), so a request can never claim a domain or binding it did not actually sign over.
 The wire's `mobile.wallet` block therefore carries only `address`, `signature`, `issuedAt`, and `deadline`.
@@ -53,7 +53,7 @@ The wire's `mobile.wallet` block therefore carries only `address`, `signature`, 
 `bookingHash` binds the signature to this booking's exact content, so it cannot be replayed onto a different slot, a different service, a different claimed client, or a different tag claim.
 It is `keccak256` of a **hash-of-hashes** over six fields, in this order: `serviceId`, `startAt` (unix seconds, decimal string), `client.name` (trimmed), `client.email` (trimmed, lowercased), `client.phone` (trimmed, or `""` if absent), `dogTagIdField` (the wire's own `dogTagIdField` value - `""` BOTH when the booking carries no tag claim at all AND when the tag claim supplies only `dogTagIdDec`: the hash binds exactly what the wire's `dogTagIdField` key itself carries, never a value the server derives from `dogTagIdDec`).
 Each field is hashed independently FIRST, and the six 32-byte digests (not the raw field bytes) are concatenated and hashed again - never a plain delimited string join, which is ambiguous whenever a free-text field (name, phone) can itself contain the delimiter or shift content across a field boundary.
-The production implementation is `computeMobileBookingHash` in `src/lib/booking/bookingHash.ts`; known-answer vectors for cross-language parity are pinned in `protocol/specs/mobile-booking-hash-vectors.json`.
+The production implementation is `computeMobileBookingHash` in `src/lib/booking/bookingHash.ts`; known-answer vectors for cross-language parity are pinned in `tests/unit/vectors/mobile-booking-hash-vectors.json`.
 This is the one piece of WP4.4 that is genuinely normative for the app to reproduce byte-for-byte and is not itself EIP-712 - get it wrong and every signature recovers to the wrong digest, which the server sees as an invalid signature, never a silent partial success.
 
 ### Verification and rejection (Q2)

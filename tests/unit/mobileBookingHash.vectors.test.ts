@@ -1,10 +1,10 @@
 import {describe, expect, it} from "vitest";
 import {concat, keccak256, toBytes} from "viem";
 import type {Hex} from "viem";
-import vectors from "../../protocol/specs/mobile-booking-hash-vectors.json";
+import vectors from "./vectors/mobile-booking-hash-vectors.json";
 
 /**
- * Pins `protocol/specs/mobile-booking-hash-vectors.json` against drift.
+ * Pins `tests/unit/vectors/mobile-booking-hash-vectors.json` against drift.
  *
  * That file is a known-answer vector set for `computeMobileBookingHash`
  * (`src/lib/booking/bookingHash.ts` - plans/wp4.4-mobile-booking-protocol.md section 2's
@@ -52,7 +52,7 @@ function independentRecompute(input: BookingHashVector["input"]): Hex {
   );
 }
 
-describe("protocol/specs/mobile-booking-hash-vectors.json", () => {
+describe("tests/unit/vectors/mobile-booking-hash-vectors.json", () => {
   it("has at least 6 vectors", () => {
     expect(typedVectors.length).toBeGreaterThanOrEqual(6);
   });
