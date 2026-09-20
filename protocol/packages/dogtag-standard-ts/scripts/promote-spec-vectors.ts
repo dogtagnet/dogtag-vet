@@ -281,6 +281,37 @@ const recordNegativeMaskedDogtagid = {
   valid: false,
 };
 
+// WP4.17A fix round 1 D1 (wp4.17A-grade.md section 9): record_negative_masked_dogtagid above is the
+// ONLY spec-vector negative that isolates the non-maskable-set check by masking one specific
+// non-maskable leaf - the other six non-maskable keyPaths had no such vector, so a spec-only,
+// third-language implementation could drop any ONE of them from its own non-maskable set and still
+// reproduce every recorded outcome in this file (the bite that surfaced this: deleting
+// "issuer.operator" from RECORD_NON_MASKABLE_KEY_PATHS turned 0 tests red). One more vector per
+// remaining keyPath, each built the identical way record_negative_masked_dogtagid is: the masked
+// leaf's hash moves to obfuscatedLeafHashes, the rest of the 9-leaf multiset (the other 6
+// non-maskable leaves plus the 2 clinical leaves) stays disclosed, and root_hex is fullRootHex
+// unchanged - a bit-identical repartition, so only the non-maskable-set check can reject it.
+function recordNegativeMaskedNonMaskableLeaf(name: string, masked: RecordLeaf) {
+  const disclosed = NON_MASKABLE.filter((l) => l.keyPath !== masked.keyPath).concat([CLINICAL_PRODUCT_NAME, CLINICAL_BATCH]);
+  return {
+    name,
+    notes:
+      `Moves ${masked.keyPath}'s hash into obfuscatedLeafHashes instead of disclosed - the same 9-hash multiset as record_full_artifact, just repartitioned, so root_hex is bit-identical to it and step 4's root comparison alone cannot reject this. Only the non-maskable-set-must-be-disclosed check (specs/leaf-commitment.md section 16) rejects it, since ${masked.keyPath} - one of the seven required keyPaths - is no longer found among disclosed's keyPaths.`,
+    disclosed: disclosed.map(toCuratedRecordLeaf),
+    obfuscatedLeafHashes: [toHex32(recordLeafHash(masked))],
+    reservedLeafHashes: [] as string[],
+    root_hex: fullRootHex,
+    valid: false,
+  };
+}
+
+const recordNegativeMaskedRecordType = recordNegativeMaskedNonMaskableLeaf("record_negative_masked_recordtype", NM_RECORD_TYPE);
+const recordNegativeMaskedSchemaId = recordNegativeMaskedNonMaskableLeaf("record_negative_masked_schemaid", NM_SCHEMA_ID);
+const recordNegativeMaskedSchemaVersion = recordNegativeMaskedNonMaskableLeaf("record_negative_masked_schemaversion", NM_SCHEMA_VERSION);
+const recordNegativeMaskedChainId = recordNegativeMaskedNonMaskableLeaf("record_negative_masked_chainid", NM_CHAIN_ID);
+const recordNegativeMaskedContract = recordNegativeMaskedNonMaskableLeaf("record_negative_masked_contract", NM_CONTRACT);
+const recordNegativeMaskedOperator = recordNegativeMaskedNonMaskableLeaf("record_negative_masked_operator", NM_OPERATOR);
+
 // A single bogus hash, FOLDED INTO the posted root (unlike the non-isolating shape section 15's own
 // "negative_overlap" worked example warns against), so the root comparison alone cannot reject this -
 // only the reserved-must-be-empty check (specs/leaf-commitment.md section 16) can.
@@ -319,6 +350,12 @@ specVectors.recordArtifactVectors = [
   recordMaskedClinicalLeaf,
   recordMaskedExceptNonMaskable,
   recordNegativeMaskedDogtagid,
+  recordNegativeMaskedRecordType,
+  recordNegativeMaskedSchemaId,
+  recordNegativeMaskedSchemaVersion,
+  recordNegativeMaskedChainId,
+  recordNegativeMaskedContract,
+  recordNegativeMaskedOperator,
   recordNegativeReservedPresent,
   recordNegativeOverlap,
 ];

@@ -127,6 +127,42 @@ describe("verifyRecordArtifact - rejects a non-maskable leaf that is masked or m
   }
 });
 
+// WP4.17A fix round 1 D1 (wp4.17A-grade.md section 9): the two loops above iterate
+// RECORD_NON_MASKABLE_KEY_PATHS itself, so a mutation that shrinks the exported constant (for
+// example dropping "issuer.operator") silently shrinks their generated case count instead of
+// turning anything red - bite A in the grade measured exactly this: the suite shrank 645 to 643
+// with 0 red. The two checks below are pinned against a LITERAL keyPath list that does not depend
+// on the constant's current contents, so either kind of drift (a wrong keyPath, or a shrunk/grown
+// set) is caught by name instead of silently changing how many cases run.
+const RECORD_NON_MASKABLE_KEY_PATHS_LITERAL = [
+  "credentialSubject.dogTagId",
+  "recordType",
+  "credentialSchema.id",
+  "credentialSchema.version",
+  "issuer.chainId",
+  "issuer.contract",
+  "issuer.operator",
+] as const;
+
+describe("verifyRecordArtifact - the non-maskable set is pinned against literals, not merely tested through itself", () => {
+  it("RECORD_NON_MASKABLE_KEY_PATHS is exactly these seven keyPaths, in this order (specs/leaf-commitment.md section 16)", () => {
+    expect([...RECORD_NON_MASKABLE_KEY_PATHS]).toEqual([...RECORD_NON_MASKABLE_KEY_PATHS_LITERAL]);
+  });
+
+  for (const missingKeyPath of RECORD_NON_MASKABLE_KEY_PATHS_LITERAL) {
+    it(`rejects a genuine artifact with the literal keyPath ${missingKeyPath} masked, independent of RECORD_NON_MASKABLE_KEY_PATHS's live contents`, () => {
+      const nonMaskable = nonMaskableOpenings();
+      const [productName] = clinicalOpenings();
+      const full = [...nonMaskable, productName];
+      const root = computeRoot(full);
+      const missing = nonMaskable.find((l) => l.keyPath === missingKeyPath)!;
+      const disclosed = full.filter((l) => l.keyPath !== missingKeyPath);
+      const a = artifact(root, disclosed, [toHex32(leafHashOf(missing))], []);
+      expect(verifyRecordArtifact(a)).toBe(false);
+    });
+  }
+});
+
 describe("verifyRecordArtifact - reservedLeafHashes must always be empty", () => {
   it("rejects a single (bogus) reserved hash even when genuinely folded into the posted root", () => {
     const leaves = [...nonMaskableOpenings(), ...clinicalOpenings()];
