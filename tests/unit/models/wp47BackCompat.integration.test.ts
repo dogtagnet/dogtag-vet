@@ -51,7 +51,7 @@ beforeAll(async () => {
   // test relies on it rejecting a duplicate - autoIndex runs in the background on model
   // compilation, not synchronously.
   await AvailabilityException.init();
-}, 30_000);
+}, 90_000);
 
 afterAll(async () => {
   await mongoose.connection.close();

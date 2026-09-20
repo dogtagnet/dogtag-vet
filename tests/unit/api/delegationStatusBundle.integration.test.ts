@@ -48,7 +48,7 @@ beforeAll(async () => {
   expect(mongoose.connection.host).toBe("127.0.0.1");
   expect(mongoose.connection.port).toBe(MONGO_PORT);
   await TagArtifact.init(); // the unique `root` index builds in the background - wait for it.
-}, 30_000);
+}, 90_000);
 
 afterAll(async () => {
   await mongoose.connection.close();

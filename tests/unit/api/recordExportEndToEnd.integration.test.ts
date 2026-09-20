@@ -14,7 +14,9 @@ import {startEphemeralMongod, stopEphemeralMongod, type EphemeralMongod} from ".
  * NEW record path produces the `RecordArtifact`-shaped response `specs/vet-public-api.yaml`'s
  * `ArtifactExportResponse` describes.
  *
- * ISOLATION: own ephemeral mongod, port 44139 (44117-44138 already taken by sibling suites).
+ * ISOLATION: own ephemeral mongod, port 44144 (WP4.17A D7: moved off 44139, which duplicated
+ * delegationStatusBundle.integration.test.ts's own port - the pair whose collision was actually
+ * caught live; see this file's own port-constant comment for what it looked like).
  */
 vi.mock("@/auth", () => ({auth: vi.fn()}));
 
@@ -32,7 +34,12 @@ import {mongoRecordExportStore} from "@/lib/records/exportMongoAdapter";
 import {GET as exportTokenGET} from "@/app/e/[token]/route";
 import {POST as recordExportPOST} from "@/app/api/pets/[id]/records/[recordId]/export/route";
 
-const MONGO_PORT = 44_139;
+// WP4.17A D7 - was 44139, duplicating delegationStatusBundle.integration.test.ts's own port (see
+// recordIssuance.integration.test.ts's identical comment for the full audit); this exact pair is
+// the one whose collision was caught live - this file's mongod bound to a port the OTHER suite's
+// mongod already owned, so this file silently talked to that suite's database server until its
+// own `afterAll` killed it mid-test (`MongoServerError: interrupted at shutdown`).
+const MONGO_PORT = 44_144;
 const CLONE = "0x0000000000000000000000000000000000c10be5";
 const OPERATOR = "0x0000000000000000000000000000000000000ff1";
 
@@ -45,7 +52,7 @@ beforeAll(async () => {
   expect(mongoose.connection.port).toBe(MONGO_PORT);
   await ArtifactExportSession.init();
   await RecordArtifact.init();
-}, 30_000);
+}, 90_000);
 
 afterAll(async () => {
   await mongoose.connection.close();

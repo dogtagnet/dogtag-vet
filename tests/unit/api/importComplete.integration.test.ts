@@ -67,7 +67,7 @@ beforeAll(async () => {
   // gates on it anyway (mirrors completeImport's isReclaim calculation elsewhere). A singleton, so
   // seeded once here rather than per-test.
   await ClinicSettings.create({_id: "singleton", cloneAddress: OUR_CLONE, businessProfile: {name: "Example Vet Clinic"}});
-}, 30_000);
+}, 90_000);
 
 afterAll(async () => {
   await mongoose.connection.close();

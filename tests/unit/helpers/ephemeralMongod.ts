@@ -18,6 +18,22 @@ import mongoose from "mongoose";
  * connect(uri)`, or setting `process.env.MONGODB_URI` for `connectToDatabase()` to pick up) - this
  * helper only owns the child process lifecycle, not the connection itself, since call sites
  * legitimately differ on that part.
+ *
+ * WP4.17A D7 - "unique across every ephemeral-mongod suite" was violated by FOUR of the 29 call
+ * sites (44137, 44138, 44139, 44140 each double-booked; a plain `git grep` audit, not a guess -
+ * 29 files cannot hold 25 distinct values in the 44117-44141 range that had been carved out for
+ * them, by the pigeonhole principle alone). Under `--poolOptions.forks.maxForks=4`, two suites
+ * sharing a port can schedule onto different concurrent forks: whichever loses the bind race
+ * either times out against a port nothing is listening on yet, or - worse, and what actually
+ * reproduced here - silently connects to the OTHER suite's already-listening mongod (same host,
+ * same port, merely a different database name, which is not enough to keep them apart at the
+ * process level), which is then killed out from under it the moment the first suite's OWN
+ * `afterAll` calls `stopEphemeralMongod` (`MongoServerError: interrupted at shutdown`, cascading
+ * into hook/test timeouts in whichever suite got orphaned). Fixed by giving all 29 call sites
+ * genuinely distinct ports (see each file's own `MONGO_PORT` constant). The cheaper spawn flags,
+ * stderr capture, and wider readiness/hook budgets below are defense in depth against the
+ * separate, real-but-smaller effect of several `mongod` processes actually starting concurrently
+ * on a shared, multi-agent box - not a mask for the collision, which is fixed at its own root.
  */
 export interface EphemeralMongod {
   child: ChildProcess;
@@ -46,18 +62,51 @@ async function waitForMongoReady(uri: string, timeoutMs: number): Promise<void> 
 
 /** Spawns a throwaway `mongod` on `port` with its own scratch dbpath, named `dbName` for the
  * connection URI (readability in logs/errors only). Throws (after cleaning up the process and
- * dbpath it just created) if `mongod` never becomes reachable within `timeoutMs`. */
-export async function startEphemeralMongod(port: number, dbName: string, timeoutMs = 20_000): Promise<EphemeralMongod> {
+ * dbpath it just created) if `mongod` never becomes reachable within `timeoutMs` - the thrown
+ * error carries whatever `mongod` itself wrote to stderr (WP4.17A D7: a `stdio: "ignore"` mongod
+ * that fails to bind or start used to fail this helper with nothing more diagnostic than "was not
+ * ready in time", which is how the port collision above went unnoticed for as long as it did).
+ * `--wiredTigerCacheSizeGB 0.25` and `diagnosticDataCollectionEnabled=false` cut each throwaway
+ * instance's default footprint (WiredTiger's default cache reservation is sized off the HOST's
+ * total memory, not appropriate for one of many short-lived, empty databases on a shared box) -
+ * `--nojournal` is deliberately NOT here: WiredTiger has required journaling since MongoDB 4.2,
+ * this repo's `mongod --version` is 8.0.1, and passing it would just fail the spawn outright. */
+export async function startEphemeralMongod(port: number, dbName: string, timeoutMs = 60_000): Promise<EphemeralMongod> {
   const dbPath = mkdtempSync(join(tmpdir(), `${dbName}-`));
-  const child = spawn("mongod", ["--dbpath", dbPath, "--port", String(port), "--bind_ip", "127.0.0.1"], {
-    stdio: "ignore",
+  const child = spawn(
+    "mongod",
+    [
+      "--dbpath",
+      dbPath,
+      "--port",
+      String(port),
+      "--bind_ip",
+      "127.0.0.1",
+      "--wiredTigerCacheSizeGB",
+      "0.25",
+      "--setParameter",
+      "diagnosticDataCollectionEnabled=false",
+    ],
+    {stdio: ["ignore", "ignore", "pipe"]},
+  );
+  let stderrBuf = "";
+  child.stderr?.on("data", (chunk: Buffer) => {
+    stderrBuf += chunk.toString();
   });
   const uri = `mongodb://127.0.0.1:${port}/${dbName}`;
+  const startedAt = Date.now();
   try {
     await waitForMongoReady(uri, timeoutMs);
   } catch (err) {
     await stopEphemeralMongod({child, dbPath, uri});
-    throw err;
+    throw new Error(`${String(err)}\n--- mongod stderr (port ${port}) ---\n${stderrBuf || "(empty)"}`);
+  }
+  // Not noise on the common fast path (a few hundred ms) - a visible, permanent signal if
+  // readiness ever creeps toward the timeout budget on a loaded box, so a future slow run is
+  // diagnosable from plain test output rather than requiring this investigation to be redone.
+  const readyAfterMs = Date.now() - startedAt;
+  if (readyAfterMs > 3_000) {
+    console.warn(`[ephemeralMongod] port ${port} (${dbName}) took ${readyAfterMs}ms to become ready (budget ${timeoutMs}ms)`);
   }
   return {child, dbPath, uri};
 }

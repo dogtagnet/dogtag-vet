@@ -32,7 +32,7 @@ beforeAll(async () => {
   expect(mongoose.connection.name).toBe("dogtag-vet-export-session");
   await ArtifactExportSession.init();
   await TagArtifact.init();
-}, 30_000);
+}, 90_000);
 
 afterAll(async () => {
   await mongoose.disconnect();

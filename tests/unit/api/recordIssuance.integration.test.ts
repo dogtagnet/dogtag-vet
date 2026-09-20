@@ -11,7 +11,8 @@ import {startEphemeralMongod, stopEphemeralMongod, type EphemeralMongod} from ".
  * importComplete.integration.test.ts` (chainRead mocking) - the same two conventions every route
  * integration test in this repo already uses.
  *
- * ISOLATION: own ephemeral mongod, port 44137 (44117-44136 already taken by sibling suites).
+ * ISOLATION: own ephemeral mongod, port 44142 (WP4.17A D7: moved off 44137, which duplicated
+ * delegationRouteGuards.integration.test.ts's own port - see this file's own port-constant comment).
  */
 vi.mock("@/auth", () => ({auth: vi.fn()}));
 vi.mock("@/lib/chainRead", async (importOriginal) => {
@@ -54,7 +55,10 @@ import {POST as txPOST} from "@/app/api/records/[id]/tx/route";
 import {POST as confirmPOST} from "@/app/api/records/[id]/confirm/route";
 import {GET as attestationGET, POST as attestationPOST} from "@/app/api/records/[id]/attestation/route";
 
-const MONGO_PORT = 44_137;
+// WP4.17A D7 - was 44137, duplicating delegationRouteGuards.integration.test.ts's own port (a
+// four-way pigeonhole collision found across the 44117-44141 range: 29 files, 25 slots). Moved to
+// a value outside that range's own budget rather than reused from within it.
+const MONGO_PORT = 44_142;
 
 // Every address below is a plain 0x + 40 hex chars (`hexAddress`'s own schema requirement) -
 // lengths double-checked with `node -e` before use, not eyeballed (a too-short hex string is an
@@ -84,7 +88,7 @@ beforeAll(async () => {
   expect(mongoose.connection.host).toBe("127.0.0.1");
   expect(mongoose.connection.port).toBe(MONGO_PORT);
   await RecordArtifact.init();
-}, 30_000);
+}, 90_000);
 
 afterAll(async () => {
   await mongoose.connection.close();

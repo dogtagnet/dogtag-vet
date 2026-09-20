@@ -20,8 +20,8 @@ import {startEphemeralMongod, stopEphemeralMongod, type EphemeralMongod} from ".
  * uncontaminated shot at the module-load-time state they need - the same reason every other
  * integration test in this suite is one concern per file.
  *
- * ISOLATION: own ephemeral mongod, port 44140 (44139 is delegationStatusBundle's own port, the
- * previous D3 fix in this same round - see that file's doc comment for the fuller port ledger).
+ * ISOLATION: own ephemeral mongod, port 44145 (WP4.17A D7: moved off 44140, which duplicated
+ * recordVerify.integration.test.ts's own port - see this file's own port-constant comment).
  */
 vi.mock("@/lib/chainRead", async () => {
   const actual = await vi.importActual<typeof import("@/lib/chainRead")>("@/lib/chainRead");
@@ -33,7 +33,9 @@ import {connectToDatabase} from "@/lib/db";
 import {DelegationSession} from "@/lib/models/DelegationSession";
 import {loadOwnersCardData} from "@/lib/delegation/ownersCardData";
 
-const MONGO_PORT = 44_140;
+// WP4.17A D7 - was 44140, duplicating recordVerify.integration.test.ts's own port (see
+// recordIssuance.integration.test.ts's identical comment for the full audit).
+const MONGO_PORT = 44_145;
 let ephemeral: EphemeralMongod;
 
 beforeAll(async () => {
@@ -43,7 +45,7 @@ beforeAll(async () => {
   await connectToDatabase();
   expect(mongoose.connection.host).toBe("127.0.0.1");
   expect(mongoose.connection.port).toBe(MONGO_PORT);
-}, 30_000);
+}, 90_000);
 
 afterAll(async () => {
   await mongoose.connection.close();
