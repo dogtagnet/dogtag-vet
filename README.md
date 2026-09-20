@@ -58,10 +58,10 @@ That directory sits outside every path `scripts/sync-to.sh` touches, so `protoco
 `feature/wp4.15-multi-owner` merged into `dogtag-protocol` `main`, then into this repo's own `main`, so the deliberate branch-sourced vendor WP4.15V first set up and WP4.17A0 kept in place is retired: `protocol/` is a plain mirror of `dogtag-protocol` `main`, the same as every vendored copy before WP4.15V.
 See `protocol/PROVENANCE.md` for the exact commit.
 
-**Temporary caveat opened by WP4.17B's re-vendor:** `contracts/exports/` and `contracts/flattened/` are gitignored build output inside `dogtag-protocol`, not git-tracked, so merging a branch into `dogtag-protocol` `main` does not regenerate them there.
-`dogtag-protocol` `main`'s own on-disk copies predate `feature/wp4.15-multi-owner` entirely and are missing `DelegationRegistry`/`PoseidonT4`, with a pre-2.1.0 `VetIssuer` - a real sync from that stale state would have silently deleted `protocol/contracts/exports/abi/DelegationRegistry.json` (imported directly by `src/lib/abi.ts`) and regressed `VetIssuer`.
-WP4.17B's re-vendor commit worked around this by restoring just those two subdirectories from the pre-sync tree instead of accepting the stale sync output, content-proven identical to what `dogtag-protocol` `main`'s tracked `contracts/src/` actually builds (see the re-vendor commit message for the proof).
-Run `make abis events flatten` in `dogtag-protocol`'s `contracts/` before the next `scripts/sync-to.sh` and this caveat goes away; until then, a full re-sync needs the same kind of manual restoration for these two subdirectories that the vector-file deviation above no longer needs for `specs/`.
+**A caveat opened and closed within WP4.17B's re-vendor**: `contracts/exports/` and `contracts/flattened/` are gitignored build output inside `dogtag-protocol`, not git-tracked, so merging a branch into `dogtag-protocol` `main` does not regenerate them there.
+`dogtag-protocol` `main`'s own on-disk copies briefly predated `feature/wp4.15-multi-owner` entirely (missing `DelegationRegistry`/`PoseidonT4`, with a pre-2.1.0 `VetIssuer`), so the first sync attempt in this wave restored just those two subdirectories from the pre-sync tree rather than accepting stale output, using a substitute proof (byte-identical to the `dogtag-protocol` branch worktree's own generated copies, which in turn came from tracked source proven identical to `main`'s) since the direct comparison could not hold yet.
+`make abis events flatten` was then run in `dogtag-protocol`'s `contracts/`, regenerating both directories from current source; a second sync afterward diffed empty directly against `dogtag-protocol` `main` for every mirrored path, including these two, closing the gap with a direct proof rather than the substitute one.
+No standing caveat remains: a plain `scripts/sync-to.sh` from `dogtag-protocol` `main` is safe again.
 
 ## Tag data custody
 
@@ -248,7 +248,7 @@ The same upgrade that adds `addSecondaryOwner`/`revokeSecondaryOwner` also adds 
 Off by default (`ClinicSettings.consentRelayerViaCloneEnabled`, owner-editable in Settings) and PENDING the DogTag admin separately whitelisting each clinic's clone for `canVerify` - turning it on before that grant exists is refused cleanly by the existing `POST /api/verify/start` preflight (unmodified), never a silently-always-reverting control.
 
 **Vendored specs are master-sourced again as of WP4.17 phase B** (`protocol/PROVENANCE.md` has the full accounting): `feature/wp4.15-multi-owner` merged into `dogtag-protocol` `main` and then into this repo's own `main`, so `specs/qr-formats.md`, `specs/vet-public-api.yaml`, `specs/events.md`, and both `VetIssuer`/`DelegationRegistry` ABIs now mirror `dogtag-protocol` `main` like every other vendored file, rather than a still-unmerged branch.
-See the "Protocol sync" section above for the one open caveat this re-vendor left (`contracts/exports/`/`contracts/flattened/` needing `make abis events flatten` run in `dogtag-protocol` before the next full sync).
+See the "Protocol sync" section above for a caveat this re-vendor opened and then closed in the same wave (`contracts/exports/`/`contracts/flattened/` briefly needed `make abis events flatten` run in `dogtag-protocol`; already done).
 
 ## Design decisions
 
