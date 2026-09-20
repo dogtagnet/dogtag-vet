@@ -731,6 +731,25 @@ test("a started session's resolve JSON carries color/registrationId/registration
 test("pet form round-trips color/registrationId/registrationAuthority", async ({page}) => {
   const client = await createClient(page, "WP412V Pet Form Client");
 
+  // WP4.17A fix round 1b - root cause, not a bigger timeout: this test is the first thing in the
+  // whole suite to open a `/pets/:id` detail page (grepped - no earlier test in this file or, in a
+  // full-suite run, no test alphabetically before this file ever does), so the toHaveURL wait below
+  // was racing Next dev's FIRST on-demand webpack compile of that route's module graph. Traced with
+  // request/response/console instrumentation during this fix round: that graph pulls in the full
+  // crypto stack (circomlibjs/ffjavascript, wagmi, walletconnect, the coinbase/base-org connectors)
+  // via IssueRecordForm/RecordsCard, made the compile alone take 7.4s, and the click-to-settled-URL
+  // wall clock 12.85s - consuming 85% of the 15s budget on an otherwise idle box, not merely under
+  // load. Same technique as calendar-services.spec.ts's own beforeEach ("Warms Next dev's on-demand
+  // compile... BEFORE any timed UI assertion depends on it... A plain awaited request has no such
+  // tight budget, so pay the compile here instead"): a throwaway pet plus one untimed
+  // `page.request.get`, side-effect-free (this test's own owner client just briefly owns 2 pets;
+  // no assertion below queries by count) and never touching the `page` under test's own URL/state,
+  // pays the compile cost here so the real, timed create-via-UI flow below never races it.
+  const warmup = await page.request.post("/api/pets", {data: {name: "WP412V Warmup Pet (discard)", ownerClientIds: [client.clientId]}});
+  expect(warmup.ok()).toBe(true);
+  const {petId: warmupPetId} = await warmup.json();
+  await page.request.get(`/pets/${warmupPetId}`);
+
   await page.goto(`/pets/new?ownerClientId=${client.clientId}`);
   await page.getByLabel("Name").fill("WP412V Pet Form Pet");
   await page.getByLabel("Color").fill("brown");
