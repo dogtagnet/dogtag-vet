@@ -1,6 +1,6 @@
 "use client";
 
-import {useEffect, useState} from "react";
+import {useEffect, useRef, useState} from "react";
 import {useRouter} from "next/navigation";
 import {useAccount, useConnect} from "wagmi";
 import {Button, Input} from "@/components/ui/controls";
@@ -33,11 +33,33 @@ export function MyWalletSection({initial, status}: {initial: StaffDoc; status: O
   const [value, setValue] = useState(initial.walletAddress ?? "");
   const [busy, setBusy] = useState(false);
 
-  // Same convention as StaffSection's DisplayNameField/WalletAddressField: resync the draft when
-  // the server's own value changes underneath this component (a `router.refresh()` after this
-  // card's own save, or an owner editing the same row from Practitioner profiles on this same
-  // page load).
-  useEffect(() => setValue(initial.walletAddress ?? ""), [initial.walletAddress]);
+  // Resync the draft when the server's own value changes underneath this component AFTER mount (a
+  // `router.refresh()` after this card's own save, or an owner editing the same row from
+  // Practitioner profiles on this same page load) - but never on the component's OWN initial
+  // mount, where `value` is already correctly seeded from `initial.walletAddress` by the
+  // `useState` initializer above, making a mount-time run of this effect pure redundancy.
+  //
+  // That redundant mount-time run is not just wasted work: `useEffect` always fires once after
+  // the FIRST render too, not only on a dependency change, and React does not guarantee this runs
+  // before a subsequent fast interaction lands. WP4.17A fix round 1b root-caused a real race from
+  // this: `e2e/vet-wallet-status.spec.ts`'s third test types a new address within milliseconds of
+  // `/settings` settling (no gating wait on a later signal like `isConnected`, unlike the "Use
+  // connected wallet" button test 1 uses) - traced with render/effect/onChange logging, `onChange`
+  // fired with the new address, then 2ms later this effect's own MOUNT run fired and silently
+  // reverted `value` back to `initial.walletAddress`, leaving `dirty` false and the Save button
+  // permanently disabled, which is why the PATCH this test waits for was never even sent (a
+  // disabled button never becomes clickable, so the 60s wait was for a request that could not
+  // fire). Skipping the effect's first (mount) run closes the race entirely, for any fast
+  // interaction, not merely this test's - a real risk for e.g. a password manager or browser
+  // autofill racing hydration the same way.
+  const skippedMountResync = useRef(false);
+  useEffect(() => {
+    if (!skippedMountResync.current) {
+      skippedMountResync.current = true;
+      return;
+    }
+    setValue(initial.walletAddress ?? "");
+  }, [initial.walletAddress]);
 
   async function save(next: string | null) {
     setBusy(true);
