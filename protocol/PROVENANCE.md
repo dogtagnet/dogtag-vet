@@ -1,8 +1,8 @@
 # Vendored from dogtag-protocol
 
-Source commit: 0a041f2eab4007697d6c03fdfd3184dc1f67954e
-Source commit (short): 0a041f2
-Synced at: 2026-09-20T10:28:32Z
+Source commit: 403faea772b2fd3f13d452832187eacbfeff4375
+Source commit (short): 403faea
+Synced at: 2026-09-20T18:27:48Z
 Synced by: scripts/sync-to.sh
 
 ## Do not edit these files

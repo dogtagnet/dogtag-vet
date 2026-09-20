@@ -54,11 +54,14 @@ WP4.17A0 relocated all four to `tests/unit/vectors/` (see that directory's own R
 That directory sits outside every path `scripts/sync-to.sh` touches, so `protocol/` is now a plain, unmodified mirror end to end and a future re-sync needs no manual restoration step.
 (`protocol/specs/vet-public-api.yaml` was hand-edited ahead of master through WP4.9V/WP4.10V, but WP4.12V's item 1 brought it fully current - see `protocol/PROVENANCE.md` - so it has been a plain mirror since, not a standing deviation.)
 
-**As of WP4.17A0, every file under `protocol/` is mirrored from a single commit on the `dogtag-protocol` BRANCH `feature/wp4.15-multi-owner`, not from `master`.**
-That branch has not merged into `master` yet, so this remains the same deliberate, disclosed branch-sourced vendor WP4.15V first set up (Kenneth's own `docs/DEPLOY-wp4.15.md` runbook, on that same branch, is still pending).
-What changed in WP4.17A0 is that the tree is no longer mixed: WP4.15V had left five files at branch tip `e654924` while everything else stayed at whatever `master` commit WP4.12V had last synced.
-WP4.17A0 ran a full `scripts/sync-to.sh`, so every vendored file - specs, contract exports, the flattened contracts, and the TS package (`dist/` freshly rebuilt) - now comes from the same single branch tip.
+**As of WP4.17 phase B, every file under `protocol/` is mirrored from `dogtag-protocol` `main` again, not from a branch.**
+`feature/wp4.15-multi-owner` merged into `dogtag-protocol` `main`, then into this repo's own `main`, so the deliberate branch-sourced vendor WP4.15V first set up and WP4.17A0 kept in place is retired: `protocol/` is a plain mirror of `dogtag-protocol` `main`, the same as every vendored copy before WP4.15V.
 See `protocol/PROVENANCE.md` for the exact commit.
+
+**Temporary caveat opened by WP4.17B's re-vendor:** `contracts/exports/` and `contracts/flattened/` are gitignored build output inside `dogtag-protocol`, not git-tracked, so merging a branch into `dogtag-protocol` `main` does not regenerate them there.
+`dogtag-protocol` `main`'s own on-disk copies predate `feature/wp4.15-multi-owner` entirely and are missing `DelegationRegistry`/`PoseidonT4`, with a pre-2.1.0 `VetIssuer` - a real sync from that stale state would have silently deleted `protocol/contracts/exports/abi/DelegationRegistry.json` (imported directly by `src/lib/abi.ts`) and regressed `VetIssuer`.
+WP4.17B's re-vendor commit worked around this by restoring just those two subdirectories from the pre-sync tree instead of accepting the stale sync output, content-proven identical to what `dogtag-protocol` `main`'s tracked `contracts/src/` actually builds (see the re-vendor commit message for the proof).
+Run `make abis events flatten` in `dogtag-protocol`'s `contracts/` before the next `scripts/sync-to.sh` and this caveat goes away; until then, a full re-sync needs the same kind of manual restoration for these two subdirectories that the vector-file deviation above no longer needs for `specs/`.
 
 ## Tag data custody
 
@@ -244,8 +247,8 @@ Recomputing the full 16-leaf delegation tree on every add/revoke costs roughly 1
 The same upgrade that adds `addSecondaryOwner`/`revokeSecondaryOwner` also adds `VetIssuer.relayVerification`, letting the clinic's OWN clone (rather than a raw staff wallet) act as the relayer for a primary owner's consent proof.
 Off by default (`ClinicSettings.consentRelayerViaCloneEnabled`, owner-editable in Settings) and PENDING the DogTag admin separately whitelisting each clinic's clone for `canVerify` - turning it on before that grant exists is refused cleanly by the existing `POST /api/verify/start` preflight (unmodified), never a silently-always-reverting control.
 
-**Vendored specs are BRANCH-sourced, not master-sourced, for this wave** (`protocol/PROVENANCE.md` has the full accounting): `specs/qr-formats.md`, `specs/vet-public-api.yaml`, `specs/events.md`, and both `VetIssuer`/`DelegationRegistry` ABIs mirror the `dogtag-protocol` branch `feature/wp4.15-multi-owner`, which does not yet exist on `master` - every other vendored file is untouched and stays at whatever commit the prior full sync left it at.
-Do not run a full `scripts/sync-to.sh` re-sync while this branch is still unmerged; it would silently regress these files back to their pre-WP4.15 shape.
+**Vendored specs are master-sourced again as of WP4.17 phase B** (`protocol/PROVENANCE.md` has the full accounting): `feature/wp4.15-multi-owner` merged into `dogtag-protocol` `main` and then into this repo's own `main`, so `specs/qr-formats.md`, `specs/vet-public-api.yaml`, `specs/events.md`, and both `VetIssuer`/`DelegationRegistry` ABIs now mirror `dogtag-protocol` `main` like every other vendored file, rather than a still-unmerged branch.
+See the "Protocol sync" section above for the one open caveat this re-vendor left (`contracts/exports/`/`contracts/flattened/` needing `make abis events flatten` run in `dogtag-protocol` before the next full sync).
 
 ## Design decisions
 
