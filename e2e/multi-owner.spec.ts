@@ -124,6 +124,48 @@ function ownersCard(page: Page) {
   return page.locator("section", {has: page.getByRole("heading", {name: "DogTag owners"})});
 }
 
+/**
+ * WP4.17A D8 - actively samples how many `text` toasts are visible every 250ms for `durationMs`
+ * (default 10s - comfortably longer than a snackbar's own 4000ms auto-dismiss window,
+ * `Snackbar.tsx`'s literal `setTimeout(..., 4000)`, plus the slower of the two racing paths'
+ * own worst-case detection latency) and fails the instant either (a) more than one is visible at
+ * once, or (b) the count drops to zero after having been visible and then rises again - a SECOND,
+ * separate toast with the same text, created by `Snackbar.tsx`'s own per-message `key={m.id}`,
+ * that never happened to overlap the first's visible window is still the real bug (a clinic user
+ * sees the message twice, just not simultaneously), and a bare "was the count ever above 1" check
+ * cannot see it.
+ *
+ * A single point-in-time check (wait some fixed delay, then check the count once) is NOT a
+ * reliable way to catch this class of bug: the poll branch and the receipt effect each toast on
+ * their own independent timer (a 2s poll cadence vs. wagmi's own receipt-detection cadence), so
+ * the two toasts' relative timing varies with exactly which awaited calls precede them - confirmed
+ * empirically while writing this: a fixed 2.5s wait sometimes sampled BEFORE the second (buggy)
+ * toast had appeared (a false pass); a fixed 6s wait sometimes sampled AFTER both had already
+ * auto-dismissed (also a false pass, `Received: 0`); and even a first version of this function
+ * that only checked "was the count ever >= 2" reliably caught the add ceremony's own double-toast
+ * but never the revoke ceremony's, on the same guard-removed copy, across 4 consecutive runs -
+ * because revoke's two toasts, in this repo's own RPC-stub timing, land back-to-back rather than
+ * overlapping. Continuous sampling for a reappearance, across the whole risk window, is what
+ * neither a fixed delay nor an overlap-only check could substitute for.
+ */
+async function assertToastNeverDoubles(page: Page, text: string, durationMs = 10_000): Promise<void> {
+  const locator = page.getByText(text);
+  const deadline = Date.now() + durationMs;
+  let sawVisible = false;
+  let sawGapAfterVisible = false;
+  while (Date.now() < deadline) {
+    const count = await locator.count();
+    expect(count, `more than one "${text}" toast was visible at once`).toBeLessThanOrEqual(1);
+    if (count >= 1) {
+      expect(sawGapAfterVisible, `a second, separate "${text}" toast appeared after the first had already dismissed`).toBe(false);
+      sawVisible = true;
+    } else if (sawVisible) {
+      sawGapAfterVisible = true;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+}
+
 /** `entityAccount` (not just `cloneAddress`) is required here - `preflightIssuance`
  * (`src/lib/mint/preflight.ts`, reused as-is by `POST /api/pets/:id/delegations`'s own start
  * route) refuses "This clinic has not completed setup" without both. */
@@ -319,6 +361,12 @@ test("Add secondary owner: full ceremony from the Owners card through on-chain c
   await setRpcReceipt(hash!, "success");
 
   await expect(page.getByText("Secondary owner added")).toBeVisible({timeout: 15_000});
+  // WP4.17A D8 - the 2s staff poll and the wagmi receipt effect both used to toast independently
+  // on the same confirmed session; whichever fires first makes the assertion above pass either
+  // way, so the real proof is that the OTHER one never ALSO adds a second toast. See
+  // `assertToastNeverDoubles`'s own doc comment for why continuous sampling, not a fixed wait
+  // plus one count check, is what this actually needs.
+  await assertToastNeverDoubles(page, "Secondary owner added");
   await expect(ownersCard(page).getByText("Jamie Rivera")).toBeVisible();
   await expect(ownersCard(page).getByText("Active")).toBeVisible();
 
@@ -428,7 +476,13 @@ test("Revoke a secondary owner: no QR, straight to the operator wallet write", a
   await setRpcReceipt(hash!, "success");
 
   await expect(page.getByText("Secondary owner revoked")).toBeVisible({timeout: 15_000});
-  await expect(page.getByText("Revoked")).toBeVisible();
+  // WP4.17A D8 - the revoke twin of the add ceremony's identical assertion above.
+  await assertToastNeverDoubles(page, "Secondary owner revoked");
+  // Scoped to the card, like the add test's own "Active" check above - a bare page-level
+  // `getByText("Revoked")` also matches this toast's own text ("Secondary owner revoked",
+  // case-insensitive substring match), which is exactly the kind of ambiguity this file's other
+  // status-badge checks are already careful to avoid.
+  await expect(ownersCard(page).getByText("Revoked", {exact: true})).toBeVisible();
 });
 
 test("Revoke a secondary owner: a rejected wallet prompt returns the row to idle, not a permanent 'Revoking...' badge", async ({page}) => {
@@ -496,4 +550,7 @@ test("Revoke a secondary owner: a rejected wallet prompt returns the row to idle
   await setRpcScenario("delegationLeaves", DELEGATION_REGISTRY_ADDRESS, [dogTagIdField], sixteenSlotLeaves());
   await setRpcReceipt(hash!, "success");
   await expect(page.getByText("Secondary owner revoked")).toBeVisible({timeout: 15_000});
+  // WP4.17A D8 - same guard proof as the primary revoke test above: this retry path goes through
+  // the identical poll/receipt race once it succeeds.
+  await assertToastNeverDoubles(page, "Secondary owner revoked");
 });

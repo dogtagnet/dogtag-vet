@@ -60,6 +60,15 @@ export function AddSecondaryOwnerAction({petId, dogTagIdField, disabled}: {petId
   const [pendingTxHash, setPendingTxHash] = useState<`0x${string}` | undefined>(undefined);
   const pollRef = useRef<ReturnType<typeof setInterval> | undefined>(undefined);
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  // WP4.17A D8 - the 2s staff poll (below) and the wagmi receipt effect (further down) both
+  // observe the SAME confirmed session and used to each fire their own toast/refresh/close
+  // independently, so a clinic user could see "Secondary owner added" twice (grade round 2's own
+  // e2e run resolved two `role="status"` toasts in 2 of 4 executions). This ref makes "the
+  // ceremony has been settled" a single fact both paths check before acting, not two separate
+  // un-coordinated ones - reset only when a fresh ceremony actually starts (`handleStart` below),
+  // never on close, so a stray late poll tick or receipt event after either path has already
+  // settled this ceremony can never re-fire the toast/refresh/close sequence a second time.
+  const settledRef = useRef(false);
 
   const receipt = useWaitForTransactionReceipt({hash: pendingTxHash, chainId: roax.id});
 
@@ -68,6 +77,21 @@ export function AddSecondaryOwnerAction({petId, dogTagIdField, disabled}: {petId
     pollRef.current = undefined;
   }
   useEffect(() => stopPolling, []);
+
+  /** The one place either the poll branch or the receipt effect is allowed to act on a confirmed
+   * ceremony - see `settledRef`'s own doc comment above for why this exists instead of each path
+   * doing its own toast/refresh/close. */
+  function onConfirmed() {
+    if (settledRef.current) return;
+    settledRef.current = true;
+    stopPolling();
+    snackbar.show("Secondary owner added", "ok");
+    router.refresh();
+    setOpen(false);
+    setSession(null);
+    setSelectedClient(null);
+    setPendingTxHash(undefined);
+  }
 
   useEffect(() => {
     clearTimeout(timeoutRef.current);
@@ -99,15 +123,10 @@ export function AddSecondaryOwnerAction({petId, dogTagIdField, disabled}: {petId
         // threshold - very plausible with a tab still open at the counter). When that happens,
         // this poll branch is the ONLY path that ever notices and cleans up the UI. On the common
         // fast path, where the receipt effect's own `/confirm` POST is what flips this session,
-        // the next poll tick just observes the same already-idempotent result - a second toast/
-        // refresh in that ordering is cosmetic and deliberately left rather than cross-effect
-        // de-duplicated for a redundancy that is otherwise load-bearing.
-        stopPolling();
-        snackbar.show("Secondary owner added", "ok");
-        router.refresh();
-        setOpen(false);
-        setSession(null);
-        setSelectedClient(null);
+        // the next poll tick just observes the same already-idempotent result - `onConfirmed`'s
+        // own `settledRef` guard (WP4.17A D8) is what keeps that redundancy load-bearing (either
+        // path can still be the one that notices) without also toasting/refreshing/closing twice.
+        onConfirmed();
       } else if (status.status === "error") {
         stopPolling();
       }
@@ -129,6 +148,9 @@ export function AddSecondaryOwnerAction({petId, dogTagIdField, disabled}: {petId
         return;
       }
       const started = body as StartAddResponse;
+      // A fresh ceremony - the ONLY place `settledRef` resets (WP4.17A D8), so a ceremony that
+      // already settled once can never suppress this NEW one's own single toast/refresh/close.
+      settledRef.current = false;
       setSession(started);
       startPolling(started.registrationId);
     } finally {
@@ -173,14 +195,7 @@ export function AddSecondaryOwnerAction({petId, dogTagIdField, disabled}: {petId
       fetch(`/api/pets/${petId}/delegations/${session.registrationId}/confirm`, {method: "POST"})
         .then((r) => r.json())
         .then((body) => {
-          if (body.status === "confirmed") {
-            snackbar.show("Secondary owner added", "ok");
-            router.refresh();
-            setOpen(false);
-            setSession(null);
-            setSelectedClient(null);
-            setPendingTxHash(undefined);
-          }
+          if (body.status === "confirmed") onConfirmed();
         });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps

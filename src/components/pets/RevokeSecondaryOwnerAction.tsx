@@ -60,6 +60,11 @@ export function RevokeSecondaryOwnerAction({
    * shows a stale message next to an in-flight one. */
   const [inlineError, setInlineError] = useState<string | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | undefined>(undefined);
+  // WP4.17A D8 - same fix as `AddSecondaryOwnerAction.tsx`'s identical `settledRef`: the poll
+  // branch below and the receipt effect further down both observe the same confirmed session and
+  // used to each independently toast/refresh, so a clinic user could see "Secondary owner
+  // revoked" twice. Reset only when a fresh revoke actually starts (`handleRevoke` below).
+  const settledRef = useRef(false);
 
   const receipt = useWaitForTransactionReceipt({hash: pendingTxHash, chainId: roax.id});
 
@@ -68,6 +73,16 @@ export function RevokeSecondaryOwnerAction({
     pollRef.current = undefined;
   }
   useEffect(() => stopPolling, []);
+
+  /** The one place either the poll branch or the receipt effect is allowed to act on a confirmed
+   * revoke - see `settledRef`'s own doc comment above. */
+  function onConfirmed() {
+    if (settledRef.current) return;
+    settledRef.current = true;
+    stopPolling();
+    snackbar.show("Secondary owner revoked", "ok");
+    router.refresh();
+  }
 
   function startPolling(id: string) {
     stopPolling();
@@ -81,10 +96,10 @@ export function RevokeSecondaryOwnerAction({
         // see `AddSecondaryOwnerAction.tsx`'s identical branch for the full reasoning
         // (`bootRecovery.ts`'s worker-driven stale-session recovery can confirm this session
         // while this tab is still open and polling, independent of wagmi ever resolving a
-        // receipt here).
-        stopPolling();
-        snackbar.show("Secondary owner revoked", "ok");
-        router.refresh();
+        // receipt here). `onConfirmed`'s own `settledRef` guard (WP4.17A D8) keeps that
+        // redundancy load-bearing (either path can still be the one that notices) without also
+        // toasting/refreshing twice.
+        onConfirmed();
       } else if (body.status === "error") {
         stopPolling();
       }
@@ -123,6 +138,8 @@ export function RevokeSecondaryOwnerAction({
         return;
       }
       const {registrationId: newRegistrationId} = startBody as {registrationId: string};
+      // A fresh revoke - the ONLY place `settledRef` resets (WP4.17A D8).
+      settledRef.current = false;
       setRegistrationId(newRegistrationId);
       startPolling(newRegistrationId);
 
@@ -165,10 +182,7 @@ export function RevokeSecondaryOwnerAction({
       fetch(`/api/pets/${petId}/delegations/${registrationId}/confirm`, {method: "POST"})
         .then((r) => r.json())
         .then((body) => {
-          if (body.status === "confirmed") {
-            snackbar.show("Secondary owner revoked", "ok");
-            router.refresh();
-          }
+          if (body.status === "confirmed") onConfirmed();
         });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
