@@ -12,12 +12,17 @@ import {StatusBadge} from "@/components/ui/StatusBadge";
 import {useSnackbar} from "@/components/ui/Snackbar";
 import {entityRegistryAbi, vetIssuerAbi, vetIssuerFactoryAbi} from "@/lib/abi";
 import {roax} from "@/lib/chains";
-import {publicEnv} from "@/lib/env.public";
-
-const factoryAddress = publicEnv.vetIssuerFactoryAddress as `0x${string}` | "";
-const entityRegistryAddress = publicEnv.entityRegistryAddress as `0x${string}` | "";
+import {usePublicEnv} from "@/lib/usePublicEnv";
 
 export function SetupWizard() {
+  // usePublicEnv(), not the bare `publicEnv` module export: this component's very first return
+  // branches on `factoryAddress` (the "Protocol addresses are not configured" banner below), so a
+  // plain module-scope read would be a real hydration mismatch the first time a deployment's
+  // build-time value (this server process never has `window`, so SSR always sees the fallback)
+  // differs from its runtime-injected one - see usePublicEnv's own doc comment.
+  const {vetIssuerFactoryAddress: rawFactoryAddress, entityRegistryAddress: rawEntityRegistryAddress} = usePublicEnv();
+  const factoryAddress = rawFactoryAddress as `0x${string}` | "";
+  const entityRegistryAddress = rawEntityRegistryAddress as `0x${string}` | "";
   const {address, isConnected, chainId} = useAccount();
   const {connect, connectors, isPending: isConnecting} = useConnect();
   const {switchChain} = useSwitchChain();
@@ -138,8 +143,8 @@ export function SetupWizard() {
   if (!factoryAddress) {
     return (
       <Banner tone="warn" title="Protocol addresses are not configured">
-        Set <code>NEXT_PUBLIC_VET_ISSUER_FACTORY_ADDRESS</code> and{" "}
-        <code>NEXT_PUBLIC_ENTITY_REGISTRY_ADDRESS</code> in your environment, then restart the app.
+        Set <code>VET_ISSUER_FACTORY_ADDRESS</code> and <code>ENTITY_REGISTRY_ADDRESS</code> in your
+        environment, then restart the app - no rebuild needed, these are read at container start.
       </Banner>
     );
   }

@@ -20,7 +20,7 @@ This is the fastest path to a running clinic instance, and the one this project 
    - `PUBLIC_BASE_URL` - the URL this instance will actually be reachable at (see "Getting a public URL" below if you do not have one yet).
    - `AUTH_SECRET` - generate one with `openssl rand -base64 32`.
    - `AUTH_GOOGLE_ID` and `AUTH_GOOGLE_SECRET`, or `EMAIL_SERVER` and `EMAIL_FROM` - at least one staff sign-in method.
-   - `VET_ISSUER_FACTORY_ADDRESS`, `ENTITY_REGISTRY_ADDRESS`, `DOGTAG_SBT_ADDRESS`, `VERIFICATION_REGISTRY_ADDRESS` - the protocol contract addresses on ROAX (and their `NEXT_PUBLIC_` mirrors).
+   - `VET_ISSUER_FACTORY_ADDRESS`, `ENTITY_REGISTRY_ADDRESS`, `DOGTAG_SBT_ADDRESS`, `VERIFICATION_REGISTRY_ADDRESS` - the protocol contract addresses on ROAX.
 
    `.env.example` documents every other value and its default; leave the rest alone until you have a specific reason to change them.
 3. Start the stack.
@@ -32,6 +32,12 @@ This is the fastest path to a running clinic instance, and the one this project 
 
 That's it for a first run.
 Everything else - receiving addresses for payments, the business profile card, chain RPC overrides - is configured from the running app's Settings page, not from environment variables, so it can change without a redeploy.
+
+### Protocol addresses and RPC config are runtime values
+
+`ROAX_RPC_URL`, `ROAX_CHAIN_ID`, `ROAX_EXPLORER_URL`, and the five protocol contract addresses (`VET_ISSUER_FACTORY_ADDRESS`, `ENTITY_REGISTRY_ADDRESS`, `DOGTAG_SBT_ADDRESS`, `VERIFICATION_REGISTRY_ADDRESS`, `DELEGATION_REGISTRY_ADDRESS`) are read from the container's own env when it STARTS, not baked into the image at `docker build` time - the running server injects them into every page it serves (`PublicConfigInitScript`, mirroring the DogTag admin portal's own chain-config mechanism), so the browser always sees this container's real values.
+This is why step 4 above just works the first time: build the image once (no build args, no per-environment rebuild - see the Dockerfile's own comment on this) and push it anywhere; each environment supplies its own `.env` (or Helm `values.yaml`/Secret) at container start.
+If you leave the four contract addresses blank for a first run, the setup wizard shows "Protocol addresses are not configured" instead of failing silently - set them (in `.env` for Compose, or the Helm values below) and restart the container, no rebuild required, and the wizard picks them up on the next request.
 
 ### Getting a public URL
 
@@ -109,6 +115,7 @@ helm install dogtag-vet ./helm/dogtag-vet \
 ```
 
 Build and push the two images first (`docker build -f Dockerfile -t your-registry/dogtag-vet-web:v1 .` and the same with `Dockerfile.worker`) - there is no public image for this app.
+The web image needs no per-environment build (see "Protocol addresses and RPC config are runtime values" above): the SAME `v1` tag can be promoted from dev to staging to production, each supplying its own `env.VET_ISSUER_FACTORY_ADDRESS`/`env.ROAX_RPC_URL`/etc. (or a Secret key) at install time, exactly like `env.PUBLIC_BASE_URL` and `env.MONGODB_URI` in the example below - never a rebuild with different `--build-arg` values.
 
 Secrets (`AUTH_SECRET`, SMTP credentials, the Google OAuth client secret) do not belong in `values.yaml`, committed or otherwise.
 Create the Secret yourself and reference it:
