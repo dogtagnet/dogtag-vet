@@ -465,11 +465,13 @@ paths:
         `complete` (so the secondary owner's app can keep polling the same token through on-chain
         confirmation), then starts returning `410` once the grace period elapses.
 
-        Once (and only once) `status` reaches `added`, the response also carries `bundle` - the
-        co-owner bundle (`specs/qr-formats.md` "The co-owner bundle",
+        The response never carries `bundle` before `status` reaches `added`, because its contents do
+        not exist until the on-chain write this status tracks actually confirms. Once `added`, the
+        response carries `bundle` - the co-owner bundle (`specs/qr-formats.md` "The co-owner bundle",
         `#/components/schemas/DelegationCoOwnerBundle`) the secondary owner's device needs for
-        view-only custody. The bundle cannot appear any earlier, because its contents do not exist
-        until the on-chain write this status tracks actually confirms.
+        view-only custody - PROVIDED the vet also holds custody of the tag's artifact; when `added`
+        but custody is missing, the response instead carries `bundleUnavailable: true` and no
+        `bundle` key, rather than silently omitting both.
       parameters:
         - $ref: '#/components/parameters/DelegationSessionToken'
       responses:
@@ -1906,9 +1908,10 @@ components:
         PLANNED (WP4.15). `pending` (session open, not yet claimed) -> `claimed` (the signed
         `DelegationClaim` was accepted; the on-chain write has not been submitted yet) -> `adding`
         (an operator wallet submitted `addSecondaryOwner`; awaiting chain confirmation) -> `added`
-        (confirmed - `bundle` is now present on `DelegationSessionStatusResponse`), or `error` at
-        any point after `claimed`. Mirrors `MintSessionStatusResponse`'s `status` enum shape one
-        step further, since a delegation session's payload does not exist until `added`.
+        (confirmed - `DelegationSessionStatusResponse` now carries `bundle` when the vet holds
+        custody of the tag's artifact, or `bundleUnavailable: true` otherwise), or `error` at any
+        point after `claimed`. Mirrors `MintSessionStatusResponse`'s `status` enum shape one step
+        further, since a delegation session's payload does not exist until `added`.
 
     DelegationSessionChallengeResponse:
       type: object
@@ -2001,7 +2004,18 @@ components:
           description: A device-safe sentence explaining `error` status. Absent for every other status.
         bundle:
           $ref: '#/components/schemas/DelegationCoOwnerBundle'
-          description: Present if and only if `status` is `added`. See `specs/qr-formats.md` "The co-owner bundle".
+          description: |-
+            Present once the session reports `added` and the vet holds custody of the tag artifact;
+            absent, with `bundleUnavailable` `true`, when custody is missing. See
+            `specs/qr-formats.md` "The co-owner bundle".
+        bundleUnavailable:
+          type: boolean
+          description: |-
+            `true` when `status` is `added` but no `bundle` could be built because the vet does not
+            hold custody of the tag's artifact - the complement of `bundle`'s own presence
+            condition above. This schema has no construct asserting the two fields are mutually
+            exclusive (no `oneOf`/`not` is used anywhere in this document); that is a server-side
+            contract, not something this document validates.
 
     DelegationCoOwnerBundle:
       type: object

@@ -143,13 +143,16 @@ https://<vet>/d/<32hex>
 
 ### The co-owner bundle
 
-`GET /d/{token}/status` carries a `bundle` once (and only once) it reports `added` - the payload the
-newly-added secondary owner's device needs to act as a view-only co-owner. Status, not the earlier
-resolve or complete calls, is the bundle's home because the data it carries does not exist until the
-on-chain write actually lands: unlike a mint session (whose attribute data is already known at
-resolve time, well before `custodial-bind`), a delegation session's bundle depends on the confirmed
-on-chain state the write produces. This wave's contract for the app waves is the bundle's *shape*,
-defined below; wiring the phone's polling loop to it is WP4.15M's job.
+`GET /d/{token}/status` never carries a `bundle` before it reports `added` - the data it carries does
+not exist until the on-chain write actually lands: unlike a mint session (whose attribute data is
+already known at resolve time, well before `custodial-bind`), a delegation session's bundle depends
+on the confirmed on-chain state the write produces. Status, not the earlier resolve or complete
+calls, is therefore the bundle's home. Once `added`, the response carries `bundle` - the payload the
+newly-added secondary owner's device needs to act as a view-only co-owner - PROVIDED the vet also
+holds custody of the tag's artifact; when `added` but custody is missing, the response instead
+carries `bundleUnavailable: true` and no `bundle` key
+(`specs/vet-public-api.yaml` `DelegationSessionStatusResponse`). This wave's contract for the app
+waves is the bundle's *shape*, defined below; wiring the phone's polling loop to it is WP4.15M's job.
 
 The bundle contains **public data only**: the tag's `protocolVersion`, its canonical
 `dogTagIdField`, its root `R`, attribute openings for display (the same `OpenedLeaf` shape a `/e`
