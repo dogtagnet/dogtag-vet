@@ -15,9 +15,11 @@ import {startEphemeralMongod, stopEphemeralMongod, type EphemeralMongod} from ".
  * dependency at all for them) - they must NEVER require a staff session, only a valid token, per
  * `docs/DELEGATION.md` section 4.3 (a secondary owner's own phone calls these directly).
  *
- * ISOLATION: own ephemeral mongod, port 44137 (44117-44136 already taken by sibling suites - see
- * each file's own ISOLATION note, most recently `mintSessionResolveRoute.integration.test.ts`'s
- * 44136).
+ * ISOLATION: own ephemeral mongod on a freshly OS-reserved free port (see
+ * tests/unit/helpers/ephemeralMongod.ts - each spawn reserves a currently-free port by binding
+ * and releasing a throwaway socket, unique across concurrent processes including two whole
+ * copies of this suite running at once, and retries on a genuine bind collision, so no fixed
+ * port or manual coordination between sibling suites is needed).
  */
 vi.mock("@/auth", () => ({auth: vi.fn()}));
 
@@ -34,15 +36,14 @@ import {GET as publicResolveGET} from "@/app/d/[token]/route";
 import {POST as publicCompletePOST} from "@/app/d/[token]/complete/route";
 import {GET as publicStatusGET} from "@/app/d/[token]/status/route";
 
-const MONGO_PORT = 44_137;
 let ephemeral: EphemeralMongod;
 
 beforeAll(async () => {
-  ephemeral = await startEphemeralMongod(MONGO_PORT, "dogtag-vet-wp415-delegation-route-guards");
+  ephemeral = await startEphemeralMongod("dogtag-vet-wp415-delegation-route-guards");
   process.env.MONGODB_URI = ephemeral.uri;
   await connectToDatabase();
   expect(mongoose.connection.host).toBe("127.0.0.1");
-  expect(mongoose.connection.port).toBe(MONGO_PORT);
+  expect(mongoose.connection.port).toBe(ephemeral.port);
 }, 90_000);
 
 afterAll(async () => {

@@ -16,8 +16,11 @@ import {startEphemeralMongod, stopEphemeralMongod, type EphemeralMongod} from ".
  * `disclosed`, no `obfuscatedLeafHashes` - exactly what dogtag-ios's shipped `ArtifactShareEngine`
  * sends today) still completes an import successfully, byte-for-byte as it did before this wave.
  *
- * ISOLATION: own ephemeral mongod, port 44133 (44117-44132 already taken by sibling suites - see
- * `tests/unit/api/verifyRedactedArtifact.integration.test.ts`'s own doc comment).
+ * ISOLATION: own ephemeral mongod on a freshly OS-reserved free port (see
+ * tests/unit/helpers/ephemeralMongod.ts - each spawn reserves a currently-free port by binding
+ * and releasing a throwaway socket, unique across concurrent processes including two whole
+ * copies of this suite running at once, and retries on a genuine bind collision, so no fixed
+ * port or manual coordination between sibling suites is needed).
  */
 vi.mock("@/lib/chainRead", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/chainRead")>();
@@ -37,7 +40,6 @@ import {ClinicSettings} from "@/lib/models/ClinicSettings";
 import {Pet, type PetDoc} from "@/lib/models/Pet";
 import {TagArtifact, type TagArtifactDoc} from "@/lib/models/TagArtifact";
 
-const MONGO_PORT = 44_133;
 const OUR_CLONE = "0x5bd5048125f223100a2753a740f34d044ab493b";
 const FOREIGN_CLONE = "0x57f8786264c55cdd8f3ece0ba177f6ad2df90e0";
 const SBT_ADDRESS = "0x276101555b2cd92be0fb85ff908e02281d6a3cf9";
@@ -53,13 +55,13 @@ function nowSecs(): number {
 let ephemeral: EphemeralMongod;
 
 beforeAll(async () => {
-  ephemeral = await startEphemeralMongod(MONGO_PORT, "dogtag-vet-import-complete");
+  ephemeral = await startEphemeralMongod("dogtag-vet-import-complete");
   process.env.MONGODB_URI = ephemeral.uri;
   process.env.DOGTAG_SBT_ADDRESS = SBT_ADDRESS;
   process.env.VET_ISSUER_FACTORY_ADDRESS = FACTORY_ADDRESS;
   await connectToDatabase();
   expect(mongoose.connection.host).toBe("127.0.0.1");
-  expect(mongoose.connection.port).toBe(MONGO_PORT);
+  expect(mongoose.connection.port).toBe(ephemeral.port);
   expect(mongoose.connection.name).toBe("dogtag-vet-import-complete");
   // The route's chain-deps selection ALSO requires settings?.cloneAddress (on top of the two env
   // vars above) before it will use the real (mocked) chain reads - see the route's own comment on

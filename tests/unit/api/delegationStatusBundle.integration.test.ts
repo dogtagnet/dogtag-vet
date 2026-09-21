@@ -20,9 +20,11 @@ import {startEphemeralMongod, stopEphemeralMongod, type EphemeralMongod} from ".
  * export of that module real via `importActual` (nothing else in this route's call graph needs a
  * live chain read - `getDelegationSessionStatusForDevice` is pure Mongo, confirmed by reading it).
  *
- * ISOLATION: own ephemeral mongod, port 44139 (44138 is
- * tests/unit/api/primaryOwnerClientIdIssuanceStart.integration.test.ts's own port, this wave's
- * previous fix round - see that file's doc comment for the fuller port ledger).
+ * ISOLATION: own ephemeral mongod on a freshly OS-reserved free port (see
+ * tests/unit/helpers/ephemeralMongod.ts - each spawn reserves a currently-free port by binding
+ * and releasing a throwaway socket, unique across concurrent processes including two whole
+ * copies of this suite running at once, and retries on a genuine bind collision, so no fixed
+ * port or manual coordination between sibling suites is needed).
  */
 vi.mock("@/lib/chainRead", async () => {
   const actual = await vi.importActual<typeof import("@/lib/chainRead")>("@/lib/chainRead");
@@ -37,16 +39,15 @@ import {createTagArtifact, type CreateTagArtifactInput} from "@/lib/tags/artifac
 import {TagArtifact} from "@/lib/models/TagArtifact";
 import {GET as publicStatusGET} from "@/app/d/[token]/status/route";
 
-const MONGO_PORT = 44_139;
 let ephemeral: EphemeralMongod;
 
 beforeAll(async () => {
-  ephemeral = await startEphemeralMongod(MONGO_PORT, "dogtag-vet-delegation-status-bundle");
+  ephemeral = await startEphemeralMongod("dogtag-vet-delegation-status-bundle");
   process.env.MONGODB_URI = ephemeral.uri;
   process.env.DELEGATION_REGISTRY_ADDRESS = `0x${"5".repeat(40)}`;
   await connectToDatabase();
   expect(mongoose.connection.host).toBe("127.0.0.1");
-  expect(mongoose.connection.port).toBe(MONGO_PORT);
+  expect(mongoose.connection.port).toBe(ephemeral.port);
   await TagArtifact.init(); // the unique `root` index builds in the background - wait for it.
 }, 90_000);
 

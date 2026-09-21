@@ -15,7 +15,8 @@ import {startEphemeralMongod, stopEphemeralMongod, type EphemeralMongod} from ".
  * ISOLATION: own ephemeral `mongod` on a scratch port/dbpath (never `process.env.MONGODB_URI` from
  * the environment, never mongodb://127.0.0.1:27500) - same pattern as
  * `tests/unit/registration/staleModelRepro.integration.test.ts`, whose own doc comment explains
- * the rationale in full. Port 44118 (staleModelRepro already owns 44117).
+ * the rationale in full. A freshly OS-reserved free port (see
+ * `tests/unit/helpers/ephemeralMongod.ts`), not a fixed one.
  *
  * `@/auth` is mocked (not imported for real) so `requireVetSession`/`requireOwnerSession`'s own
  * role x disabled matrix - the actual re-read-from-Mongo logic those functions exist for - can be
@@ -32,19 +33,17 @@ import {listStaff, Staff, type StaffDoc} from "@/lib/models/Staff";
 import {requireOwnerSession, requireVetSession} from "@/lib/staffApi";
 import {practitionerDisplayName} from "@/lib/staffRoleTone";
 
-const MONGO_PORT = 44_118; // staleModelRepro already owns 44117.
-
 let ephemeral: EphemeralMongod;
 
 beforeAll(async () => {
-  ephemeral = await startEphemeralMongod(MONGO_PORT, "dogtag-vet-wp47-backcompat");
+  ephemeral = await startEphemeralMongod("dogtag-vet-wp47-backcompat");
 
   process.env.MONGODB_URI = ephemeral.uri;
   await connectToDatabase();
   // Hard safety net, same as staleModelRepro: this process's global mongoose connection must be
   // OUR ephemeral instance, never anything read from a real deployment's environment.
   expect(mongoose.connection.host).toBe("127.0.0.1");
-  expect(mongoose.connection.port).toBe(MONGO_PORT);
+  expect(mongoose.connection.port).toBe(ephemeral.port);
   expect(mongoose.connection.name).toBe("dogtag-vet-wp47-backcompat");
 
   // Wait for the compound (date, staffId) unique index to actually finish building before any

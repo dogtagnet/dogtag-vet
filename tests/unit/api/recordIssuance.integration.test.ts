@@ -11,8 +11,11 @@ import {startEphemeralMongod, stopEphemeralMongod, type EphemeralMongod} from ".
  * importComplete.integration.test.ts` (chainRead mocking) - the same two conventions every route
  * integration test in this repo already uses.
  *
- * ISOLATION: own ephemeral mongod, port 44142 (WP4.17A D7: moved off 44137, which duplicated
- * delegationRouteGuards.integration.test.ts's own port - see this file's own port-constant comment).
+ * ISOLATION: own ephemeral mongod on a freshly OS-reserved free port (see
+ * tests/unit/helpers/ephemeralMongod.ts - each spawn reserves a currently-free port by binding
+ * and releasing a throwaway socket, unique across concurrent processes including two whole
+ * copies of this suite running at once, and retries on a genuine bind collision, so no fixed
+ * port or manual coordination between sibling suites is needed).
  */
 vi.mock("@/auth", () => ({auth: vi.fn()}));
 vi.mock("@/lib/chainRead", async (importOriginal) => {
@@ -55,11 +58,6 @@ import {POST as txPOST} from "@/app/api/records/[id]/tx/route";
 import {POST as confirmPOST} from "@/app/api/records/[id]/confirm/route";
 import {GET as attestationGET, POST as attestationPOST} from "@/app/api/records/[id]/attestation/route";
 
-// WP4.17A D7 - was 44137, duplicating delegationRouteGuards.integration.test.ts's own port (a
-// four-way pigeonhole collision found across the 44117-44141 range: 29 files, 25 slots). Moved to
-// a value outside that range's own budget rather than reused from within it.
-const MONGO_PORT = 44_142;
-
 // Every address below is a plain 0x + 40 hex chars (`hexAddress`'s own schema requirement) -
 // lengths double-checked with `node -e` before use, not eyeballed (a too-short hex string is an
 // easy transcription mistake, and zod's regex catches it as a 400 that looks like an unrelated
@@ -79,14 +77,14 @@ const ZERO_HEX32 = `0x${"0".repeat(64)}`;
 let ephemeral: EphemeralMongod;
 
 beforeAll(async () => {
-  ephemeral = await startEphemeralMongod(MONGO_PORT, "dogtag-vet-record-issuance");
+  ephemeral = await startEphemeralMongod("dogtag-vet-record-issuance");
   process.env.MONGODB_URI = ephemeral.uri;
   process.env.ENTITY_REGISTRY_ADDRESS = ENTITY_REGISTRY;
   process.env.DOGTAG_SBT_ADDRESS = SBT;
   process.env.VET_ISSUER_FACTORY_ADDRESS = FACTORY;
   await connectToDatabase();
   expect(mongoose.connection.host).toBe("127.0.0.1");
-  expect(mongoose.connection.port).toBe(MONGO_PORT);
+  expect(mongoose.connection.port).toBe(ephemeral.port);
   await RecordArtifact.init();
 }, 90_000);
 

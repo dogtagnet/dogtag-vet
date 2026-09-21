@@ -14,7 +14,11 @@ import {startEphemeralMongod, stopEphemeralMongod, type EphemeralMongod} from ".
  * - this route doesn't care WHICH staff role is signed in (any staff session may patch booking
  * settings today), only that one exists.
  *
- * ISOLATION: own ephemeral mongod, port 44122 (44117-44121 already taken by sibling suites).
+ * ISOLATION: own ephemeral mongod on a freshly OS-reserved free port (see
+ * tests/unit/helpers/ephemeralMongod.ts - each spawn reserves a currently-free port by binding
+ * and releasing a throwaway socket, unique across concurrent processes including two whole
+ * copies of this suite running at once, and retries on a genuine bind collision, so no fixed
+ * port or manual coordination between sibling suites is needed).
  */
 vi.mock("@/auth", () => ({auth: vi.fn()}));
 
@@ -23,8 +27,6 @@ import {connectToDatabase} from "@/lib/db";
 import {AvailabilityRule, BookingSettings} from "@/lib/models/Availability";
 import {Staff} from "@/lib/models/Staff";
 import {PATCH} from "@/app/api/availability/settings/route";
-
-const MONGO_PORT = 44_122;
 
 let ephemeral: EphemeralMongod;
 
@@ -44,11 +46,11 @@ function patchRequest(body: Record<string, unknown>): Request {
 }
 
 beforeAll(async () => {
-  ephemeral = await startEphemeralMongod(MONGO_PORT, "dogtag-vet-wp47-settings-d1");
+  ephemeral = await startEphemeralMongod("dogtag-vet-wp47-settings-d1");
   process.env.MONGODB_URI = ephemeral.uri;
   await connectToDatabase();
   expect(mongoose.connection.host).toBe("127.0.0.1");
-  expect(mongoose.connection.port).toBe(MONGO_PORT);
+  expect(mongoose.connection.port).toBe(ephemeral.port);
 }, 90_000);
 
 afterAll(async () => {

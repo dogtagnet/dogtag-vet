@@ -9,9 +9,11 @@ import {startEphemeralMongod, stopEphemeralMongod, type EphemeralMongod} from ".
  * chain-before-trusting-the-tx pattern, keyed by RECORD id rather than pet id (a pet has many
  * independent records - see the route's own header comment for why).
  *
- * ISOLATION: own ephemeral mongod, port 44143 (WP4.17A D7: moved off 44138, which duplicated
- * primaryOwnerClientIdIssuanceStart.integration.test.ts's own port - see this file's own
- * port-constant comment).
+ * ISOLATION: own ephemeral mongod on a freshly OS-reserved free port (see
+ * tests/unit/helpers/ephemeralMongod.ts - each spawn reserves a currently-free port by binding
+ * and releasing a throwaway socket, unique across concurrent processes including two whole
+ * copies of this suite running at once, and retries on a genuine bind collision, so no fixed
+ * port or manual coordination between sibling suites is needed).
  */
 vi.mock("@/auth", () => ({auth: vi.fn()}));
 vi.mock("@/lib/chainRead", async (importOriginal) => {
@@ -27,10 +29,6 @@ import {RecordArtifact, type RecordArtifactDoc} from "@/lib/models/RecordArtifac
 import {ChainActivity, type ChainActivityDoc} from "@/lib/models/ChainActivity";
 import {POST as lifecyclePOST} from "@/app/api/records/[id]/lifecycle/route";
 
-// WP4.17A D7 - was 44138, duplicating primaryOwnerClientIdIssuanceStart.integration.test.ts's own
-// port (see recordIssuance.integration.test.ts's identical comment for the full audit).
-const MONGO_PORT = 44_143;
-
 // 0x + 40 hex chars, generated + regex-verified with `python3 -c` before use (a too-short/non-hex
 // placeholder is an easy transcription mistake - see recordIssuance.integration.test.ts's own
 // header note, and this file's own earlier draft, which was wrong on the first two tries).
@@ -42,10 +40,10 @@ const TX_HASH = `0x${"5".repeat(64)}`;
 let ephemeral: EphemeralMongod;
 
 beforeAll(async () => {
-  ephemeral = await startEphemeralMongod(MONGO_PORT, "dogtag-vet-record-lifecycle");
+  ephemeral = await startEphemeralMongod("dogtag-vet-record-lifecycle");
   process.env.MONGODB_URI = ephemeral.uri;
   await connectToDatabase();
-  expect(mongoose.connection.port).toBe(MONGO_PORT);
+  expect(mongoose.connection.port).toBe(ephemeral.port);
   await RecordArtifact.init();
 }, 90_000);
 

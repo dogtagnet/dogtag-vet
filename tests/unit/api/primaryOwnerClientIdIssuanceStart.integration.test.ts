@@ -24,9 +24,11 @@ import {startEphemeralMongod, stopEphemeralMongod, type EphemeralMongod} from ".
  * dogTagId allocation. The DB side effect under test has therefore already landed by the time the
  * response comes back, regardless of that later failure.
  *
- * ISOLATION: own ephemeral mongod, port 44138 (44137 is
- * tests/unit/api/delegationRouteGuards.integration.test.ts's own port - see that file's doc
- * comment for the full port ledger as of this wave).
+ * ISOLATION: own ephemeral mongod on a freshly OS-reserved free port (see
+ * tests/unit/helpers/ephemeralMongod.ts - each spawn reserves a currently-free port by binding
+ * and releasing a throwaway socket, unique across concurrent processes including two whole
+ * copies of this suite running at once, and retries on a genuine bind collision, so no fixed
+ * port or manual coordination between sibling suites is needed).
  */
 vi.mock("@/auth", () => ({auth: vi.fn()}));
 vi.mock("@/lib/mint/preflight", () => ({
@@ -43,15 +45,14 @@ import {Staff} from "@/lib/models/Staff";
 import {Pet, type PetDoc} from "@/lib/models/Pet";
 import {POST as startPOST} from "@/app/api/tags/issue/start/route";
 
-const MONGO_PORT = 44_138;
 let ephemeral: EphemeralMongod;
 
 beforeAll(async () => {
-  ephemeral = await startEphemeralMongod(MONGO_PORT, "dogtag-vet-primary-owner-start");
+  ephemeral = await startEphemeralMongod("dogtag-vet-primary-owner-start");
   process.env.MONGODB_URI = ephemeral.uri;
   await connectToDatabase();
   expect(mongoose.connection.host).toBe("127.0.0.1");
-  expect(mongoose.connection.port).toBe(MONGO_PORT);
+  expect(mongoose.connection.port).toBe(ephemeral.port);
 }, 90_000);
 
 afterAll(async () => {

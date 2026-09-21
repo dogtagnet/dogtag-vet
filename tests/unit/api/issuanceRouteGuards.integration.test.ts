@@ -14,8 +14,9 @@ import {startEphemeralMongod, stopEphemeralMongod, type EphemeralMongod} from ".
  * Covers all FIVE routes now on `requireVetSession`: the three A2 originally named
  * (confirm/tx/retry) plus the two RULING R1 added in this same fix round (start, attestation).
  * Modelled on `tests/unit/booking/settingsRouteD1.integration.test.ts` - `vi.mock("@/auth")` +
- * `startEphemeralMongod` on a free port > 44000 (44123 - 44117-44122 already taken by sibling
- * suites).
+ * `startEphemeralMongod` on a freshly OS-reserved free port (see
+ * `tests/unit/helpers/ephemeralMongod.ts`, no fixed port or manual coordination with sibling
+ * suites needed).
  *
  * Per the grade file's own recipe: a vet/owner call may fail LATER for missing session data (no
  * such MintSession, a malformed body) - every route's guard runs FIRST, before any body/param
@@ -33,16 +34,14 @@ import {POST as txPOST} from "@/app/api/tags/issue/[sessionId]/tx/route";
 import {POST as retryPOST} from "@/app/api/tags/issue/[sessionId]/retry/route";
 import {GET as attestationGET, POST as attestationPOST} from "@/app/api/tags/issue/[sessionId]/attestation/route";
 
-const MONGO_PORT = 44_123;
-
 let ephemeral: EphemeralMongod;
 
 beforeAll(async () => {
-  ephemeral = await startEphemeralMongod(MONGO_PORT, "dogtag-vet-wp47-issuance-route-guards");
+  ephemeral = await startEphemeralMongod("dogtag-vet-wp47-issuance-route-guards");
   process.env.MONGODB_URI = ephemeral.uri;
   await connectToDatabase();
   expect(mongoose.connection.host).toBe("127.0.0.1");
-  expect(mongoose.connection.port).toBe(MONGO_PORT);
+  expect(mongoose.connection.port).toBe(ephemeral.port);
 }, 90_000);
 
 afterAll(async () => {

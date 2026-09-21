@@ -14,9 +14,11 @@ import {startEphemeralMongod, stopEphemeralMongod, type EphemeralMongod} from ".
  * NEW record path produces the `RecordArtifact`-shaped response `specs/vet-public-api.yaml`'s
  * `ArtifactExportResponse` describes.
  *
- * ISOLATION: own ephemeral mongod, port 44144 (WP4.17A D7: moved off 44139, which duplicated
- * delegationStatusBundle.integration.test.ts's own port - the pair whose collision was actually
- * caught live; see this file's own port-constant comment for what it looked like).
+ * ISOLATION: own ephemeral mongod on a freshly OS-reserved free port (see
+ * tests/unit/helpers/ephemeralMongod.ts - each spawn reserves a currently-free port by binding
+ * and releasing a throwaway socket, unique across concurrent processes including two whole
+ * copies of this suite running at once, and retries on a genuine bind collision, so no fixed
+ * port or manual coordination between sibling suites is needed).
  */
 vi.mock("@/auth", () => ({auth: vi.fn()}));
 
@@ -34,22 +36,16 @@ import {mongoRecordExportStore} from "@/lib/records/exportMongoAdapter";
 import {GET as exportTokenGET} from "@/app/e/[token]/route";
 import {POST as recordExportPOST} from "@/app/api/pets/[id]/records/[recordId]/export/route";
 
-// WP4.17A D7 - was 44139, duplicating delegationStatusBundle.integration.test.ts's own port (see
-// recordIssuance.integration.test.ts's identical comment for the full audit); this exact pair is
-// the one whose collision was caught live - this file's mongod bound to a port the OTHER suite's
-// mongod already owned, so this file silently talked to that suite's database server until its
-// own `afterAll` killed it mid-test (`MongoServerError: interrupted at shutdown`).
-const MONGO_PORT = 44_144;
 const CLONE = "0x0000000000000000000000000000000000c10be5";
 const OPERATOR = "0x0000000000000000000000000000000000000ff1";
 
 let ephemeral: EphemeralMongod;
 
 beforeAll(async () => {
-  ephemeral = await startEphemeralMongod(MONGO_PORT, "dogtag-vet-record-export-e2e");
+  ephemeral = await startEphemeralMongod("dogtag-vet-record-export-e2e");
   process.env.MONGODB_URI = ephemeral.uri;
   await connectToDatabase();
-  expect(mongoose.connection.port).toBe(MONGO_PORT);
+  expect(mongoose.connection.port).toBe(ephemeral.port);
   await ArtifactExportSession.init();
   await RecordArtifact.init();
 }, 90_000);

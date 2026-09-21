@@ -16,10 +16,12 @@ import type {TagDataChainDeps} from "@/lib/tags/verifier";
  * monkey-patching; this proves it against genuine concurrent Mongo writes). Never the live
  * manual-E2E database on 127.0.0.1:27500 - see this repo's own CRITICAL LIVE-DB RULE.
  *
- * ISOLATION: own ephemeral mongod, port 44127 (44117-44126 already taken by sibling suites -
- * tests/unit/models/exportSession.integration.test.ts's own doc comment has the running registry).
+ * ISOLATION: own ephemeral mongod on a freshly OS-reserved free port (see
+ * tests/unit/helpers/ephemeralMongod.ts - each spawn reserves a currently-free port by binding
+ * and releasing a throwaway socket, unique across concurrent processes including two whole
+ * copies of this suite running at once, and retries on a genuine bind collision, so no fixed
+ * port or manual coordination between sibling suites is needed).
  */
-const MONGO_PORT = 44_127;
 const OUR_CLONE = "0x5bd5048125f223100a2753a740f34d044ab493b";
 const FOREIGN_CLONE = "0x57f8786264c55cdd8f3ece0ba177f6ad2df90e0";
 const DOG_TAG_ID_DEC = "42";
@@ -28,10 +30,10 @@ const NOW = 1_700_000_000;
 let ephemeral: EphemeralMongod;
 
 beforeAll(async () => {
-  ephemeral = await startEphemeralMongod(MONGO_PORT, "dogtag-vet-import-session");
+  ephemeral = await startEphemeralMongod("dogtag-vet-import-session");
   await mongoose.connect(ephemeral.uri);
   expect(mongoose.connection.host).toBe("127.0.0.1");
-  expect(mongoose.connection.port).toBe(MONGO_PORT);
+  expect(mongoose.connection.port).toBe(ephemeral.port);
   expect(mongoose.connection.name).toBe("dogtag-vet-import-session");
   await ArtifactImportSession.init();
   await TagArtifact.init();

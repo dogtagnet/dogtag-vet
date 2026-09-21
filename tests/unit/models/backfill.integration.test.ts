@@ -33,18 +33,20 @@ import {TagArtifact} from "@/lib/models/TagArtifact";
  * `staleModelRepro.integration.test.ts` and `tagArtifact.integration.test.ts` already use, with the
  * same hard host/port/name safety-net assertions right after connecting.
  *
- * ISOLATION: own ephemeral mongod, port 44125 (44117-44124 already taken by sibling suites).
+ * ISOLATION: own ephemeral mongod on a freshly OS-reserved free port (see
+ * tests/unit/helpers/ephemeralMongod.ts - each spawn reserves a currently-free port by binding
+ * and releasing a throwaway socket, unique across concurrent processes including two whole
+ * copies of this suite running at once, and retries on a genuine bind collision, so no fixed
+ * port or manual coordination between sibling suites is needed).
  */
-
-const MONGO_PORT = 44_125;
 
 let ephemeral: EphemeralMongod;
 
 beforeAll(async () => {
-  ephemeral = await startEphemeralMongod(MONGO_PORT, "dogtag-vet-backfill");
+  ephemeral = await startEphemeralMongod("dogtag-vet-backfill");
   await mongoose.connect(ephemeral.uri);
   expect(mongoose.connection.host).toBe("127.0.0.1");
-  expect(mongoose.connection.port).toBe(MONGO_PORT);
+  expect(mongoose.connection.port).toBe(ephemeral.port);
   expect(mongoose.connection.name).toBe("dogtag-vet-backfill");
   await TagArtifact.init();
 }, 90_000);

@@ -8,9 +8,9 @@ import {startEphemeralMongod, stopEphemeralMongod, type EphemeralMongod} from ".
  * owner-only `PATCH /api/settings/staff/:staffId` (Kenneth issue 3: split the vet's display name
  * into first/last, plus a title/qualification and a government accreditation number). Modelled
  * directly on `tests/unit/api/selfWalletRoute.integration.test.ts`'s own conventions
- * (`vi.mock("@/auth")` + `startEphemeralMongod` on a free port > 44000 - 44134, the next free one
- * per that file's own port ledger comment, 44117-44133 already taken by sibling suites as of this
- * WP).
+ * (`vi.mock("@/auth")` + `startEphemeralMongod` on a freshly OS-reserved free port - see
+ * `tests/unit/helpers/ephemeralMongod.ts`, no fixed port or manual coordination with sibling
+ * suites needed).
  *
  * Mirrors selfWalletRoute's own describe shape: a 401/403 role matrix, a self-only-scope block, a
  * validation block, and a clearing/scope block proving this route reuses `setStaffProfile`'s
@@ -23,16 +23,14 @@ import {connectToDatabase} from "@/lib/db";
 import {Staff, type StaffDoc, type StaffRole} from "@/lib/models/Staff";
 import {PATCH} from "@/app/api/settings/staff/me/profile/route";
 
-const MONGO_PORT = 44_134;
-
 let ephemeral: EphemeralMongod;
 
 beforeAll(async () => {
-  ephemeral = await startEphemeralMongod(MONGO_PORT, "dogtag-vet-wp413-self-profile");
+  ephemeral = await startEphemeralMongod("dogtag-vet-wp413-self-profile");
   process.env.MONGODB_URI = ephemeral.uri;
   await connectToDatabase();
   expect(mongoose.connection.host).toBe("127.0.0.1");
-  expect(mongoose.connection.port).toBe(MONGO_PORT);
+  expect(mongoose.connection.port).toBe(ephemeral.port);
 }, 90_000);
 
 afterAll(async () => {

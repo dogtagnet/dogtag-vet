@@ -13,7 +13,11 @@ import {startEphemeralMongod, stopEphemeralMongod, type EphemeralMongod} from ".
  * is what keeps clinic-mode byte-parity genuinely true once a clinic has ever configured
  * per-practitioner mode, rather than merely true by accident of nobody having exercised it yet.
  *
- * ISOLATION: own ephemeral mongod, port 44119 (44117 = staleModelRepro, 44118 = wp47BackCompat).
+ * ISOLATION: own ephemeral mongod on a freshly OS-reserved free port (see
+ * tests/unit/helpers/ephemeralMongod.ts - each spawn reserves a currently-free port by binding
+ * and releasing a throwaway socket, unique across concurrent processes including two whole
+ * copies of this suite running at once, and retries on a genuine bind collision, so no fixed
+ * port or manual coordination between sibling suites is needed).
  */
 import {connectToDatabase} from "@/lib/db";
 import {
@@ -31,16 +35,14 @@ import {
   loadPractitionerRulesAndExceptions,
 } from "@/lib/booking/queries";
 
-const MONGO_PORT = 44_119;
-
 let ephemeral: EphemeralMongod;
 
 beforeAll(async () => {
-  ephemeral = await startEphemeralMongod(MONGO_PORT, "dogtag-vet-wp47-practitioner-queries");
+  ephemeral = await startEphemeralMongod("dogtag-vet-wp47-practitioner-queries");
   process.env.MONGODB_URI = ephemeral.uri;
   await connectToDatabase();
   expect(mongoose.connection.host).toBe("127.0.0.1");
-  expect(mongoose.connection.port).toBe(MONGO_PORT);
+  expect(mongoose.connection.port).toBe(ephemeral.port);
 }, 90_000);
 
 afterAll(async () => {

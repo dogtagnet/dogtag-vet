@@ -21,7 +21,11 @@ import {startEphemeralMongod, stopEphemeralMongod, type EphemeralMongod} from ".
  * `runPaymentWatcherOnce` - the same function `e2e/runPaymentWatcher.ts` invokes - without needing
  * a real HTTP RPC stub.
  *
- * ISOLATION: own ephemeral mongod, port 44148 (44117-44147 already taken by sibling suites).
+ * ISOLATION: own ephemeral mongod on a freshly OS-reserved free port (see
+ * tests/unit/helpers/ephemeralMongod.ts - each spawn reserves a currently-free port by binding
+ * and releasing a throwaway socket, unique across concurrent processes including two whole
+ * copies of this suite running at once, and retries on a genuine bind collision, so no fixed
+ * port or manual coordination between sibling suites is needed).
  */
 vi.mock("@/lib/paymentChainRead", () => ({paymentPublicClient: vi.fn()}));
 
@@ -32,17 +36,16 @@ import {Payment, type PaymentDoc} from "@/lib/models/Payment";
 import {PaymentChainCursor} from "@/lib/models/PaymentChainCursor";
 import {ClinicSettings} from "@/lib/models/ClinicSettings";
 
-const MONGO_PORT = 44_148;
 let ephemeral: EphemeralMongod;
 const RECEIVING = "0x" + "aa".repeat(20);
 const SENDER = "0x" + "cc".repeat(20);
 
 beforeAll(async () => {
-  ephemeral = await startEphemeralMongod(MONGO_PORT, "dogtag-vet-watcher-cursor");
+  ephemeral = await startEphemeralMongod("dogtag-vet-watcher-cursor");
   process.env.MONGODB_URI = ephemeral.uri;
   await connectToDatabase();
   expect(mongoose.connection.host).toBe("127.0.0.1");
-  expect(mongoose.connection.port).toBe(MONGO_PORT);
+  expect(mongoose.connection.port).toBe(ephemeral.port);
   expect(mongoose.connection.name).toBe("dogtag-vet-watcher-cursor");
 }, 90_000);
 

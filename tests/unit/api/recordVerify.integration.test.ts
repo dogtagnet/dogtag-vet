@@ -8,8 +8,11 @@ import {roax} from "@/lib/chains";
 
 /**
  * `POST /api/verify/records/start` -> `GET /v/:token` -> `POST /v/:token/complete` -> `GET
- * /api/verify/records/:sessionId` end to end (plan section 11.2 V6). ISOLATION: own ephemeral
- * mongod, port 44140 (44117-44139 already taken by sibling suites).
+ * /api/verify/records/:sessionId` end to end (plan section 11.2 V6). ISOLATION: own ephemeral mongod on a freshly OS-reserved free port (see
+ * tests/unit/helpers/ephemeralMongod.ts - each spawn reserves a currently-free port by binding
+ * and releasing a throwaway socket, unique across concurrent processes including two whole
+ * copies of this suite running at once, and retries on a genuine bind collision, so no fixed
+ * port or manual coordination between sibling suites is needed).
  */
 vi.mock("@/auth", () => ({auth: vi.fn()}));
 vi.mock("@/lib/chainRead", async (importOriginal) => {
@@ -27,7 +30,6 @@ import {GET as resolveGET} from "@/app/v/[token]/route";
 import {POST as completePOST} from "@/app/v/[token]/complete/route";
 import {GET as pollGET} from "@/app/api/verify/records/[sessionId]/route";
 
-const MONGO_PORT = 44_140;
 process.env.VET_ISSUER_FACTORY_ADDRESS = "0x0000000000000000000000000000000000fac10e";
 const CLONE = "0x0000000000000000000000000000000000c10be5";
 const OPERATOR = "0x0000000000000000000000000000000000000ff1";
@@ -35,10 +37,10 @@ const OPERATOR = "0x0000000000000000000000000000000000000ff1";
 let ephemeral: EphemeralMongod;
 
 beforeAll(async () => {
-  ephemeral = await startEphemeralMongod(MONGO_PORT, "dogtag-vet-record-verify");
+  ephemeral = await startEphemeralMongod("dogtag-vet-record-verify");
   process.env.MONGODB_URI = ephemeral.uri;
   await connectToDatabase();
-  expect(mongoose.connection.port).toBe(MONGO_PORT);
+  expect(mongoose.connection.port).toBe(ephemeral.port);
   await RecordVerifySession.init();
 }, 90_000);
 

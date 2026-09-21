@@ -11,7 +11,11 @@ import {startEphemeralMongod, stopEphemeralMongod, type EphemeralMongod} from ".
  * `practitionerAvailability.test.ts` and `buckets.test.ts`; this file is about the STATEFUL
  * chokepoint those pure pieces feed into.
  *
- * ISOLATION: own ephemeral mongod, port 44120 (44117/44118/44119 already taken by sibling suites).
+ * ISOLATION: own ephemeral mongod on a freshly OS-reserved free port (see
+ * tests/unit/helpers/ephemeralMongod.ts - each spawn reserves a currently-free port by binding
+ * and releasing a throwaway socket, unique across concurrent processes including two whole
+ * copies of this suite running at once, and retries on a genuine bind collision, so no fixed
+ * port or manual coordination between sibling suites is needed).
  */
 import {connectToDatabase} from "@/lib/db";
 import {createAppointment, reassignPractitioner, setAppointmentTerminalStatus} from "@/lib/booking/lifecycle";
@@ -22,16 +26,14 @@ import {CapacityBucket} from "@/lib/models/CapacityBucket";
 import {Staff} from "@/lib/models/Staff";
 import type {AppointmentDraft} from "@/lib/booking/mongoStore";
 
-const MONGO_PORT = 44_120;
-
 let ephemeral: EphemeralMongod;
 
 beforeAll(async () => {
-  ephemeral = await startEphemeralMongod(MONGO_PORT, "dogtag-vet-wp47-lifecycle-practitioner");
+  ephemeral = await startEphemeralMongod("dogtag-vet-wp47-lifecycle-practitioner");
   process.env.MONGODB_URI = ephemeral.uri;
   await connectToDatabase();
   expect(mongoose.connection.host).toBe("127.0.0.1");
-  expect(mongoose.connection.port).toBe(MONGO_PORT);
+  expect(mongoose.connection.port).toBe(ephemeral.port);
 }, 90_000);
 
 afterAll(async () => {

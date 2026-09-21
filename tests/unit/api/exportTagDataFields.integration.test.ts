@@ -7,8 +7,11 @@ import {startEphemeralMongod, stopEphemeralMongod, type EphemeralMongod} from ".
  * WP4.10V item 4 - `GET /api/pets/:id/export-tag-data/fields`, the staff-only field-picker data
  * source, against the REAL route handler + a real ephemeral mongod.
  *
- * ISOLATION: own ephemeral mongod, port 44131 (44117-44130 already taken by sibling suites - see
- * `tests/unit/api/exportTagDataPreview.integration.test.ts`'s own doc comment).
+ * ISOLATION: own ephemeral mongod on a freshly OS-reserved free port (see
+ * tests/unit/helpers/ephemeralMongod.ts - each spawn reserves a currently-free port by binding
+ * and releasing a throwaway socket, unique across concurrent processes including two whole
+ * copies of this suite running at once, and retries on a genuine bind collision, so no fixed
+ * port or manual coordination between sibling suites is needed).
  */
 vi.mock("@/auth", () => ({auth: vi.fn()}));
 
@@ -19,15 +22,14 @@ import {recomputeLeafHash} from "@/lib/tags/exportFlow";
 import {Pet} from "@/lib/models/Pet";
 import {TagArtifact} from "@/lib/models/TagArtifact";
 
-const MONGO_PORT = 44_131;
 let ephemeral: EphemeralMongod;
 
 beforeAll(async () => {
-  ephemeral = await startEphemeralMongod(MONGO_PORT, "dogtag-vet-export-fields");
+  ephemeral = await startEphemeralMongod("dogtag-vet-export-fields");
   process.env.MONGODB_URI = ephemeral.uri;
   await connectToDatabase();
   expect(mongoose.connection.host).toBe("127.0.0.1");
-  expect(mongoose.connection.port).toBe(MONGO_PORT);
+  expect(mongoose.connection.port).toBe(ephemeral.port);
   expect(mongoose.connection.name).toBe("dogtag-vet-export-fields");
 }, 90_000);
 

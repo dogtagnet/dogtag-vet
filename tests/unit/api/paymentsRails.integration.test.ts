@@ -7,10 +7,11 @@ import {startEphemeralMongod, stopEphemeralMongod, type EphemeralMongod} from ".
  * (never the live manual-E2E database on 127.0.0.1:27500), proving the rails listing is exactly
  * ROAX's own two-token list (PLASMA, RUSD), never a cross product with any other chain.
  *
- * ISOLATION: own ephemeral mongod, port 44146 (44117-44145 already taken by sibling suites - see
- * `tests/unit/api/selfWalletRoute.integration.test.ts`'s own doc comment for the running registry,
- * and its WP4.17A D7 note on why a collision is a real, previously-reproduced hazard here, not a
- * theoretical one).
+ * ISOLATION: own ephemeral mongod on a freshly OS-reserved free port (see
+ * tests/unit/helpers/ephemeralMongod.ts - each spawn reserves a currently-free port by binding
+ * and releasing a throwaway socket, unique across concurrent processes including two whole
+ * copies of this suite running at once, and retries on a genuine bind collision, so no fixed
+ * port or manual coordination between sibling suites is needed).
  */
 vi.mock("@/auth", () => ({auth: vi.fn()}));
 
@@ -19,15 +20,14 @@ import {connectToDatabase} from "@/lib/db";
 import {GET} from "@/app/api/payments/rails/route";
 import {ClinicSettings} from "@/lib/models/ClinicSettings";
 
-const MONGO_PORT = 44_146;
 let ephemeral: EphemeralMongod;
 
 beforeAll(async () => {
-  ephemeral = await startEphemeralMongod(MONGO_PORT, "dogtag-vet-payments-rails");
+  ephemeral = await startEphemeralMongod("dogtag-vet-payments-rails");
   process.env.MONGODB_URI = ephemeral.uri;
   await connectToDatabase();
   expect(mongoose.connection.host).toBe("127.0.0.1");
-  expect(mongoose.connection.port).toBe(MONGO_PORT);
+  expect(mongoose.connection.port).toBe(ephemeral.port);
   expect(mongoose.connection.name).toBe("dogtag-vet-payments-rails");
 }, 90_000);
 

@@ -32,19 +32,20 @@ import {DOG_PROFILE_SCHEMA_ID} from "@/lib/tags/schemaIds";
  * rationale as every other `.integration.test.ts` in this repo, `ephemeralMongod.ts`'s own doc
  * comment).
  *
- * ISOLATION: own ephemeral mongod, port 44124 (44117-44123 already taken by sibling suites - see
- * each file's own ISOLATION note). Never `process.env.MONGODB_URI`, never 127.0.0.1:27500.
+ * ISOLATION: own ephemeral mongod on a freshly OS-reserved free port (see
+ * tests/unit/helpers/ephemeralMongod.ts - each spawn reserves a currently-free port by binding
+ * and releasing a throwaway socket, unique across concurrent processes including two whole
+ * copies of this suite running at once, and retries on a genuine bind collision, so no fixed
+ * port or manual coordination between sibling suites is needed).
  */
-
-const MONGO_PORT = 44_124;
 
 let ephemeral: EphemeralMongod;
 
 beforeAll(async () => {
-  ephemeral = await startEphemeralMongod(MONGO_PORT, "dogtag-vet-tag-artifact");
+  ephemeral = await startEphemeralMongod("dogtag-vet-tag-artifact");
   await mongoose.connect(ephemeral.uri);
   expect(mongoose.connection.host).toBe("127.0.0.1");
-  expect(mongoose.connection.port).toBe(MONGO_PORT);
+  expect(mongoose.connection.port).toBe(ephemeral.port);
   expect(mongoose.connection.name).toBe("dogtag-vet-tag-artifact");
   // The unique `root` index builds in the background on model compilation - wait for it before any
   // test relies on it rejecting a duplicate.

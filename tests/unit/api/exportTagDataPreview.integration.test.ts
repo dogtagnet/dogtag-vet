@@ -8,8 +8,11 @@ import {startEphemeralMongod, stopEphemeralMongod, type EphemeralMongod} from ".
  * "Copy JSON" data source, against the REAL route handler + a real ephemeral mongod (never the
  * live manual-E2E database on 127.0.0.1:27500).
  *
- * ISOLATION: own ephemeral mongod, port 44130 (44117-44129 already taken by sibling suites - see
- * `tests/unit/api/selfWalletRoute.integration.test.ts`'s own doc comment for the running registry).
+ * ISOLATION: own ephemeral mongod on a freshly OS-reserved free port (see
+ * tests/unit/helpers/ephemeralMongod.ts - each spawn reserves a currently-free port by binding
+ * and releasing a throwaway socket, unique across concurrent processes including two whole
+ * copies of this suite running at once, and retries on a genuine bind collision, so no fixed
+ * port or manual coordination between sibling suites is needed).
  */
 vi.mock("@/auth", () => ({auth: vi.fn()}));
 
@@ -19,15 +22,14 @@ import {POST} from "@/app/api/pets/[id]/export-tag-data/preview/route";
 import {Pet} from "@/lib/models/Pet";
 import {TagArtifact} from "@/lib/models/TagArtifact";
 
-const MONGO_PORT = 44_130;
 let ephemeral: EphemeralMongod;
 
 beforeAll(async () => {
-  ephemeral = await startEphemeralMongod(MONGO_PORT, "dogtag-vet-export-preview");
+  ephemeral = await startEphemeralMongod("dogtag-vet-export-preview");
   process.env.MONGODB_URI = ephemeral.uri;
   await connectToDatabase();
   expect(mongoose.connection.host).toBe("127.0.0.1");
-  expect(mongoose.connection.port).toBe(MONGO_PORT);
+  expect(mongoose.connection.port).toBe(ephemeral.port);
   expect(mongoose.connection.name).toBe("dogtag-vet-export-preview");
 }, 90_000);
 

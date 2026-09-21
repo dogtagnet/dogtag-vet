@@ -16,19 +16,21 @@ import {ClinicSettings} from "@/lib/models/ClinicSettings";
  * (never the live manual-E2E database on 127.0.0.1:27500 - see this repo's own CRITICAL LIVE-DB
  * RULE, plans/orchestration/wp4.9V-progress.md).
  *
- * ISOLATION: own ephemeral mongod, port 44126 (44117-44125 already taken by sibling suites -
- * tests/unit/models/backfill.integration.test.ts's own doc comment has the full registry).
+ * ISOLATION: own ephemeral mongod on a freshly OS-reserved free port (see
+ * tests/unit/helpers/ephemeralMongod.ts - each spawn reserves a currently-free port by binding
+ * and releasing a throwaway socket, unique across concurrent processes including two whole
+ * copies of this suite running at once, and retries on a genuine bind collision, so no fixed
+ * port or manual coordination between sibling suites is needed).
  */
-const MONGO_PORT = 44_126;
 const CLONE = "0x5bd5048125f223100a2753a740f34d044ab493b";
 
 let ephemeral: EphemeralMongod;
 
 beforeAll(async () => {
-  ephemeral = await startEphemeralMongod(MONGO_PORT, "dogtag-vet-export-session");
+  ephemeral = await startEphemeralMongod("dogtag-vet-export-session");
   await mongoose.connect(ephemeral.uri);
   expect(mongoose.connection.host).toBe("127.0.0.1");
-  expect(mongoose.connection.port).toBe(MONGO_PORT);
+  expect(mongoose.connection.port).toBe(ephemeral.port);
   expect(mongoose.connection.name).toBe("dogtag-vet-export-session");
   await ArtifactExportSession.init();
   await TagArtifact.init();

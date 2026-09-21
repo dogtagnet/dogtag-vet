@@ -20,8 +20,11 @@ import {startEphemeralMongod, stopEphemeralMongod, type EphemeralMongod} from ".
  * uncontaminated shot at the module-load-time state they need - the same reason every other
  * integration test in this suite is one concern per file.
  *
- * ISOLATION: own ephemeral mongod, port 44145 (WP4.17A D7: moved off 44140, which duplicated
- * recordVerify.integration.test.ts's own port - see this file's own port-constant comment).
+ * ISOLATION: own ephemeral mongod on a freshly OS-reserved free port (see
+ * tests/unit/helpers/ephemeralMongod.ts - each spawn reserves a currently-free port by binding
+ * and releasing a throwaway socket, unique across concurrent processes including two whole
+ * copies of this suite running at once, and retries on a genuine bind collision, so no fixed
+ * port or manual coordination between sibling suites is needed).
  */
 vi.mock("@/lib/chainRead", async () => {
   const actual = await vi.importActual<typeof import("@/lib/chainRead")>("@/lib/chainRead");
@@ -33,18 +36,15 @@ import {connectToDatabase} from "@/lib/db";
 import {DelegationSession} from "@/lib/models/DelegationSession";
 import {loadOwnersCardData} from "@/lib/delegation/ownersCardData";
 
-// WP4.17A D7 - was 44140, duplicating recordVerify.integration.test.ts's own port (see
-// recordIssuance.integration.test.ts's identical comment for the full audit).
-const MONGO_PORT = 44_145;
 let ephemeral: EphemeralMongod;
 
 beforeAll(async () => {
-  ephemeral = await startEphemeralMongod(MONGO_PORT, "dogtag-vet-owners-card-configured");
+  ephemeral = await startEphemeralMongod("dogtag-vet-owners-card-configured");
   process.env.MONGODB_URI = ephemeral.uri;
   process.env.DELEGATION_REGISTRY_ADDRESS = `0x${"5".repeat(40)}`;
   await connectToDatabase();
   expect(mongoose.connection.host).toBe("127.0.0.1");
-  expect(mongoose.connection.port).toBe(MONGO_PORT);
+  expect(mongoose.connection.port).toBe(ephemeral.port);
 }, 90_000);
 
 afterAll(async () => {

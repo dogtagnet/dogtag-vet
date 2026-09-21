@@ -8,8 +8,11 @@ import {startEphemeralMongod, stopEphemeralMongod, type EphemeralMongod} from ".
  * cannot be created, and one with a rate builds a real crypto rail with no live price feed ever
  * consulted (there is none left to consult - `src/lib/payments/priceFeed.ts` was deleted in V1).
  *
- * ISOLATION: own ephemeral mongod, port 44147 (44117-44146 already taken by sibling suites - see
- * `tests/unit/api/selfWalletRoute.integration.test.ts`'s own doc comment for the running registry).
+ * ISOLATION: own ephemeral mongod on a freshly OS-reserved free port (see
+ * tests/unit/helpers/ephemeralMongod.ts - each spawn reserves a currently-free port by binding
+ * and releasing a throwaway socket, unique across concurrent processes including two whole
+ * copies of this suite running at once, and retries on a genuine bind collision, so no fixed
+ * port or manual coordination between sibling suites is needed).
  */
 vi.mock("@/auth", () => ({auth: vi.fn()}));
 
@@ -20,16 +23,15 @@ import {ClinicSettings} from "@/lib/models/ClinicSettings";
 import {Payment} from "@/lib/models/Payment";
 import {AmountReservation} from "@/lib/models/AmountReservation";
 
-const MONGO_PORT = 44_147;
 let ephemeral: EphemeralMongod;
 const RECEIVING = "0x" + "6".repeat(40);
 
 beforeAll(async () => {
-  ephemeral = await startEphemeralMongod(MONGO_PORT, "dogtag-vet-payments-manual-rate");
+  ephemeral = await startEphemeralMongod("dogtag-vet-payments-manual-rate");
   process.env.MONGODB_URI = ephemeral.uri;
   await connectToDatabase();
   expect(mongoose.connection.host).toBe("127.0.0.1");
-  expect(mongoose.connection.port).toBe(MONGO_PORT);
+  expect(mongoose.connection.port).toBe(ephemeral.port);
   expect(mongoose.connection.name).toBe("dogtag-vet-payments-manual-rate");
 }, 90_000);
 

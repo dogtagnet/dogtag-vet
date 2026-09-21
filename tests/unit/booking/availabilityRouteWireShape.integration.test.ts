@@ -13,7 +13,11 @@ import {startEphemeralMongod, stopEphemeralMongod, type EphemeralMongod} from ".
  * `computePractitionerAvailability` correctly, as opposed to the pure functions themselves
  * (already covered in `availability.test.ts` and `practitionerAvailability.test.ts`).
  *
- * ISOLATION: own ephemeral mongod, port 44121 (44117-44120 already taken by sibling suites).
+ * ISOLATION: own ephemeral mongod on a freshly OS-reserved free port (see
+ * tests/unit/helpers/ephemeralMongod.ts - each spawn reserves a currently-free port by binding
+ * and releasing a throwaway socket, unique across concurrent processes including two whole
+ * copies of this suite running at once, and retries on a genuine bind collision, so no fixed
+ * port or manual coordination between sibling suites is needed).
  */
 import {connectToDatabase} from "@/lib/db";
 import {AvailabilityException, AvailabilityRule, BookingSettings} from "@/lib/models/Availability";
@@ -21,17 +25,15 @@ import {Service} from "@/lib/models/Service";
 import {Staff} from "@/lib/models/Staff";
 import {GET} from "@/app/v1/booking/availability/route";
 
-const MONGO_PORT = 44_121;
-
 let ephemeral: EphemeralMongod;
 let serviceId: string;
 
 beforeAll(async () => {
-  ephemeral = await startEphemeralMongod(MONGO_PORT, "dogtag-vet-wp47-availability-wire");
+  ephemeral = await startEphemeralMongod("dogtag-vet-wp47-availability-wire");
   process.env.MONGODB_URI = ephemeral.uri;
   await connectToDatabase();
   expect(mongoose.connection.host).toBe("127.0.0.1");
-  expect(mongoose.connection.port).toBe(MONGO_PORT);
+  expect(mongoose.connection.port).toBe(ephemeral.port);
 
   const service = await Service.create({
     name: "Checkup",

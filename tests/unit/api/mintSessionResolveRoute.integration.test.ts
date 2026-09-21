@@ -30,20 +30,21 @@ import {BindToken, generateHexToken} from "@/lib/models/BindToken";
  * `GET /p/:token` is public (no `@/auth` involved), so unlike the sibling `api/` integration
  * suites this file needs no `vi.mock("@/auth", ...)`.
  *
- * ISOLATION: own ephemeral mongod, port 44136 (44135 is
- * tests/unit/models/petProfileLeavesBackCompat.integration.test.ts's own port - see that file's
- * doc comment; the highest port any OTHER integration suite in this repo uses is 44134).
+ * ISOLATION: own ephemeral mongod on a freshly OS-reserved free port (see
+ * tests/unit/helpers/ephemeralMongod.ts - each spawn reserves a currently-free port by binding
+ * and releasing a throwaway socket, unique across concurrent processes including two whole
+ * copies of this suite running at once, and retries on a genuine bind collision, so no fixed
+ * port or manual coordination between sibling suites is needed).
  */
 
-const MONGO_PORT = 44_136;
 let ephemeral: EphemeralMongod;
 
 beforeAll(async () => {
-  ephemeral = await startEphemeralMongod(MONGO_PORT, "dogtag-vet-resolve-route");
+  ephemeral = await startEphemeralMongod("dogtag-vet-resolve-route");
   process.env.MONGODB_URI = ephemeral.uri;
   await connectToDatabase();
   expect(mongoose.connection.host).toBe("127.0.0.1");
-  expect(mongoose.connection.port).toBe(MONGO_PORT);
+  expect(mongoose.connection.port).toBe(ephemeral.port);
   expect(mongoose.connection.name).toBe("dogtag-vet-resolve-route");
 }, 90_000);
 

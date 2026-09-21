@@ -17,18 +17,16 @@ import {startEphemeralMongod, stopEphemeralMongod, type EphemeralMongod} from ".
  * anything else.
  */
 
-const REPRO_MONGO_PORT = 44_117; // >44000 per this track's isolation rule; ephemeral, this file's own.
-
 let ephemeral: EphemeralMongod;
 
 beforeAll(async () => {
-  ephemeral = await startEphemeralMongod(REPRO_MONGO_PORT, "dogtag-vet-stale-model-repro");
+  ephemeral = await startEphemeralMongod("dogtag-vet-stale-model-repro");
 
   // Hard safety net (never rely on construction alone): this process's global mongoose connection
   // must be OUR ephemeral instance, never anything read from the environment.
   await mongoose.connect(ephemeral.uri);
   expect(mongoose.connection.host).toBe("127.0.0.1");
-  expect(mongoose.connection.port).toBe(REPRO_MONGO_PORT);
+  expect(mongoose.connection.port).toBe(ephemeral.port);
   expect(mongoose.connection.name).toBe("dogtag-vet-stale-model-repro");
 }, 90_000);
 

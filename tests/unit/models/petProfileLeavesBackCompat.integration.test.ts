@@ -20,20 +20,20 @@ import {Pet, type PetDoc} from "@/lib/models/Pet";
  * no `Pet` import and no `Pet.deleteMany` in its shared `afterEach` today, and its own precedent
  * (the WP4.13 Staff describe block) only ever extended a model ALREADY present there.
  *
- * ISOLATION: own ephemeral mongod, port 44135 (44134 is the highest port used by any OTHER
- * integration suite in this repo as of this wave; 44136 is
- * tests/unit/api/mintSessionResolveRoute.integration.test.ts's own port - see that file's doc
- * comment).
+ * ISOLATION: own ephemeral mongod on a freshly OS-reserved free port (see
+ * tests/unit/helpers/ephemeralMongod.ts - each spawn reserves a currently-free port by binding
+ * and releasing a throwaway socket, unique across concurrent processes including two whole
+ * copies of this suite running at once, and retries on a genuine bind collision, so no fixed
+ * port or manual coordination between sibling suites is needed).
  */
-const MONGO_PORT = 44_135;
 let ephemeral: EphemeralMongod;
 
 beforeAll(async () => {
-  ephemeral = await startEphemeralMongod(MONGO_PORT, "dogtag-vet-pet-profile-leaves");
+  ephemeral = await startEphemeralMongod("dogtag-vet-pet-profile-leaves");
   process.env.MONGODB_URI = ephemeral.uri;
   await connectToDatabase();
   expect(mongoose.connection.host).toBe("127.0.0.1");
-  expect(mongoose.connection.port).toBe(MONGO_PORT);
+  expect(mongoose.connection.port).toBe(ephemeral.port);
   expect(mongoose.connection.name).toBe("dogtag-vet-pet-profile-leaves");
 }, 90_000);
 

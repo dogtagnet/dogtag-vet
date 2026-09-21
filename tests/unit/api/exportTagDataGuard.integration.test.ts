@@ -14,9 +14,11 @@ import {startEphemeralMongod, stopEphemeralMongod, type EphemeralMongod} from ".
  * an explicit, tested invariant rather than an implicit one, in case any future write path ever
  * forgets it (a stale relink, a hand-repaired document, ...).
  *
- * ISOLATION: own ephemeral mongod, port 44128 (44117-44127 already taken by sibling suites - see
- * each file's own ISOLATION note, most recently `tests/unit/models/importSession.integration.test
- * .ts`'s 44127).
+ * ISOLATION: own ephemeral mongod on a freshly OS-reserved free port (see
+ * tests/unit/helpers/ephemeralMongod.ts - each spawn reserves a currently-free port by binding
+ * and releasing a throwaway socket, unique across concurrent processes including two whole
+ * copies of this suite running at once, and retries on a genuine bind collision, so no fixed
+ * port or manual coordination between sibling suites is needed).
  */
 vi.mock("@/auth", () => ({auth: vi.fn()}));
 
@@ -26,18 +28,17 @@ import {POST} from "@/app/api/pets/[id]/export-tag-data/route";
 import {Pet} from "@/lib/models/Pet";
 import {TagArtifact} from "@/lib/models/TagArtifact";
 
-const MONGO_PORT = 44_128;
 let ephemeral: EphemeralMongod;
 
 beforeAll(async () => {
-  ephemeral = await startEphemeralMongod(MONGO_PORT, "dogtag-vet-export-guard");
+  ephemeral = await startEphemeralMongod("dogtag-vet-export-guard");
   // The route handler calls `connectToDatabase()` itself (not a directly-injected connection), so
   // this test drives the SAME cached-connection path `issuanceRouteGuards.integration.test.ts`
   // already established for calling real route handlers in this suite.
   process.env.MONGODB_URI = ephemeral.uri;
   await connectToDatabase();
   expect(mongoose.connection.host).toBe("127.0.0.1");
-  expect(mongoose.connection.port).toBe(MONGO_PORT);
+  expect(mongoose.connection.port).toBe(ephemeral.port);
   expect(mongoose.connection.name).toBe("dogtag-vet-export-guard");
 }, 90_000);
 

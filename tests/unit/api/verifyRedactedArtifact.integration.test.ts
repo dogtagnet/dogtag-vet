@@ -15,8 +15,11 @@ import {startEphemeralMongod, stopEphemeralMongod, type EphemeralMongod} from ".
  * this exercises the real code path without inventing a new chainRead.ts mocking convention this
  * repo has no precedent for).
  *
- * ISOLATION: own ephemeral mongod, port 44132 (44117-44131 already taken by sibling suites - see
- * `tests/unit/api/exportTagDataFields.integration.test.ts`'s own doc comment).
+ * ISOLATION: own ephemeral mongod on a freshly OS-reserved free port (see
+ * tests/unit/helpers/ephemeralMongod.ts - each spawn reserves a currently-free port by binding
+ * and releasing a throwaway socket, unique across concurrent processes including two whole
+ * copies of this suite running at once, and retries on a genuine bind collision, so no fixed
+ * port or manual coordination between sibling suites is needed).
  */
 vi.mock("@/auth", () => ({auth: vi.fn()}));
 
@@ -24,17 +27,16 @@ import {auth} from "@/auth";
 import {connectToDatabase} from "@/lib/db";
 import {POST} from "@/app/api/verify/redacted-artifact/route";
 
-const MONGO_PORT = 44_132;
 let ephemeral: EphemeralMongod;
 
 beforeAll(async () => {
-  ephemeral = await startEphemeralMongod(MONGO_PORT, "dogtag-vet-verify-redacted");
+  ephemeral = await startEphemeralMongod("dogtag-vet-verify-redacted");
   process.env.MONGODB_URI = ephemeral.uri;
   delete process.env.DOGTAG_SBT_ADDRESS;
   delete process.env.VET_ISSUER_FACTORY_ADDRESS;
   await connectToDatabase();
   expect(mongoose.connection.host).toBe("127.0.0.1");
-  expect(mongoose.connection.port).toBe(MONGO_PORT);
+  expect(mongoose.connection.port).toBe(ephemeral.port);
   expect(mongoose.connection.name).toBe("dogtag-vet-verify-redacted");
 }, 90_000);
 

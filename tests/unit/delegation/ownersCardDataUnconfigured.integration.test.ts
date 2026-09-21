@@ -25,18 +25,21 @@ import {loadOwnersCardData} from "@/lib/delegation/ownersCardData";
  * run). See the sibling `ownersCardDataChainConfigured.integration.test.ts` for the CONFIGURED half
  * of this same pin, and its doc comment for the fuller two-files-not-two-`describe`s rationale.
  *
- * ISOLATION: own ephemeral mongod, port 44141.
+ * ISOLATION: own ephemeral mongod on a freshly OS-reserved free port (see
+ * tests/unit/helpers/ephemeralMongod.ts - each spawn reserves a currently-free port by binding
+ * and releasing a throwaway socket, unique across concurrent processes including two whole
+ * copies of this suite running at once, and retries on a genuine bind collision, so no fixed
+ * port or manual coordination between sibling suites is needed).
  */
-const MONGO_PORT = 44_141;
 let ephemeral: EphemeralMongod;
 
 beforeAll(async () => {
   delete process.env.DELEGATION_REGISTRY_ADDRESS;
-  ephemeral = await startEphemeralMongod(MONGO_PORT, "dogtag-vet-owners-card-unconfigured");
+  ephemeral = await startEphemeralMongod("dogtag-vet-owners-card-unconfigured");
   process.env.MONGODB_URI = ephemeral.uri;
   await connectToDatabase();
   expect(mongoose.connection.host).toBe("127.0.0.1");
-  expect(mongoose.connection.port).toBe(MONGO_PORT);
+  expect(mongoose.connection.port).toBe(ephemeral.port);
 }, 90_000);
 
 afterAll(async () => {
