@@ -62,8 +62,16 @@ export function roaxChainId(): number {
  * wp4-vet.md's "public RPC endpoints per chain from env with sensible defaults, override-able".
  * Clients ARE cached per chain per resolved URL, so a settings change takes effect on the next
  * watcher tick rather than needing a process restart. */
-export function paymentPublicClient(chainKey: PaymentChainKey, rpcOverrides: RpcOverrides): PublicClient {
-  const url = rpcOverrides[chainKey] || (getServerEnv()[ENV_RPC[chainKey]] as string);
+export function paymentPublicClient(chainKey: PaymentChainKey, rpcOverrides: RpcOverrides | undefined): PublicClient {
+  // Optional chaining, not a bare index: `rpcOverrides` is typed as required, but the REAL data
+  // can violate that - a `ClinicSettings` document written before this field's schema default
+  // existed (or one that hit Mongoose's `minimize` stripping an all-empty nested object back out
+  // of `.lean()`/`.toObject()` output even WITH that default in place; confirmed live, the schema
+  // fix alone did not survive serialization) reads back with this field genuinely absent. Without
+  // the `?.`, this throws `Cannot read properties of undefined (reading '<chainKey>')` on every
+  // single payment-watcher tick, forever, on a clinic whose settings document has never had a
+  // rpcOverrides field written to it - caught live by this wave's own new e2e coverage.
+  const url = rpcOverrides?.[chainKey] || (getServerEnv()[ENV_RPC[chainKey]] as string);
   const cacheKey = `${chainKey}:${url}`;
   const cached = clients.get(cacheKey);
   if (cached) return cached;

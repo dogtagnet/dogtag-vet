@@ -113,10 +113,11 @@ const receivingAddressSchema = new Schema<ReceivingAddress>(
  * convention) for two reasons together: it lets `default: () => ({})` attach unambiguously - see
  * the `businessProfile` field below for why that default has to exist - and `{_id: false}` keeps
  * Mongoose from giving this single-nested subdocument its own generated `_id`, which every OTHER
- * embedded object here (`rpcOverrides`, the plain-object fallback this schema replaces) does not
- * carry either. Verified live against a real MongoDB: without `{_id: false}` an unrelated field on
- * the SAME nested-object-literal syntax comes back with a stray `_id` that has no business being
- * there and no field in the `BusinessProfile` interface to hold it.
+ * embedded object here (`rpcOverrides`, wrapped in its own equivalent `Schema` below for exactly
+ * the same reason, since WP4.18 found it needed the identical default treatment) does not carry
+ * either. Verified live against a real MongoDB: without `{_id: false}` an unrelated field on the
+ * SAME nested-object-literal syntax comes back with a stray `_id` that has no business being there
+ * and no field in the `BusinessProfile` interface to hold it.
  */
 const businessProfileSchema = new Schema<BusinessProfile>(
   {
@@ -151,6 +152,25 @@ const businessProfileSchema = new Schema<BusinessProfile>(
   {_id: false, minimize: false},
 );
 
+/**
+ * WP4.18 - `paymentChainRead.ts`'s `paymentPublicClient(chainKey, rpcOverrides)` unconditionally
+ * dereferences `rpcOverrides[chainKey]`, so this needs the exact same `Schema` + `default: () =>
+ * ({})` treatment `businessProfileSchema` above already documents (a plain nested-object literal,
+ * this field's own shape before this wave, has no materialized value until a leaf field is set,
+ * so a fresh singleton reads it back as `undefined`, not `{}`) - without it, the payment watcher's
+ * every scan on a brand-new, never-configured deployment throws `Cannot read properties of
+ * undefined (reading 'roax')`, forever, until an operator happens to save the Settings page once.
+ * Caught live by this wave's own new e2e coverage (roax-payment.spec.ts), the first thing to ever
+ * run the payment watcher against a freshly-created clinic - a pre-existing bug (the four
+ * now-removed chains' rpcOverrides fields had the identical gap), not something WP4.18 introduced.
+ */
+// `minimize: false` here AND on `clinicSettingsSchema` itself (below) - both are load-bearing,
+// confirmed by direct experiment: this subdocument's own opt-out is not sufficient on its own,
+// since Mongoose's default `minimize: true` strips an all-EMPTY nested object (zero keys - exactly
+// what an untouched `rpcOverrides: {}` always is) back out of the PARENT's `.toObject()`/`.lean()`
+// output regardless of what the child schema says, unless the parent ALSO opts out.
+const rpcOverridesSchema = new Schema<RpcOverrides>({roax: String}, {_id: false, minimize: false});
+
 const clinicSettingsSchema = new Schema<ClinicSettingsDoc>(
   {
     _id: {type: String, required: true},
@@ -167,14 +187,28 @@ const clinicSettingsSchema = new Schema<ClinicSettingsDoc>(
     // instead of leaving the path absent. `getClinicSettings()` below additionally backfills this
     // for deployments whose singleton document predates this default.
     businessProfile: {type: businessProfileSchema, default: () => ({})},
-    rpcOverrides: {
-      roax: String,
-    },
+    // `default: () => ({})` for the exact reason `businessProfile`'s own comment above states -
+    // WITHOUT it, a fresh, never-configured singleton reads this field back as `undefined`, not
+    // `{}`, and `paymentPublicClient(chainKey, rpcOverrides)` (`src/lib/paymentChainRead.ts`)
+    // unconditionally dereferences `rpcOverrides[chainKey]`, so every payment-watcher scan on a
+    // brand-new deployment throws `Cannot read properties of undefined (reading 'roax')` on every
+    // tick, forever, until an operator happens to save the Settings page once (WP4.18's own new
+    // e2e coverage caught this live - the first thing to ever run the payment watcher against a
+    // freshly-created clinic). `getClinicSettings()` below backfills it for documents that predate
+    // this default, same pattern as `businessProfile`/`icsFeedToken`.
+    rpcOverrides: {type: rpcOverridesSchema, default: () => ({})},
     icsFeedToken: {type: String, index: true, sparse: true, unique: true},
     activityCursorBlock: Number,
     consentRelayerViaCloneEnabled: Boolean,
   },
-  {timestamps: {createdAt: false, updatedAt: true}},
+  // `minimize: false` at THIS (outer) level too - confirmed by direct experiment, not assumed: a
+  // nested schema's OWN `{minimize: false}` (rpcOverridesSchema's) is not sufficient by itself.
+  // Mongoose's serialization strips an all-empty nested object (zero keys - exactly what an
+  // untouched `rpcOverrides: {}` always is) back out of the PARENT's `.toObject()`/`.lean()`
+  // output unless the PARENT schema also opts out of minimizing. `businessProfile` never needed
+  // this because its own nested plain-object fields (`address`/`coordinates`) always leave it with
+  // at least one key, so it never looked "empty" to the parent in the first place.
+  {timestamps: {createdAt: false, updatedAt: true}, minimize: false},
 );
 
 export const ClinicSettings =
@@ -193,6 +227,7 @@ export async function getClinicSettings(): Promise<ClinicSettingsDoc> {
     // patched here once, on first read after the upgrade.
     if (!existing.icsFeedToken) backfill.icsFeedToken = randomBytes(16).toString("hex");
     if (!existing.businessProfile) backfill.businessProfile = {};
+    if (!existing.rpcOverrides) backfill.rpcOverrides = {};
     if (Object.keys(backfill).length === 0) return existing;
     return updateClinicSettings(backfill);
   }
