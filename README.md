@@ -283,3 +283,10 @@ It works before and after payment, and is meant to be shared with the client alo
 `Payment.receiptToken` gates the wire-spec `GET /r/pay/{receiptToken}` endpoint, which is printed as a QR code on the invoice PDF itself.
 Per `specs/vet-public-api.yaml` and `specs/qr-formats.md`, that endpoint returns the receipt PDF directly and only once the payment is `paid` - scanning it before that returns a 404, by design, since there is no receipt yet to serve.
 The public status page offers its own "download invoice" link (unstamped, working at any time) precisely so a client has something to download before that point.
+
+### Payment chain: ROAX only (WP4.18)
+
+Booking payment rails support exactly one chain, ROAX, with two assets: PLASMA (native) and RUSD, a development-only ERC-20 stablecoin (`contracts/src/dev/RUSD.sol` in `dogtag-protocol`; see that repo's `docs/DEV-TOKENS.md` for what it is and is not).
+Ethereum, Base, Sepolia, and Base Sepolia - the four chains this app supported before WP4.18 - left the payment path entirely, not merely hidden: their union members, Mongo enum values, token addresses, RPC env values, Settings fields, and the CoinGecko price feed are all removed.
+`src/lib/chains.ts`'s `PaymentChainKey` and `src/lib/payments/tokenTable.ts`'s `tokensFor(chainKey)` stay a registry rather than a single hardcoded chain, specifically so a future chain is a config-and-registry addition, never a rewrite - `tests/unit/paymentChainRegistry.test.ts` asserts the Mongo and zod enums can never silently drift from that registry again.
+Pricing is manual-rate only (no live price feed exists for either asset); a crypto rail without a staff-entered rate cannot be created (`src/lib/schemas/payment.ts`).

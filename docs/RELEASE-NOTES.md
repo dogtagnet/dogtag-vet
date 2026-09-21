@@ -19,3 +19,16 @@ They are also copied byte-for-byte into `dogtag-ios` (`DogTagTests/Fixtures/`), 
 
 Their protocol ownership is pending Kenneth's decision on whether to promote them to genuine `dogtag-protocol` spec artifacts under `specs/vectors/` (open question 7, `plans/wp4.17-release-and-workstation.md` section 5).
 Until then, this directory is their canonical home for this repo.
+
+## 1.4.0 release (WP4.18)
+
+Booking payment rails become ROAX-only.
+Ethereum, Base, Sepolia, and Base Sepolia leave the payment path entirely - their union members, Mongo enum values, token addresses, RPC env values, Settings receiving-address and RPC fields, and the CoinGecko price feed with its 10-minute cache are all removed, not merely hidden.
+The payment chain registry keeps exactly one entry, `roax`, with two assets: PLASMA (native, 18 decimals) and RUSD, a development-only ERC-20 stablecoin deployed on ROAX (`contracts/src/dev/RUSD.sol` in `dogtag-protocol`; see `docs/DEV-TOKENS.md` there for what it is and is not).
+Pricing is manual-rate only - there is no live price feed left to fall back to, and a crypto rail without a staff-entered rate cannot be created; RUSD's rate defaults to 1.00 in the invoice-creation form when the clinic's fiat currency is USD.
+The payment watcher gains its own confirmation depth (`CONFIRMATIONS_ROAX`, default 2) and scan chunk size (`PAYMENT_ACTIVITY_CHUNK_BLOCKS_ROAX`, default 200), replacing the old mainnet/testnet-class confirmation split and the single ERC-20-sized chunk default.
+An appointment's linked invoices are now visible from both the staff detail page and the phone's own `GET /v1/booking/appointments/{id}` response, and `GET /v1/payments/{id}/public` exposes each open rail's token amount, token symbol, chain id, receiving address, and EIP-681 payment request so the phone can pay without ever loading the staff-facing pages.
+
+**Migration note**: an existing deployment must have no open (`pending`) crypto rails on any chain other than `roax` before upgrading to this release.
+The four removed chains' Mongo enum values no longer exist, so a pending rail on one of them cannot be read back once this release is running - settle or cancel every such invoice first, on the pre-upgrade version.
+A from-scratch workstation database is unaffected: it never had a non-ROAX rail to begin with.

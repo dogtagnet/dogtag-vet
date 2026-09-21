@@ -149,6 +149,13 @@ Every `source: "mobile"` appointment's detail page shows a provenance box built 
 A client's Wallets panel (the client detail page) shows every wallet regardless of how it was attached, but a booking-sourced row (`via: "booking"`) is visually distinct and its expanded receipt shows the `MobileBooking` struct's own fields (clinic, `bookingHash`, wallet, `issuedAt`, `deadline`, signature, the appointment that attached it) rather than the `ClientRegistration` receipt's fields - the two are genuinely different signed payloads, and a booking-sourced row has no `registrationId`/`blockNumber` to show (the `MobileBooking` struct carries neither).
 There is no "Download JSON" / offline-verify button on a booking-sourced row yet - `scripts/verify-receipt.ts` and its export contract stay scoped to `ClientRegistration` for now; the receipt itself is still fully persisted (`payloadJson`/`signature`/`recoveredAt`/`receiptHash`, computed with the exact same generic hashing `lib/registration/receipt.ts` already provides), just without that one offline-tooling surface.
 
+## Payment (WP4.18)
+
+Booking itself never creates a payment - see `docs/appointments.md`'s own Payments section for the full appointment/invoice model, which this section only summarizes from the app's own point of view.
+`GET /v1/booking/appointments/{id}` (the same token-gated endpoint the app already polls for status) carries an additive `invoices` array whenever this appointment has at least one linked `Payment`: `paymentId`, `viewToken`, and `status` per invoice.
+The app fetches `GET /v1/payments/{id}/public?token=<viewToken>` for each one to read the fiat amount, the open ROAX rails (PLASMA native, RUSD ERC-20 - `plans/wp4.18-roax-payments.md` section 7), and the status, then offers Pay, which routes the exact rail amount into the same native send review `PayFlowRouter.swift` already uses for a scanned QR.
+Sending the payment and confirming it are unchanged from the scan-to-pay path - only how the app learned the invoice exists, and how it shows the fiat/status context around it, are new.
+
 ## Public API protection
 
 `POST /v1/booking/book` goes through the same protection triple every public route in this app uses: a per-route, per-client-IP rate limit, a request body size cap, and a best-effort abuse log entry on a rejection (`src/lib/publicApi.ts`, `src/lib/rateLimit.ts`, `src/lib/abuseLog.ts`).

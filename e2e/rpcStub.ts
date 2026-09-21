@@ -1,8 +1,36 @@
 import {createServer, type IncomingMessage, type Server, type ServerResponse} from "node:http";
 import {randomBytes} from "node:crypto";
-import {decodeFunctionData, encodeFunctionResult} from "viem";
+import {decodeFunctionData, encodeAbiParameters, encodeEventTopics, encodeFunctionResult, parseAbiParameters} from "viem";
 import type {Abi, Address, Hex} from "viem";
 import {recordTypeKey} from "@dogtag/standard";
+
+/**
+ * WP4.18 - the payment watcher's RUSD Transfer-log scan runs against this same stub (ROAX is now
+ * both the identity chain this file already stood in for and the sole payment chain). This is
+ * deliberately a SEPARATE, hand-written copy of `src/lib/abi.ts`'s own `erc20Abi` Transfer event -
+ * NOT an import of it - because that module's OWN JSON imports (the four vendored protocol ABIs)
+ * are unattributed (correct for webpack/Next.js, per this file's own header comment on that
+ * split), and Node's native ESM loader - which is what actually evaluates this file, Playwright's
+ * spec/support-file loader, never webpack - throws `ERR_IMPORT_ATTRIBUTE_MISSING` the instant any
+ * module in the import graph it walks reaches one of those unattributed imports, even
+ * transitively (confirmed by reproducing the exact failure locally against a real Playwright run
+ * before landing this instead). `erc20Abi` itself is not vendored from anywhere in the first place
+ * (`abi.ts`'s own doc comment: "ERC-20 is a public standard... there is no protocol source to
+ * vendor it from") and this is its fixed, universal, standardized event signature - the
+ * "never hand-transcribe" principle this file's header comment states is about the FOUR vendored
+ * DogTag contract ABIs, which this is not.
+ */
+const erc20TransferAbi = [
+  {
+    type: "event",
+    name: "Transfer",
+    inputs: [
+      {name: "from", type: "address", indexed: true},
+      {name: "to", type: "address", indexed: true},
+      {name: "value", type: "uint256", indexed: false},
+    ],
+  },
+] as const;
 // Playwright loads e2e spec/support files through Node's own native ESM loader (unlike the Next.js
 // app itself, bundled by webpack/turbopack, where a plain JSON import needs no attribute at all -
 // `src/lib/abi.ts`'s own imports of these same files) - Node's native loader requires the explicit
@@ -33,6 +61,14 @@ import entityRegistryAbiJson from "../protocol/contracts/exports/abi/EntityRegis
  * - the app under test is a REAL `next dev` server making REAL HTTP calls, so a fake in-process
  * transport is not an option; this is the smallest thing that can stand in for a real devnet RPC
  * while staying fully deterministic and offline.
+ *
+ * WP4.18 extends this same stub for ROAX's own payment path (`src/lib/payments/watcher.ts`, run
+ * out-of-process by `e2e/runPaymentWatcher.ts` since `pnpm dev`'s webServer never starts the
+ * worker) rather than adding a second one - ROAX is the identity chain AND the sole payment chain,
+ * so one deterministic devnet stand-in is enough for both: `eth_getBlockByNumber` (native PLASMA
+ * scan) and `eth_getLogs` (RUSD Transfer-log scan), scripted via `setRpcNativeTransfer`/
+ * `setRpcErc20Transfer` and read back deterministically via `getCurrentBlockNumber` - see each
+ * function's own doc comment below.
  *
  * Decodes every call by trying each of the three vendored ABIs in turn (never hand-transcribed -
  * the same vendored JSON `src/lib/abi.ts` uses) and re-encodes the scripted (or default) result
@@ -99,6 +135,51 @@ let forceCallFailure = false;
  * `RevokeSecondaryOwnerAction`'s own catch branch can ever observe either way. */
 let forceSendTransactionFailure = false;
 let blockNumber = 1_000n;
+
+/**
+ * WP4.18 - the payment watcher's native PLASMA scan (`scanNativeTransfers`) fetches ONE FULL
+ * BLOCK per iteration (`eth_getBlockByNumber(number, includeTransactions: true)`) and inspects
+ * `block.transactions`, so - unlike everything else in this stub, which answers every `eth_call`
+ * the same way regardless of which block it claims to be - this one genuinely needs to answer
+ * DIFFERENTLY per requested block number. Keyed by the requested block number's plain decimal
+ * string (never a hex string - `canonicalArgKey`'s own normalization convention, reused here for
+ * the same reason: callers script and the stub looks up using the SAME plain-decimal form,
+ * sidestepping hex-padding mismatches entirely). `setRpcNativeTransfer` below is the one way a
+ * test populates this.
+ */
+const scriptedBlockTransactions = new Map<string, {to: string; from: string; value: bigint; hash: string}[]>();
+
+/**
+ * WP4.18 - the payment watcher's RUSD Transfer-log scan (`scanErc20Transfers`) calls
+ * `eth_getLogs` (via viem's `getContractEvents`) with an address list and a block range - this
+ * stub answers with every scripted log whose `address` is in that list and whose `blockNumber`
+ * falls in range, WITHOUT decoding the request's own `topics` filter (a deliberate simplification:
+ * every log this stub is ever scripted with already carries the exact `to` address a test wants
+ * matched, so a real topic-level filter would only ever agree with this simpler one for the
+ * scenarios this stub is used for). `topics`/`data` in the reply ARE genuinely ABI-encoded via
+ * viem's own `encodeEventTopics`/`encodeAbiParameters` (`encodeTransferLog` below), never
+ * hand-built hex - the same "decode with the real ABI, never a parallel hand-transcription"
+ * principle this file's own header doc comment states for `eth_call`. `setRpcErc20Transfer` below
+ * is the one way a test populates this.
+ */
+const scriptedErc20Logs: {address: string; from: string; to: string; value: bigint; blockNumber: bigint; transactionHash: string; logIndex: number}[] = [];
+
+/** ABI-encodes one ERC-20 `Transfer(from, to, value)` log's `topics`/`data` exactly the way a real
+ * chain would - `decodeEventTopics`/`getContractEvents`'s client-side decode (which is what
+ * `scanErc20Transfers` actually calls) derives `.args.from`/`.args.to`/`.args.value` from these
+ * two fields and nowhere else, so a hand-built or malformed pair would silently fail to decode.
+ * `topics`' precise type (`(Hex | Hex[] | null)[]`, viem's general OR-matching shape) is wider than
+ * this call ever produces (both `from` and `to` are always concrete addresses, never wildcarded),
+ * so the return is left to inference rather than hand-annotated. */
+function encodeTransferLog(from: string, to: string, value: bigint) {
+  const topics = encodeEventTopics({
+    abi: erc20TransferAbi,
+    eventName: "Transfer",
+    args: {from: from as Address, to: to as Address},
+  });
+  const data = encodeAbiParameters(parseAbiParameters("uint256"), [value]);
+  return {topics, data};
+}
 
 /** WP4.5 track 3 - `txHash` (lowercase) -> mined receipt status, scripted per test via
  * `setRpcReceipt`/`/__control/receipt`. Absent means "not yet mined": `eth_getTransactionReceipt`
@@ -281,6 +362,15 @@ export function startRpcStub(): Server {
       sendJson(res, 200, {hash: lastSentTxHash});
       return;
     }
+    // WP4.18 - reads the stub's current block counter WITHOUT incrementing it (unlike a real
+    // `eth_blockNumber` JSON-RPC call, which always advances it - see that handler's own doc
+    // comment). Lets a payment e2e spec learn exactly which block number a subsequent
+    // scanChain() tick will treat as "latest" BEFORE scripting a transfer into a specific block,
+    // rather than guessing at a moving target.
+    if (req.method === "GET" && req.url === "/__control/current-block") {
+      sendJson(res, 200, {blockNumber: blockNumber.toString()});
+      return;
+    }
 
     const bodyText = await readBody(req);
 
@@ -292,6 +382,37 @@ export function startRpcStub(): Server {
       gasEstimate = 200_000n;
       lastSendTransaction = null;
       lastSentTxHash = null;
+      scriptedBlockTransactions.clear();
+      scriptedErc20Logs.length = 0;
+      sendJson(res, 200, {ok: true});
+      return;
+    }
+    // WP4.18 - scripts one native PLASMA transaction into a specific block's `transactions` list,
+    // for scanNativeTransfers' `eth_getBlockByNumber(blockNumber, includeTransactions: true)`.
+    // `blockNumber` is the plain decimal string form (see scriptedBlockTransactions' own doc
+    // comment); multiple calls for the SAME block accumulate rather than overwrite.
+    if (req.method === "POST" && req.url === "/__control/native-transfer") {
+      const body = JSON.parse(bodyText) as {blockNumber: string; to: string; from: string; value: string; hash: string};
+      const existing = scriptedBlockTransactions.get(body.blockNumber) ?? [];
+      existing.push({to: body.to, from: body.from, value: BigInt(body.value), hash: body.hash});
+      scriptedBlockTransactions.set(body.blockNumber, existing);
+      sendJson(res, 200, {ok: true});
+      return;
+    }
+    // WP4.18 - scripts one RUSD (or any ERC-20) Transfer log for scanErc20Transfers' `eth_getLogs`.
+    // `blockNumber` is a decimal string, converted to bigint immediately (this map is queried by
+    // numeric range, not string equality, unlike scriptedBlockTransactions above).
+    if (req.method === "POST" && req.url === "/__control/erc20-transfer") {
+      const body = JSON.parse(bodyText) as {address: string; blockNumber: string; from: string; to: string; value: string; hash: string};
+      scriptedErc20Logs.push({
+        address: body.address,
+        from: body.from,
+        to: body.to,
+        value: BigInt(body.value),
+        blockNumber: BigInt(body.blockNumber),
+        transactionHash: body.hash,
+        logIndex: scriptedErc20Logs.length,
+      });
       sendJson(res, 200, {ok: true});
       return;
     }
@@ -425,16 +546,78 @@ export function startRpcStub(): Server {
       return;
     }
     if (rpcRequest.method === "eth_getBlockByNumber" || rpcRequest.method === "eth_getBlockByHash") {
+      // WP4.18 - unlike every other method in this stub, the native PLASMA scan
+      // (scanNativeTransfers) asks for a SPECIFIC block number per iteration and inspects its
+      // `transactions`, so this reply must answer per-request rather than always describing the
+      // current tip the way it did before this wave (every EXISTING caller - readTxAnchoring's
+      // getBlock({blockNumber}) - only ever reads `.timestamp` off the response, never `.number`
+      // or `.transactions`, so this is a strict widening, not a behavior change for them).
+      // `eth_getBlockByHash` keeps the old always-tip/empty-transactions behavior: nothing in
+      // this app calls getBlock with a blockHash, so there is nothing to script per-hash.
+      const requestedHex = rpcRequest.method === "eth_getBlockByNumber" ? (rpcRequest.params?.[0] as string | undefined) : undefined;
+      const respondedNumber = requestedHex?.startsWith("0x") ? BigInt(requestedHex) : blockNumber;
+      const scriptedTxs = scriptedBlockTransactions.get(respondedNumber.toString()) ?? [];
       reply({
-        number: `0x${blockNumber.toString(16)}`,
+        number: `0x${respondedNumber.toString(16)}`,
         hash: `0x${"bb".repeat(32)}`,
         parentHash: `0x${"0".repeat(64)}`,
         baseFeePerGas: "0x1",
         gasLimit: "0x1c9c380",
         gasUsed: "0x0",
         timestamp: `0x${Math.floor(Date.now() / 1000).toString(16)}`,
-        transactions: [],
+        transactions: scriptedTxs.map((tx) => ({
+          hash: tx.hash,
+          nonce: "0x0",
+          blockHash: `0x${"bb".repeat(32)}`,
+          blockNumber: `0x${respondedNumber.toString(16)}`,
+          transactionIndex: "0x0",
+          from: tx.from,
+          to: tx.to,
+          value: `0x${tx.value.toString(16)}`,
+          gas: "0x5208",
+          gasPrice: "0x1",
+          input: "0x",
+          type: "0x0",
+        })),
       });
+      return;
+    }
+    // WP4.18 - the RUSD Transfer-log scan (scanErc20Transfers, via viem's getContractEvents).
+    // Filters scripted logs by requested address(es) and block range only - see
+    // scriptedErc20Logs' own doc comment for why this deliberately does not decode the request's
+    // own `topics` filter. `fromBlock`/`toBlock` arrive as hex quantities or the "latest" tag
+    // (never requested by this app's own scan, which always passes explicit bigints, but handled
+    // for completeness the same way a real node would resolve it).
+    if (rpcRequest.method === "eth_getLogs") {
+      const filter = rpcRequest.params?.[0] as {address?: string | string[]; fromBlock?: string; toBlock?: string} | undefined;
+      const requestedAddresses = new Set(
+        (Array.isArray(filter?.address) ? filter.address : filter?.address ? [filter.address] : []).map((a) => a.toLowerCase()),
+      );
+      const toQuantity = (tag: string | undefined): bigint | undefined => (tag && tag.startsWith("0x") ? BigInt(tag) : undefined);
+      const fromBlock = toQuantity(filter?.fromBlock) ?? 0n;
+      const toBlock = toQuantity(filter?.toBlock) ?? blockNumber;
+      const matches = scriptedErc20Logs.filter(
+        (log) =>
+          (requestedAddresses.size === 0 || requestedAddresses.has(log.address.toLowerCase())) &&
+          log.blockNumber >= fromBlock &&
+          log.blockNumber <= toBlock,
+      );
+      reply(
+        matches.map((log) => {
+          const {topics, data} = encodeTransferLog(log.from, log.to, log.value);
+          return {
+            address: log.address,
+            topics,
+            data,
+            blockNumber: `0x${log.blockNumber.toString(16)}`,
+            transactionHash: log.transactionHash,
+            transactionIndex: "0x0",
+            blockHash: `0x${"bb".repeat(32)}`,
+            logIndex: `0x${log.logIndex.toString(16)}`,
+            removed: false,
+          };
+        }),
+      );
       return;
     }
     /** WP4.5 grade-fix MAJOR 2 - the mock connector's `getProvider` (`@wagmi/core`'s own `mock.ts`)
@@ -572,4 +755,46 @@ export async function getLastSentTxHash(): Promise<string | null> {
   const res = await fetch(`${RPC_STUB_URL}/__control/last-sent-tx-hash`);
   const body = (await res.json()) as {hash: string | null};
   return body.hash;
+}
+
+/** WP4.18 - reads the stub's current block counter WITHOUT advancing it (unlike a real
+ * `eth_blockNumber` call). Lets an e2e spec learn exactly which block a payment watcher tick will
+ * treat as the chain tip before scripting a transfer into a specific block - see
+ * `scriptedBlockTransactions`'s own doc comment for why the watcher's per-block scan needs this,
+ * unlike every other scenario this stub scripts. */
+export async function getCurrentBlockNumber(): Promise<bigint> {
+  const res = await fetch(`${RPC_STUB_URL}/__control/current-block`);
+  const body = (await res.json()) as {blockNumber: string};
+  return BigInt(body.blockNumber);
+}
+
+/** WP4.18 - scripts one native PLASMA transaction into block `blockNumber`'s `transactions` list,
+ * for the payment watcher's native scan (`scanNativeTransfers`). Multiple calls for the same block
+ * accumulate. `value` is the exact base-unit (wei) amount as a decimal string. */
+export async function setRpcNativeTransfer(params: {blockNumber: bigint; to: string; from: string; value: string; hash: string}): Promise<void> {
+  await fetch(`${RPC_STUB_URL}/__control/native-transfer`, {
+    method: "POST",
+    headers: {"content-type": "application/json"},
+    body: JSON.stringify({...params, blockNumber: params.blockNumber.toString()}),
+  });
+}
+
+/** WP4.18 - scripts one ERC-20 (RUSD) Transfer log at block `blockNumber`, for the payment
+ * watcher's Transfer-log scan (`scanErc20Transfers`). `value` is the exact base-unit amount as a
+ * decimal string. The reply's `topics`/`data` are genuinely ABI-encoded (`encodeTransferLog`,
+ * against `erc20TransferAbi`'s standard ERC-20 Transfer event shape), so a real `getContractEvents`
+ * decode against it recovers exactly `{from, to, value}`. */
+export async function setRpcErc20Transfer(params: {
+  address: string;
+  blockNumber: bigint;
+  from: string;
+  to: string;
+  value: string;
+  hash: string;
+}): Promise<void> {
+  await fetch(`${RPC_STUB_URL}/__control/erc20-transfer`, {
+    method: "POST",
+    headers: {"content-type": "application/json"},
+    body: JSON.stringify({...params, blockNumber: params.blockNumber.toString()}),
+  });
 }

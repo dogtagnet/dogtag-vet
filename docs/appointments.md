@@ -96,3 +96,20 @@ The response always reflects a fresh read taken after both have applied, not a p
 - A status transition must be one the graph above lists.
 - `cancelled`/`no_show` release capacity exactly once.
 - `petIds` defaults to `[]` on every newly created appointment, but - like `Client.wallets` before it - mongoose's `default` only fires at document-creation time, so every read site treats it as `petIds ?? []` rather than trusting the type alone.
+
+## Payments
+
+Booking and invoicing are two separate flows (WP4.18).
+`POST /v1/booking/book` creates no payment.
+A staff member creates an invoice (a `Payment`) separately, any time after the appointment exists, and links it through `Payment.appointmentId`.
+A single appointment can carry more than one linked invoice, and a single invoice can carry more than one open crypto rail (PLASMA and RUSD are both ROAX assets - see `docs/DEV-TOKENS.md` in `dogtag-protocol` for what RUSD is).
+
+The staff appointment detail page shows every linked invoice under "Linked invoices": invoice number, total, and status, each linking to the existing staff payment detail page (`/payments/:id`) rather than duplicating its QR codes or actions.
+
+The public, phone-facing side is `GET /v1/booking/appointments/{id}` (gated by the appointment's own `cancelToken`, same as every other field on that response).
+It carries an additive `invoices` array, one entry per linked `Payment`: `paymentId`, `viewToken`, and `status`.
+`viewToken` is the same bearer token that already gates `GET /v1/payments/{id}/public` - the array is omitted entirely (never an empty array) when the appointment has no linked invoice.
+The phone fetches `GET /v1/payments/{id}/public` for each invoice to get the fiat amount, the open rails (token symbol, exact token amount, chain id, receiving address, and the EIP-681 payment request for each of PLASMA and RUSD, when the invoice is still `pending`), and offers Pay into the device's own native ROAX send flow.
+Scanning a printed invoice QR (`/pay/{id}?token=...`) keeps working unchanged, independent of the phone-native path.
+
+The booking confirmation email also carries the invoice's `/pay/{id}?token=...` link when one already exists for the just-created appointment, though in today's flow (invoice creation always happens after booking) that is essentially never yet true at send time - see `src/lib/booking/confirmation.ts`'s own doc comment for why the lookup is still always attempted.
