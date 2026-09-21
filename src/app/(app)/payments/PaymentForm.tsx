@@ -7,17 +7,10 @@ import {FormActionBar, FormField, FormSection} from "@/components/ui/FormSection
 import {useSnackbar} from "@/components/ui/Snackbar";
 import type {ClientDoc} from "@/lib/models/Client";
 import type {PetDoc} from "@/lib/models/Pet";
-import type {PaymentChainKey} from "@/lib/chains";
+import {paymentChainByKey, paymentChainDisplayName, type PaymentChainKey} from "@/lib/chains";
+import {ALL_CHAIN_KEYS, tokensFor} from "@/lib/payments/tokenTable";
 import type {PaymentToken} from "@/lib/models/Payment";
 import type {RailAvailability} from "@/app/api/payments/rails/route";
-
-const CHAIN_LABELS: Record<PaymentChainKey, string> = {
-  ethereum: "Ethereum",
-  base: "Base",
-  sepolia: "Sepolia",
-  baseSepolia: "Base Sepolia",
-};
-const TESTNET_CHAINS = new Set<PaymentChainKey>(["sepolia", "baseSepolia"]);
 
 interface LineItemRow {
   description: string;
@@ -33,6 +26,15 @@ interface RailSelection {
 
 function railKey(chainKey: string, token: string): string {
   return `${chainKey}:${token}`;
+}
+
+/** RUSD's manual rate prefills to "1.00" the moment it's selected for a USD invoice (plans/
+ * wp4.18-roax-payments.md section 6: "the RUSD rail defaults its manual rate to 1.00 when the
+ * clinic's fiat currency is USD and requires an explicit rate otherwise") - a form-side
+ * convenience only, still fully editable, and still enforced server-side regardless (`POST
+ * /api/payments` rejects any rail with a blank `manualRate`, PLASMA and RUSD alike). */
+function defaultManualRateFor(token: PaymentToken, currency: string): string {
+  return token === "RUSD" && currency.trim().toUpperCase() === "USD" ? "1.00" : "";
 }
 
 export function PaymentForm() {
@@ -54,7 +56,6 @@ export function PaymentForm() {
 
   const [availableRails, setAvailableRails] = useState<RailAvailability[]>([]);
   const [selectedRails, setSelectedRails] = useState<Map<string, RailSelection>>(new Map());
-  const [manualRateNeeded, setManualRateNeeded] = useState<Set<string>>(new Set());
 
   const [saving, setSaving] = useState(false);
 
@@ -92,7 +93,7 @@ export function PaymentForm() {
       const next = new Map(prev);
       const key = railKey(chainKey, token);
       if (next.has(key)) next.delete(key);
-      else next.set(key, {chainKey, token, manualRate: ""});
+      else next.set(key, {chainKey, token, manualRate: defaultManualRateFor(token, currency)});
       return next;
     });
   }
@@ -124,6 +125,13 @@ export function PaymentForm() {
       snackbar.show("Every line item needs a description and unit amount", "danger");
       return;
     }
+    // ROAX rails are manual-rate only (no live quote to fall back to) - checked here so a blank
+    // rate is caught before the round trip, mirroring the line-item check above; `POST
+    // /api/payments` enforces the same rule server-side regardless.
+    if (Array.from(selectedRails.values()).some((r) => !r.manualRate.trim())) {
+      snackbar.show("Enter a manual rate for every selected rail", "danger");
+      return;
+    }
     setSaving(true);
     try {
       const payload = {
@@ -140,7 +148,7 @@ export function PaymentForm() {
         acceptedRails: Array.from(selectedRails.values()).map((r) => ({
           chainKey: r.chainKey,
           token: r.token,
-          manualRate: r.manualRate.trim() || undefined,
+          manualRate: r.manualRate.trim(),
         })),
         notes: notes.trim() || undefined,
       };
@@ -151,15 +159,6 @@ export function PaymentForm() {
         body: JSON.stringify(payload),
       });
 
-      if (res.status === 409) {
-        const body = await res.json();
-        const needed: Set<string> = new Set(
-          (body?.error?.details?.rails ?? []).map((r: {chainKey: string; token: string}) => railKey(r.chainKey, r.token)),
-        );
-        setManualRateNeeded(needed);
-        snackbar.show("A live rate is unavailable for one or more rails - enter a manual rate below", "danger");
-        return;
-      }
       if (!res.ok) throw new Error("Create failed");
 
       const created = await res.json();
@@ -284,65 +283,59 @@ export function PaymentForm() {
         </FormField>
       </FormSection>
 
-      <FormSection title="Crypto payment rails" helperText="Toggle which chain/token combinations this invoice accepts.">
-        {(["ethereum", "base", "sepolia", "baseSepolia"] as PaymentChainKey[]).map((chainKey) => (
+      <FormSection title="Crypto payment rails" helperText="Toggle which ROAX assets this invoice accepts. Every rail needs a manual rate - there is no live price feed.">
+        {ALL_CHAIN_KEYS.map((chainKey) => (
           <div key={chainKey}>
             <p className="mb-1.5 text-body font-medium text-ink">
-              {CHAIN_LABELS[chainKey]}
-              {TESTNET_CHAINS.has(chainKey) && (
+              {paymentChainDisplayName[chainKey]}
+              {Boolean(paymentChainByKey[chainKey].testnet) && (
                 <span className="ml-2 rounded-badge bg-neutral-status-soft px-2 py-0.5 text-caption text-neutral-status">
                   Testnet
                 </span>
               )}
             </p>
             <div className="mb-3 flex flex-wrap gap-3">
-              {(["ETH", "USDC", "USDT"] as PaymentToken[]).map((token) => {
+              {tokensFor(chainKey).map((token) => {
                 const key = railKey(chainKey, token);
                 const availability = availableRails.find((r) => r.chainKey === chainKey && r.token === token);
                 const disabled = availability ? !availability.receivingAddressConfigured : false;
-                const selected = selectedRails.has(key);
+                const selection = selectedRails.get(key);
                 return (
-                  <label
-                    key={key}
-                    className={`flex items-center gap-2 rounded-control border border-border px-3 py-1.5 text-body ${
-                      disabled ? "opacity-50" : "cursor-pointer hover:bg-surface-2"
-                    }`}
-                  >
-                    <input
-                      type="checkbox"
-                      checked={selected}
-                      disabled={disabled}
-                      onChange={() => toggleRail(chainKey, token)}
-                    />
-                    {token}
-                    {availability?.placeholder && (
-                      <span className="text-caption text-warn" title="Placeholder token address - override via env before real use">
-                        placeholder
-                      </span>
+                  <div key={key} className="flex flex-col gap-1.5">
+                    <label
+                      className={`flex items-center gap-2 rounded-control border border-border px-3 py-1.5 text-body ${
+                        disabled ? "opacity-50" : "cursor-pointer hover:bg-surface-2"
+                      }`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={Boolean(selection)}
+                        disabled={disabled}
+                        onChange={() => toggleRail(chainKey, token)}
+                      />
+                      {token}
+                      {availability?.placeholder && (
+                        <span className="text-caption text-warn" title="Placeholder token address - override via env before real use">
+                          placeholder
+                        </span>
+                      )}
+                    </label>
+                    {selection && (
+                      <FormField label={`Manual rate (${currency || "fiat"} per ${token})`} htmlFor={`manual-rate-${key}`} className="w-48">
+                        <Input
+                          id={`manual-rate-${key}`}
+                          value={selection.manualRate}
+                          onChange={(e) => setManualRate(chainKey, token, e.target.value)}
+                          placeholder="e.g. 1.00"
+                        />
+                      </FormField>
                     )}
-                  </label>
+                  </div>
                 );
               })}
             </div>
           </div>
         ))}
-
-        {Array.from(selectedRails.values())
-          .filter((r) => manualRateNeeded.has(railKey(r.chainKey, r.token)))
-          .map((r) => (
-            <FormField
-              key={railKey(r.chainKey, r.token)}
-              label={`Manual rate: ${CHAIN_LABELS[r.chainKey]} ${r.token} (${currency} per token)`}
-              htmlFor={`manual-rate-${railKey(r.chainKey, r.token)}`}
-            >
-              <Input
-                id={`manual-rate-${railKey(r.chainKey, r.token)}`}
-                value={r.manualRate}
-                onChange={(e) => setManualRate(r.chainKey, r.token, e.target.value)}
-                placeholder="e.g. 2500.00"
-              />
-            </FormField>
-          ))}
       </FormSection>
 
       <FormSection title="Notes">
