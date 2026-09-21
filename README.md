@@ -42,6 +42,8 @@ pnpm worker       # the background worker process
 `docker compose up -d` after copying `.env.example` to `.env` and filling in the values it marks REQUIRED is the fastest path to a running clinic instance.
 See `docs/DEPLOY.md` for the full quickstart, the Kubernetes path (`helm/dogtag-vet/`), a managed-Mongo option, a `cloudflared` tunnel option for clinics with no static IP, Cloudflare and nginx rate-limiting guides for the public API surface, and backup guidance.
 
+The workstation deployment playbook for an AI agent is docs/WORKSTATION-AGENT.md; the acceptance manual is docs/MANUAL-E2E.md.
+
 ## Protocol sync
 
 `protocol/` is vendored by `dogtag-protocol/scripts/sync-to.sh`, which mirrors `contracts/exports`, `contracts/flattened`, `packages/dogtag-standard-ts`, `specs/`, and `design/design-system.md` wholesale (`rsync --delete`) and regenerates `protocol/PROVENANCE.md` from scratch every time.
