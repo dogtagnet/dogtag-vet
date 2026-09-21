@@ -12,12 +12,8 @@ import {createHealthServer, createInitialPollState, type HealthServerDeps} from 
 const stubDeps: HealthServerDeps = {
   checkMongoConnectivity: async () => true,
   getActivityFollowerCursorBlock: async () => 42,
-  getPaymentWatcherChainCursors: async () => [
-    {chainKey: "ethereum", cursorBlock: 1},
-    {chainKey: "base", cursorBlock: 2},
-    {chainKey: "sepolia", cursorBlock: null},
-    {chainKey: "baseSepolia", cursorBlock: null},
-  ],
+  // WP4.18 - ROAX is the only payment chain, so this array carries exactly one entry today.
+  getPaymentWatcherChainCursors: async () => [{chainKey: "roax", cursorBlock: 1}],
 };
 
 let server: Server | undefined;
@@ -42,7 +38,7 @@ describe("worker health server", () => {
     const body = await res.json();
     expect(body.status).toBe("ok");
     expect(body.activityFollower.cursorBlock).toBe(42);
-    expect(body.paymentWatcher.chains).toHaveLength(4);
+    expect(body.paymentWatcher.chains).toHaveLength(1); // ROAX only, as of WP4.18
   });
 
   it("answers 200 with an ok JSON body on GET /livez", async () => {

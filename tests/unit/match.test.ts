@@ -7,8 +7,8 @@ const TOKEN = "0xBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB";
 function rail(overrides: Partial<OpenRail> = {}): OpenRail {
   return {
     paymentId: "pay-1",
-    chainKey: "base",
-    token: "USDC",
+    chainKey: "roax",
+    token: "RUSD",
     tokenAddress: TOKEN,
     receivingAddress: RECEIVING,
     amountBase: "50000123",

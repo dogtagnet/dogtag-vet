@@ -34,9 +34,9 @@ interface CacheEntry {
 }
 
 /**
- * Module-level in-memory cache - same documented single-process tradeoff as `priceFeed.ts`'s own
- * cache (this app targets one process per clinic; a restart just re-fetches on next use).
- * Deliberately SHORT, unlike `priceFeed.ts`'s 10 minutes: the event that changes this answer - the
+ * Module-level in-memory cache - same single-process tradeoff `rateLimit.ts`'s buckets document
+ * (this app targets one process per clinic; a restart just re-fetches on next use).
+ * Deliberately SHORT: the event that changes this answer - the
  * DogTag protocol admin's `addOperator`/`removeOperator` transaction confirming - happens from a
  * BROWSER wallet this server has no way to be pushed a notification about, so a long-lived cache
  * would keep telling a vet they are not whitelisted for a while after the admin just fixed it
@@ -124,8 +124,7 @@ export async function resolveOperatorStatus(
   }
 }
 
-/** Test-only: clears the module-level cache so tests don't leak state into each other - same
- * convention as `priceFeed.ts`'s `__resetPriceCacheForTests`. */
+/** Test-only: clears the module-level cache so tests don't leak state into each other. */
 export function __resetOperatorStatusCacheForTests(): void {
   cache.clear();
 }

@@ -58,11 +58,12 @@ export interface BusinessProfile {
 }
 
 export interface RpcOverrides {
+  /** Overrides `ROAX_RPC_URL` for BOTH the identity-chain reads (`src/lib/chainRead.ts` - not
+   * actually wired there yet, a pre-existing gap disclosed in `paymentChainRead.ts`'s
+   * `roaxChainId()` doc comment) and, as of WP4.18, the payment-chain reads
+   * (`src/lib/paymentChainRead.ts`'s `paymentPublicClient`, which DOES honor this field, checked
+   * fresh on every call). One field, since ROAX is the only chain this app talks to at all. */
   roax?: string;
-  ethereum?: string;
-  base?: string;
-  sepolia?: string;
-  baseSepolia?: string;
 }
 
 export interface ClinicSettingsDoc {
@@ -101,7 +102,7 @@ export interface ClinicSettingsDoc {
 
 const receivingAddressSchema = new Schema<ReceivingAddress>(
   {
-    chainKey: {type: String, enum: ["ethereum", "base", "sepolia", "baseSepolia"], required: true},
+    chainKey: {type: String, enum: ["roax"], required: true},
     address: {type: String, required: true},
   },
   {_id: false},
@@ -168,10 +169,6 @@ const clinicSettingsSchema = new Schema<ClinicSettingsDoc>(
     businessProfile: {type: businessProfileSchema, default: () => ({})},
     rpcOverrides: {
       roax: String,
-      ethereum: String,
-      base: String,
-      sepolia: String,
-      baseSepolia: String,
     },
     icsFeedToken: {type: String, index: true, sparse: true, unique: true},
     activityCursorBlock: Number,

@@ -85,8 +85,8 @@ describe("generateInvoicePdf", () => {
         status: "paid",
         crypto: [
           {
-            chainKey: "sepolia",
-            token: "ETH",
+            chainKey: "roax",
+            token: "PLASMA",
             decimals: 18,
             quotedRate: "3000.00",
             amountBase: "1000000000000000",
@@ -95,8 +95,8 @@ describe("generateInvoicePdf", () => {
           },
         ],
         paidWith: {
-          chainKey: "base",
-          token: "USDC",
+          chainKey: "roax",
+          token: "RUSD",
           txHash,
           from: "0xdef456",
           amountBase: "75000000",
@@ -142,8 +142,8 @@ describe("generateInvoicePdf", () => {
       payment: fixturePayment({
         crypto: [
           {
-            chainKey: "sepolia",
-            token: "ETH",
+            chainKey: "roax",
+            token: "PLASMA",
             decimals: 18,
             quotedRate: "3000.00",
             amountBase: "41436327650000237",
@@ -159,9 +159,9 @@ describe("generateInvoicePdf", () => {
     });
 
     const page = await extractPage1Items(pdf);
-    expect(page.text).toContain("0.041436327650000237 ETH");
+    expect(page.text).toContain("0.041436327650000237 PLASMA");
     expect(page.text).not.toContain("41436327650000237 base units");
-    expect(page.text).toMatch(/sepolia.*\(testnet\)/i);
+    expect(page.text).toMatch(/roax.*\(testnet\)/i);
   });
 
   it("renders without a configured business profile - a fresh, never-configured deployment's default state", async () => {
@@ -236,13 +236,13 @@ describe("generateInvoicePdf", () => {
     expect(page.text).not.toContain("Scan to view this invoice online");
   });
 
-  it("prints the accepted rail's human-facing chain name, never the internal chain key or its wire kebab-case form", async () => {
+  it("prints the accepted rail's human-facing chain name, never the internal (lowercase) chain key", async () => {
     const pdf = await generateInvoicePdf({
       payment: fixturePayment({
         crypto: [
           {
-            chainKey: "baseSepolia",
-            token: "USDC",
+            chainKey: "roax",
+            token: "RUSD",
             decimals: 6,
             quotedRate: "1.00",
             amountBase: "388786001",
@@ -258,9 +258,13 @@ describe("generateInvoicePdf", () => {
     });
 
     const page = await extractPage1Items(pdf);
-    expect(page.text).toContain("Base Sepolia (testnet)");
-    expect(page.text).not.toContain("baseSepolia");
-    expect(page.text).not.toContain("base-sepolia");
+    // "ROAX" (paymentChainDisplayName), never the bare lowercase internal key `rail.chainKey`
+    // itself - the camelCase-vs-kebab-case distinction the four now-removed chains needed no
+    // longer applies (`roax` has no uppercase boundary to mis-transform), but the underlying
+    // regression this test guards against - printing the raw key instead of the display name -
+    // is unchanged, and case is still the only signal that distinguishes them for this one chain.
+    expect(page.text).toContain("ROAX (testnet)");
+    expect(page.text).not.toContain("roax");
   });
 
   it("renders a clinic postal address and a bill-to block when supplied", async () => {

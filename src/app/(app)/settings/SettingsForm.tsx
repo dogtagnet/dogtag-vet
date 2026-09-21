@@ -5,15 +5,16 @@ import {FormField, FormSection} from "@/components/ui/FormSection";
 import {Button, Input} from "@/components/ui/controls";
 import {useSnackbar} from "@/components/ui/Snackbar";
 import type {ClinicSettingsDoc, ReceivingAddress} from "@/lib/models/ClinicSettings";
-import type {PaymentChainKey} from "@/lib/chains";
+import {paymentChainByKey, paymentChainDisplayName, type PaymentChainKey} from "@/lib/chains";
+import {ALL_CHAIN_KEYS} from "@/lib/payments/tokenTable";
 
-const paymentChainLabels: Record<PaymentChainKey, string> = {
-  ethereum: "Ethereum",
-  base: "Base",
-  sepolia: "Sepolia (testnet)",
-  baseSepolia: "Base Sepolia (testnet)",
-};
-const paymentChainKeys = Object.keys(paymentChainLabels) as PaymentChainKey[];
+/** "ROAX" alone, or "ROAX (testnet)" if `chains.ts`'s registry ever marks it otherwise - derived
+ * from the registry (`paymentChainByKey[key].testnet`) rather than a second hardcoded label, so
+ * this can never drift from `PaymentForm.tsx`'s own testnet badge. */
+function paymentChainLabel(chainKey: PaymentChainKey): string {
+  const name = paymentChainDisplayName[chainKey];
+  return paymentChainByKey[chainKey].testnet ? `${name} (testnet)` : name;
+}
 
 export function SettingsForm({initial}: {initial: ClinicSettingsDoc}) {
   const snackbar = useSnackbar();
@@ -34,24 +35,21 @@ export function SettingsForm({initial}: {initial: ClinicSettingsDoc}) {
   const [lat, setLat] = useState(initial.businessProfile?.coordinates?.lat?.toString() ?? "");
   const [lng, setLng] = useState(initial.businessProfile?.coordinates?.lng?.toString() ?? "");
   const [receiving, setReceiving] = useState<Record<PaymentChainKey, string>>(() => {
-    const map: Record<PaymentChainKey, string> = {ethereum: "", base: "", sepolia: "", baseSepolia: ""};
+    const map: Record<PaymentChainKey, string> = {roax: ""};
     for (const entry of initial.receivingAddresses ?? []) map[entry.chainKey] = entry.address;
     return map;
   });
-  const [rpc, setRpc] = useState({
+  const [rpc, setRpc] = useState<Record<PaymentChainKey, string>>({
     roax: initial.rpcOverrides?.roax ?? "",
-    ethereum: initial.rpcOverrides?.ethereum ?? "",
-    base: initial.rpcOverrides?.base ?? "",
-    sepolia: initial.rpcOverrides?.sepolia ?? "",
-    baseSepolia: initial.rpcOverrides?.baseSepolia ?? "",
   });
   const [saving, setSaving] = useState(false);
 
   async function handleSave() {
     setSaving(true);
-    const receivingAddresses: ReceivingAddress[] = paymentChainKeys
-      .filter((key) => receiving[key])
-      .map((key) => ({chainKey: key, address: receiving[key]}));
+    const receivingAddresses: ReceivingAddress[] = ALL_CHAIN_KEYS.filter((key) => receiving[key]).map((key) => ({
+      chainKey: key,
+      address: receiving[key],
+    }));
     try {
       const res = await fetch("/api/settings", {
         method: "PATCH",
@@ -79,10 +77,6 @@ export function SettingsForm({initial}: {initial: ClinicSettingsDoc}) {
           receivingAddresses,
           rpcOverrides: {
             roax: rpc.roax || undefined,
-            ethereum: rpc.ethereum || undefined,
-            base: rpc.base || undefined,
-            sepolia: rpc.sepolia || undefined,
-            baseSepolia: rpc.baseSepolia || undefined,
           },
         }),
       });
@@ -183,8 +177,8 @@ export function SettingsForm({initial}: {initial: ClinicSettingsDoc}) {
         title="Receiving addresses"
         helperText="One address per chain for accepting crypto payments. Leave blank to not accept that chain."
       >
-        {paymentChainKeys.map((key) => (
-          <FormField key={key} label={paymentChainLabels[key]} htmlFor={`receiving-${key}`}>
+        {ALL_CHAIN_KEYS.map((key) => (
+          <FormField key={key} label={paymentChainLabel(key)} htmlFor={`receiving-${key}`}>
             <Input
               id={`receiving-${key}`}
               placeholder="0x..."
@@ -195,12 +189,9 @@ export function SettingsForm({initial}: {initial: ClinicSettingsDoc}) {
         ))}
       </FormSection>
 
-      <FormSection title="Chain RPC overrides" helperText="Leave blank to use the built-in public defaults.">
-        <FormField label="ROAX" htmlFor="rpc-roax">
-          <Input id="rpc-roax" value={rpc.roax} onChange={(e) => setRpc((p) => ({...p, roax: e.target.value}))} />
-        </FormField>
-        {paymentChainKeys.map((key) => (
-          <FormField key={key} label={paymentChainLabels[key]} htmlFor={`rpc-${key}`}>
+      <FormSection title="Chain RPC overrides" helperText="Leave blank to use the built-in public default.">
+        {ALL_CHAIN_KEYS.map((key) => (
+          <FormField key={key} label={paymentChainLabel(key)} htmlFor={`rpc-${key}`}>
             <Input
               id={`rpc-${key}`}
               value={rpc[key]}

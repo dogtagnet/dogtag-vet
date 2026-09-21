@@ -31,12 +31,10 @@ function freshReadiness(): ReadinessSnapshot {
     activityFollowerLastTipAt: minutesAgo(1),
     activityFollowerCursorBlock: 12345,
     paymentWatcherLastPollAt: minutesAgo(1),
-    paymentWatcherChains: [
-      {chainKey: "ethereum", cursorBlock: 100},
-      {chainKey: "base", cursorBlock: 200},
-      {chainKey: "sepolia", cursorBlock: null},
-      {chainKey: "baseSepolia", cursorBlock: null},
-    ],
+    // WP4.18 - ROAX is the only payment chain, so this array carries exactly one entry today
+    // (previously four, one per removed chain); `cursorBlock: null` still models "never scanned
+    // yet" on a fresh deployment.
+    paymentWatcherChains: [{chainKey: "roax", cursorBlock: 100}],
   };
 }
 
@@ -88,12 +86,7 @@ describe("computeReadiness (GET /healthz)", () => {
 
   it("reports every payment chain with the shared poll timestamp and its own cursor", () => {
     const report = computeReadiness(freshReadiness());
-    expect(report.paymentWatcher.chains).toEqual([
-      {chainKey: "ethereum", cursorBlock: 100, lastPollAt: minutesAgo(1).toISOString()},
-      {chainKey: "base", cursorBlock: 200, lastPollAt: minutesAgo(1).toISOString()},
-      {chainKey: "sepolia", cursorBlock: null, lastPollAt: minutesAgo(1).toISOString()},
-      {chainKey: "baseSepolia", cursorBlock: null, lastPollAt: minutesAgo(1).toISOString()},
-    ]);
+    expect(report.paymentWatcher.chains).toEqual([{chainKey: "roax", cursorBlock: 100, lastPollAt: minutesAgo(1).toISOString()}]);
   });
 
   it("combines multiple simultaneous problems into one degraded report", () => {

@@ -48,5 +48,5 @@ export const moneySchema = z.object({
   currency: z.string().length(3),
 });
 
-export const paymentChainKey = z.enum(["ethereum", "base", "sepolia", "baseSepolia"]);
-export const paymentToken = z.enum(["ETH", "USDC", "USDT"]);
+export const paymentChainKey = z.enum(["roax"]);
+export const paymentToken = z.enum(["PLASMA", "RUSD"]);

@@ -6,8 +6,7 @@ import {__resetOperatorStatusCacheForTests, resolveOperatorStatus} from "@/lib/i
  * unreadable), plus the two states its own design intent adds on top (`not-configured`, and the
  * cache's freshness/never-cache-a-failure behavior - see `issuanceOperatorStatus.ts`'s own doc
  * comments for why each of those exists). `deps.readOperator`/`deps.now` are injected so every
- * case here runs with zero network access, mirroring `tests/unit/priceFeed.test.ts`'s own
- * convention for `priceFeed.ts`'s identically-shaped cache.
+ * case here runs with zero network access.
  */
 
 const CLONE = `0x${"1".repeat(40)}`;

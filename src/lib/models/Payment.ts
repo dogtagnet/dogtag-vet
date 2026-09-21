@@ -4,7 +4,9 @@ import {randomUUID, randomBytes} from "node:crypto";
 import type {PaymentChainKey} from "@/lib/chains";
 
 export type PaymentStatus = "pending" | "paid" | "cancelled" | "expired";
-export type PaymentToken = "ETH" | "USDC" | "USDT";
+/** ROAX's two payment assets (plans/wp4.18-roax-payments.md section 7): PLASMA is ROAX's native
+ * asset; RUSD is the dev-only ERC-20 stablecoin (`docs/DEV-TOKENS.md` in dogtag-protocol). */
+export type PaymentToken = "PLASMA" | "RUSD";
 
 export interface LineItem {
   description: string;
@@ -22,7 +24,7 @@ export interface TaxLine {
 export interface CryptoRail {
   chainKey: PaymentChainKey;
   token: PaymentToken;
-  tokenAddress?: string; // absent for native ETH
+  tokenAddress?: string; // absent for native PLASMA
   decimals: number;
   quotedRate: string; // fiat per token, decimal string
   amountBase: string; // integer string in token base units, includes unique dust suffix
@@ -97,8 +99,8 @@ const taxLineSchema = new Schema<TaxLine>(
 
 const cryptoRailSchema = new Schema<CryptoRail>(
   {
-    chainKey: {type: String, enum: ["ethereum", "base", "sepolia", "baseSepolia"], required: true},
-    token: {type: String, enum: ["ETH", "USDC", "USDT"], required: true},
+    chainKey: {type: String, enum: ["roax"], required: true},
+    token: {type: String, enum: ["PLASMA", "RUSD"], required: true},
     tokenAddress: String,
     decimals: {type: Number, required: true},
     quotedRate: {type: String, required: true},
@@ -111,8 +113,8 @@ const cryptoRailSchema = new Schema<CryptoRail>(
 
 const paidWithSchema = new Schema<PaidWith>(
   {
-    chainKey: {type: String, enum: ["ethereum", "base", "sepolia", "baseSepolia"], required: true},
-    token: {type: String, enum: ["ETH", "USDC", "USDT"], required: true},
+    chainKey: {type: String, enum: ["roax"], required: true},
+    token: {type: String, enum: ["PLASMA", "RUSD"], required: true},
     txHash: {type: String, required: true},
     from: {type: String, required: true},
     amountBase: {type: String, required: true},

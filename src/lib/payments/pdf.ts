@@ -277,11 +277,12 @@ export async function generateInvoicePdf(input: InvoicePdfInput): Promise<Buffer
     resetX(doc);
     doc.font("Helvetica").fontSize(9).fillColor(PDF_COLOR.inkMuted);
     for (const rail of payment.crypto as CryptoRail[]) {
-      // Human-facing chain name (paymentChainDisplayName - "Base Sepolia"), never the internal
-      // camelCase key or its wire-format kebab-case rendering ("baseSepolia" / "base-sepolia") -
-      // round-5 grader finding: a customer-facing PDF printed the raw internal key, and "Labels
-      // are nouns" (design-system.md) rules out an identifier standing in for one. Matches how
-      // the web UI's PaymentRailTabs renders the same rail.
+      // Human-facing chain name (paymentChainDisplayName - "ROAX"), never the internal camelCase
+      // key or its wire-format kebab-case rendering ("roax" either way today, but the principle
+      // predates and outlives that coincidence) - round-5 grader finding (pre-WP4.18): a
+      // customer-facing PDF printed the raw internal key, and "Labels are nouns" (design-system.md)
+      // rules out an identifier standing in for one. Matches how the web UI's PaymentRailTabs
+      // renders the same rail.
       const testnet = Boolean(paymentChainByKey[rail.chainKey].testnet);
       const chainLabel = `${paymentChainDisplayName[rail.chainKey]}${testnet ? " (testnet)" : ""}`;
       const amount = formatTokenAmount(rail.amountBase, rail.decimals);

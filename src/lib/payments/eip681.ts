@@ -1,8 +1,8 @@
 /**
  * EIP-681 payment URI builder, per `protocol/specs/qr-formats.md`'s "Payment QR" section (the
  * exact grammar there is normative). Pure and dependency-free so it can be unit-tested against
- * fixed fixtures for all four chains and three tokens without touching env, the token registry, or
- * any network call - see `tests/unit/eip681.test.ts`.
+ * fixed fixtures for both ROAX tokens (PLASMA native, RUSD ERC-20) without touching env, the token
+ * registry, or any network call - see `tests/unit/eip681.test.ts`.
  */
 export interface Eip681NativeInput {
   kind: "native";

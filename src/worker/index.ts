@@ -21,9 +21,10 @@
  *    contracts SHARED across every vet on the protocol, so their logs are filtered down to just
  *    this clinic's own `dogTagId`s (read from the local `Pet` collection) before being stored,
  *    per wp4-vet.md's "this clinic's clone + ... for this clinic" scoping.
- * 3. The payment watcher (`runPaymentWatcherLoop`, `src/lib/payments/watcher.ts`): scans the four
- *    payment chains for matching transfers to open invoices, marks them paid, fires receipt/notice
- *    emails, and sweeps past-due payments to `expired`.
+ * 3. The payment watcher (`runPaymentWatcherLoop`, `src/lib/payments/watcher.ts`): scans ROAX (the
+ *    sole payment chain as of WP4.18 - PLASMA natively, RUSD via ERC-20 Transfer logs) for
+ *    matching transfers to open invoices, marks them paid, fires receipt/notice emails, and sweeps
+ *    past-due payments to `expired`.
  *
  * A fourth, non-polling piece (WP4.17 B10): `startHealthServer` (`./health.ts`) opens
  * `GET /healthz` and `GET /livez` on `WORKER_HEALTH_PORT` so Kubernetes (or anything else) can
@@ -49,6 +50,7 @@ import {
 } from "./health";
 import {recoverStuckDelegationSessions} from "@/lib/delegation/bootRecovery";
 import {runPaymentWatcherOnce} from "@/lib/payments/watcher";
+import {roaxChainId} from "@/lib/paymentChainRead";
 import type {Log} from "viem";
 
 interface DecodedEventLog extends Log {
@@ -186,8 +188,11 @@ async function followOnce(): Promise<bigint> {
 /** The payment watcher's own loop (`src/lib/payments/watcher.ts`) - a second, independent
  * `setInterval`-style loop alongside the chain-activity follower's, per this file's original doc
  * comment anticipating exactly this addition. Deliberately not merged into `followOnce`'s loop:
- * the two watch entirely different chains (ROAX vs. the four payment chains) on different
- * cadences, and a failure in one must never stall the other. */
+ * even though both now watch the same underlying ROAX chain (as of WP4.18 - previously this
+ * follower's chain and the payment watcher's four chains were entirely distinct), they watch it
+ * for different things (this clinic's clone events vs. matching payment transfers), keep separate
+ * cursors (`ClinicSettings.activityCursorBlock` vs. `PaymentChainCursor`), and poll on different
+ * cadences - a failure in one must never stall the other. */
 async function runPaymentWatcherLoop(pollMs: number, pollState: WorkerPollState): Promise<never> {
   for (;;) {
     try {
@@ -227,6 +232,15 @@ async function runActivityFollowerLoop(pollMs: number, pollState: WorkerPollStat
 }
 
 async function main() {
+  // WP4.18 V1 - the payment path's own startup assertion (`ROAX_CHAIN_ID` must be a positive
+  // integer): the payment watcher below never calls `tokenInfo()` itself (it reads `decimals`/
+  // `tokenAddress` straight off each payment's already-built `crypto[]` rail, not the registry),
+  // so without this explicit call a misconfigured chain id would surface only much later, and
+  // silently, as EIP-681 URIs built by `POST /api/payments` embedding a bad chain id rather than
+  // this process refusing to start. Called before either loop, right alongside the boot-recovery
+  // calls above.
+  roaxChainId();
+
   await connectToDatabase();
   await recoverInterruptedSessions();
   await recoverInterruptedRecords();

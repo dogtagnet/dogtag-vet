@@ -47,10 +47,6 @@ export const clinicSettingsInputSchema = z.object({
   rpcOverrides: z
     .object({
       roax: z.string().url().optional(),
-      ethereum: z.string().url().optional(),
-      base: z.string().url().optional(),
-      sepolia: z.string().url().optional(),
-      baseSepolia: z.string().url().optional(),
     })
     .optional(),
   // WP4.15 multi-owner (PLANNED) - see ClinicSettings.ts's own doc comment on this field.

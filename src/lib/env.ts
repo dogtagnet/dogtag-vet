@@ -50,16 +50,13 @@ const envSchema = z.object({
   // own docs recommend should set this explicitly (1 for a single nginx/Cloudflare hop).
   TRUSTED_PROXY_HOPS: z.coerce.number().int().min(0).default(0),
 
-  // ROAX (identity chain, chainId 135) - always legacy tx type, per architecture-v2.md.
+  // ROAX (identity chain, chainId 135) - always legacy tx type, per architecture-v2.md. As of
+  // WP4.18 this is ALSO this app's only payment-rail chain (plans/wp4.18-roax-payments.md section
+  // 7) - the same RPC URL and chain id serve both the identity reads (`src/lib/chainRead.ts`) and
+  // the payment reads (`src/lib/paymentChainRead.ts`), since they are, today, the same chain.
   ROAX_RPC_URL: z.string().default("https://roax-testnet-rpc.dogtag.example/rpc"),
   ROAX_CHAIN_ID: z.coerce.number().default(135),
   ROAX_EXPLORER_URL: z.string().default("https://roax-testnet.blockscout.example"),
-
-  // Payment chain RPC overrides - defaults per wp4-vet.md.
-  ETHEREUM_RPC_URL: z.string().default("https://ethereum-rpc.publicnode.com"),
-  BASE_RPC_URL: z.string().default("https://base-rpc.publicnode.com"),
-  SEPOLIA_RPC_URL: z.string().default("https://ethereum-sepolia-rpc.publicnode.com"),
-  BASE_SEPOLIA_RPC_URL: z.string().default("https://base-sepolia-rpc.publicnode.com"),
 
   // Protocol contract addresses this deployment talks to. Left unset until the setup wizard (or
   // an operator) supplies them; onboarding reads treat an unset factory address as "not
@@ -80,30 +77,25 @@ const envSchema = z.object({
   // Invoicing
   INVOICE_NUMBER_PREFIX: z.string().default("INV"),
 
-  // Payment confirmation depth
-  CONFIRMATIONS_MAINNET: z.coerce.number().default(3),
-  CONFIRMATIONS_TESTNET: z.coerce.number().default(2),
+  // Payment confirmation depth, per payment chain (today, just ROAX - plans/wp4.18-roax-payments.md
+  // V1: "confirmations for ROAX get their own env value instead of silently inheriting the testnet
+  // value" the old four-chain design used). 2 is right for a devnet with sub-second blocks.
+  CONFIRMATIONS_ROAX: z.coerce.number().default(2),
 
-  // ERC-20 contract addresses per (chain, token) - src/lib/payments/tokenRegistry.ts. Ethereum and
-  // Base values are Circle's/Tether's real deployments; the three testnet USDT slots have no
-  // canonical issuer deployment, so their defaults are clearly-marked placeholders (documented in
-  // tokenRegistry.ts) that an operator MUST override before ever toggling that rail on for a real
-  // invoice.
-  TOKEN_USDC_ETHEREUM_ADDRESS: z.string().default(DEFAULT_TOKEN_ADDRESSES.usdcEthereum),
-  TOKEN_USDC_BASE_ADDRESS: z.string().default(DEFAULT_TOKEN_ADDRESSES.usdcBase),
-  TOKEN_USDC_SEPOLIA_ADDRESS: z.string().default(DEFAULT_TOKEN_ADDRESSES.usdcSepolia),
-  TOKEN_USDC_BASE_SEPOLIA_ADDRESS: z.string().default(DEFAULT_TOKEN_ADDRESSES.usdcBaseSepolia),
-  TOKEN_USDT_ETHEREUM_ADDRESS: z.string().default(DEFAULT_TOKEN_ADDRESSES.usdtEthereum),
-  TOKEN_USDT_BASE_ADDRESS: z.string().default(DEFAULT_TOKEN_ADDRESSES.usdtBasePlaceholder),
-  TOKEN_USDT_SEPOLIA_ADDRESS: z.string().default(DEFAULT_TOKEN_ADDRESSES.usdtSepoliaPlaceholder),
-  TOKEN_USDT_BASE_SEPOLIA_ADDRESS: z.string().default(DEFAULT_TOKEN_ADDRESSES.usdtBaseSepoliaPlaceholder),
-
-  // CoinGecko simple-price API (no key required) - src/lib/payments/priceFeed.ts.
-  COINGECKO_API_BASE: z.string().default("https://api.coingecko.com/api/v3"),
+  // RUSD ERC-20 contract address on ROAX - src/lib/payments/tokenRegistry.ts. A fresh, per-
+  // deployment dev stablecoin (docs/DEV-TOKENS.md in dogtag-protocol) with no canonical address
+  // this repo could ever bake in, so the default is a clearly-marked placeholder (documented in
+  // tokenRegistry.ts) that an operator MUST override, from the workstation's own deploy, before
+  // ever toggling the RUSD rail on for a real invoice.
+  TOKEN_RUSD_ROAX_ADDRESS: z.string().default(DEFAULT_TOKEN_ADDRESSES.rusdRoaxPlaceholder),
 
   // Payment watcher (src/worker/index.ts) - separate loop from the chain-activity follower above.
   PAYMENT_WATCHER_POLL_MS: z.coerce.number().default(30_000),
-  PAYMENT_ACTIVITY_CHUNK_BLOCKS: z.coerce.number().default(2000),
+  // Max blocks per scan iteration, per payment chain (today, just ROAX) - PLASMA's native scan
+  // fetches one full block per iteration (src/lib/payments/watcher.ts's own doc comment on why
+  // that is heavier than a log query), so this stays a deliberately smaller default (200) than the
+  // four-chain design's old single 2000-block value, which was sized for a log-only ERC-20 scan.
+  PAYMENT_ACTIVITY_CHUNK_BLOCKS_ROAX: z.coerce.number().default(200),
 
   // Chain-activity follower (src/worker/index.ts). Defaults to 0 (scan from genesis) - ROAX is a
   // dedicated, low-volume identity chain, so a full-history scan on first run is cheap; a

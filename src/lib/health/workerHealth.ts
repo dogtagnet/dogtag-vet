@@ -144,7 +144,8 @@ export interface ReadinessReport {
  * watcher's per-chain state (last poll, cursor). Every chain currently carries the SAME
  * `lastPollAt` (one shared loop, one cadence, examines every chain each tick) - reported per chain
  * anyway, rather than once at the `paymentWatcher` level, so the shape does not need to change if a
- * later revision ever makes the four chains' polling genuinely independent.
+ * later revision ever makes a multi-chain payment watcher's polling genuinely independent (as of
+ * WP4.18 there is exactly one payment chain, `roax`, so this array always carries one entry today).
  */
 export function computeReadiness(snapshot: ReadinessSnapshot): ReadinessReport {
   const reasons: string[] = [];

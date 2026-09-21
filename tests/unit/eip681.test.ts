@@ -1,16 +1,9 @@
 import {describe, expect, it} from "vitest";
 import {buildEip681Uri} from "@/lib/payments/eip681";
 import {resolveTokenInfo, defaultAddressesFor, ALL_CHAIN_KEYS} from "@/lib/payments/tokenTable";
-import type {PaymentChainKey} from "@/lib/chains";
 
 const RECEIVING = "0x1111111111111111111111111111111111111a";
-
-const EXPECTED_CHAIN_IDS: Record<PaymentChainKey, number> = {
-  ethereum: 1,
-  base: 8453,
-  sepolia: 11155111,
-  baseSepolia: 84532,
-};
+const ROAX_CHAIN_ID = 135;
 
 describe("buildEip681Uri", () => {
   it("builds the native asset form: ethereum:<addr>@<chainId>?value=<wei>", () => {
@@ -28,43 +21,48 @@ describe("buildEip681Uri", () => {
     expect(uri).toContain(`address=${RECEIVING}`);
   });
 
-  it("generates a valid URI for all four chains and all three tokens via the real token registry", () => {
+  it("generates a valid URI for ROAX's two tokens (PLASMA native, RUSD ERC-20) via the real token registry", () => {
+    expect(ALL_CHAIN_KEYS).toEqual(["roax"]);
     for (const chainKey of ALL_CHAIN_KEYS) {
       const addresses = defaultAddressesFor(chainKey);
-      for (const token of ["ETH", "USDC", "USDT"] as const) {
-        const info = resolveTokenInfo(chainKey, token, addresses);
-        expect(info.chainId).toBe(EXPECTED_CHAIN_IDS[chainKey]);
+      for (const token of ["PLASMA", "RUSD"] as const) {
+        const info = resolveTokenInfo(chainKey, token, addresses, ROAX_CHAIN_ID);
+        expect(info.chainId).toBe(ROAX_CHAIN_ID);
 
         const uri = info.address
           ? buildEip681Uri({kind: "erc20", chainId: info.chainId, tokenAddress: info.address, to: RECEIVING, amountBase: "1000"})
           : buildEip681Uri({kind: "native", chainId: info.chainId, to: RECEIVING, amountBaseWei: "1000"});
 
         expect(uri.startsWith("ethereum:")).toBe(true);
-        expect(uri).toContain(`@${EXPECTED_CHAIN_IDS[chainKey]}`);
-        if (token === "ETH") {
-          expect(uri).toBe(`ethereum:${RECEIVING}@${EXPECTED_CHAIN_IDS[chainKey]}?value=1000`);
+        expect(uri).toContain(`@${ROAX_CHAIN_ID}`);
+        if (token === "PLASMA") {
+          expect(uri).toBe(`ethereum:${RECEIVING}@${ROAX_CHAIN_ID}?value=1000`);
+          expect(info.decimals).toBe(18);
         } else {
           expect(uri).toContain("/transfer?address=");
           expect(uri).toContain(`address=${RECEIVING}`);
           expect(uri).toContain("uint256=1000");
           expect(info.address).toMatch(/^0x[0-9a-fA-F]{40}$/);
+          expect(info.decimals).toBe(6);
         }
       }
     }
   });
 
-  it("marks exactly the three testnet-USDT-with-no-canonical-deployment slots as placeholder", () => {
-    const placeholderPairs: string[] = [];
-    for (const chainKey of ALL_CHAIN_KEYS) {
-      const info = resolveTokenInfo(chainKey, "USDT", defaultAddressesFor(chainKey));
-      if (info.placeholder) placeholderPairs.push(chainKey);
-    }
-    expect(placeholderPairs.sort()).toEqual(["base", "baseSepolia", "sepolia"]);
+  it("marks RUSD's default address as a placeholder until an operator overrides TOKEN_RUSD_ROAX_ADDRESS", () => {
+    // RUSD is a fresh, per-deployment dev stablecoin with no canonical address this repo could
+    // ever bake in (docs/DEV-TOKENS.md) - the exact same "no real deployment to point to"
+    // situation the old testnet USDT slots were in before WP4.18 removed them.
+    const info = resolveTokenInfo("roax", "RUSD", defaultAddressesFor("roax"), ROAX_CHAIN_ID);
+    expect(info.placeholder).toBe(true);
 
-    // Ethereum USDT and every USDC slot are real, non-placeholder deployments.
-    expect(resolveTokenInfo("ethereum", "USDT", defaultAddressesFor("ethereum")).placeholder).toBeUndefined();
-    for (const chainKey of ALL_CHAIN_KEYS) {
-      expect(resolveTokenInfo(chainKey, "USDC", defaultAddressesFor(chainKey)).placeholder).toBeUndefined();
-    }
+    // Once an operator sets a real address, the placeholder flag correctly stops warning.
+    const overridden = resolveTokenInfo("roax", "RUSD", {rusd: "0x9999999999999999999999999999999999999a"}, ROAX_CHAIN_ID);
+    expect(overridden.placeholder).toBeUndefined();
+
+    // PLASMA is native - never a placeholder, since there is no address to source at all.
+    const plasma = resolveTokenInfo("roax", "PLASMA", defaultAddressesFor("roax"), ROAX_CHAIN_ID);
+    expect(plasma.placeholder).toBeUndefined();
+    expect(plasma.address).toBeUndefined();
   });
 });

@@ -103,10 +103,6 @@ function computePublicEnv(injected: InjectedPublicConfig) {
     roaxRpcUrl: stringOr(injected.roaxRpcUrl, process.env.NEXT_PUBLIC_ROAX_RPC_URL ?? "https://roax-testnet-rpc.dogtag.example/rpc"),
     roaxChainId: positiveIntOr(injected.roaxChainId, Number(process.env.NEXT_PUBLIC_ROAX_CHAIN_ID ?? "135")),
     roaxExplorerUrl: stringOr(injected.roaxExplorerUrl, process.env.NEXT_PUBLIC_ROAX_EXPLORER_URL ?? "https://roax-testnet.blockscout.example"),
-    ethereumRpcUrl: process.env.NEXT_PUBLIC_ETHEREUM_RPC_URL ?? "https://ethereum-rpc.publicnode.com",
-    baseRpcUrl: process.env.NEXT_PUBLIC_BASE_RPC_URL ?? "https://base-rpc.publicnode.com",
-    sepoliaRpcUrl: process.env.NEXT_PUBLIC_SEPOLIA_RPC_URL ?? "https://ethereum-sepolia-rpc.publicnode.com",
-    baseSepoliaRpcUrl: process.env.NEXT_PUBLIC_BASE_SEPOLIA_RPC_URL ?? "https://base-sepolia-rpc.publicnode.com",
 
     // Protocol contract addresses - not secret (every one of them is public on chain), so these are
     // exposed to the client directly rather than round-tripped through an API route just so the
