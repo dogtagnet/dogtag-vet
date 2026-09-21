@@ -17,8 +17,8 @@ They are also copied byte-for-byte into `dogtag-ios` (`DogTagTests/Fixtures/`), 
 - `tests/unit/vectors/eip712-mobile-booking-vectors.json`
 - `tests/unit/vectors/mobile-booking-hash-vectors.json`
 
-Their protocol ownership is pending Kenneth's decision on whether to promote them to genuine `dogtag-protocol` spec artifacts under `specs/vectors/` (open question 7, `plans/wp4.17-release-and-workstation.md` section 5).
-Until then, this directory is their canonical home for this repo.
+Their protocol ownership is repo-local by decision (Kenneth, 2026-09-21) - they stay here rather than being promoted to genuine `dogtag-protocol` spec artifacts under `specs/vectors/` (open question 7, `plans/wp4.17-release-and-workstation.md` section 5, now closed).
+This directory is their canonical home for this repo.
 
 ## 1.4.0 release (WP4.18)
 

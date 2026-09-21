@@ -12,6 +12,10 @@ import {describe, expect, it} from "vitest";
  * `vectorFileNames` comes from an actual `readdirSync` of the vectors directory, not a
  * hand-typed list that could itself drift, so a future vector file added there and forgotten
  * in the release notes fails this suite by name for that exact file.
+ *
+ * WP4.18 fix round 1: Kenneth decided (2026-09-21) these files stay repo-local rather than
+ * being promoted to dogtag-protocol - the release notes' old "ownership pending" wording is
+ * stale now that the decision is made, so the wording check below moved with it.
  */
 const vectorsDir = resolve(__dirname, "./vectors");
 const vectorFileNames = readdirSync(vectorsDir)
@@ -29,7 +33,7 @@ describe("docs/RELEASE-NOTES.md names every hand-authored vector file with its l
     expect(releaseNotes).toContain(`tests/unit/vectors/${name}`);
   });
 
-  it("states that their protocol ownership is pending Kenneth's decision", () => {
-    expect(releaseNotes.toLowerCase()).toMatch(/pending/);
+  it("states their protocol ownership is repo-local by decision, with who and when (WP4.18 fix round 1)", () => {
+    expect(releaseNotes).toContain("repo-local by decision (Kenneth, 2026-09-21)");
   });
 });
