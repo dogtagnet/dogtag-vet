@@ -13,14 +13,24 @@ import type {PaymentChainKey} from "@/lib/chains";
  * - Readiness (`computeReadiness`) answers "can this worker currently do useful work" - Mongo
  *   unreachable belongs here, since a worker that cannot read/write its own cursors is not usefully
  *   ready even if its loops are still ticking on schedule.
- * - Liveness (`computeLiveness`) answers "is this process wedged and worth killing" - Mongo (and
- *   the ROAX/payment RPCs) are EXTERNAL dependencies a restart cannot fix, so they must never be
- *   part of this answer. This matters concretely here: `src/worker/index.ts`'s `main()` calls
- *   `connectToDatabase()` BEFORE the health server ever starts listening, so if liveness also
- *   failed on "Mongo unreachable", a Mongo outage at boot would crash-loop the container (connect
- *   throws, process exits, kubelet restarts, connect throws again) instead of leaving one process
- *   up to retry on its own schedule. `LivenessSnapshot` has no `mongoConnected` field at all - by
- *   construction, not just convention, nothing Mongo-shaped can leak into this decision.
+ * - Liveness (`computeLiveness`) answers "is this process wedged and worth killing" - Mongo AND
+ *   both the ROAX and payment RPCs are EXTERNAL dependencies a restart cannot fix, so NONE of them
+ *   may gate this answer. This matters concretely here: `src/worker/index.ts`'s `main()` calls
+ *   `connectToDatabase()` BEFORE the health server ever starts listening, so if liveness reacted to
+ *   Mongo, a Mongo outage at boot would crash-loop the container (connect throws, process exits,
+ *   kubelet restarts, connect throws again) instead of leaving one process up to retry. `
+ *   LivenessSnapshot` has no `mongoConnected` field at all - by construction, not just convention,
+ *   nothing Mongo-shaped can leak into this decision.
+ *
+ *   The identical trap exists one field over, and very nearly shipped here: the activity
+ *   follower's PROGRESS signal (`activityFollowerLastTipAt` below) is exactly right for readiness,
+ *   but wiring it into liveness too would fail liveness on a dead ROAX RPC the same way Mongo would
+ *   have failed it above - `followOnce` throws at its very first `getBlockNumber()` call before it
+ *   can ever observe a tip, so a bad `ROAX_RPC_URL` (a first-deploy-day near-certainty) would
+ *   crash-loop the container every ~10-12 minutes forever. Liveness uses
+ *   `activityFollowerLastAttemptAt` instead - recorded whether that iteration's RPC call succeeded
+ *   or threw - for exactly the same reason the payment watcher's own liveness signal is
+ *   attempt-based (see that field's doc comment below).
  *
  * The admin worker's own `/healthz` (`dogtag-admin/worker/index.ts`, read as this feature's
  * pattern) does not make this split - it always answers 200 regardless of `state.lastError`, which
@@ -33,10 +43,10 @@ export type WorkerHealthStatus = "ok" | "degraded";
 
 /**
  * `lastAt === null` (never observed even once) is treated as stalled, not given a free pass - in
- * practice this should never be seen after boot, since `src/worker/health.ts` seeds both
- * timestamps to the process start time (mirroring dogtag-admin worker/index.ts's identical
- * `lastBlockSeenAt: new Date()` seeding) specifically so an outage present from the very first
- * tick still ages into a stall instead of reading as fresh forever.
+ * practice this should never be seen after boot, since `src/worker/health.ts` seeds every
+ * timestamp this file reads to the process start time (mirroring dogtag-admin worker/index.ts's
+ * identical `lastBlockSeenAt: new Date()` seeding) specifically so an outage present from the very
+ * first tick still ages into a stall instead of reading as fresh forever.
  */
 export function isStalled(lastAt: Date | null, now: Date, stallMinutes: number): boolean {
   if (lastAt === null) return true;
@@ -48,31 +58,20 @@ export interface LivenessSnapshot {
   now: Date;
   stallMinutes: number;
   /**
-   * The chain-activity follower's own liveness signal is PROGRESS on the observed ROAX chain tip,
-   * not "did an attempt happen" - `src/worker/index.ts`'s `followOnce` calls `getBlockNumber()`
-   * before it even checks whether this clinic has finished onboarding, and the loop wrapper only
-   * advances this timestamp when that observed tip exceeds the highest one seen so far. This is
-   * deliberately the same shape as dogtag-admin's `lastBlockSeenAt`, and for the same reason
-   * stated in that file's own comment: a stalled follower is exactly as likely to show up as a run
-   * of thrown iterations (RPC unreachable) as a run of iterations that complete but never observe
-   * a new block, so an attempt-only timestamp (which advances on both a success AND a caught
-   * throw) would almost never go stale - it would only catch a fully wedged event loop, which also
-   * stops answering this very endpoint, making the check nearly dead code. Tracking observed tip
-   * progress instead catches the actually-likely failure: a dead or stuck RPC.
-   *
-   * This also means a clinic that has not finished the setup wizard yet (`cloneAddress` unset)
-   * reads as fresh, not stalled, for as long as ROAX itself keeps producing blocks - `followOnce`
-   * observes the tip on every iteration regardless of onboarding state, so "not onboarded yet" and
-   * "RPC is dead" are never confused with each other.
+   * Attempt-based (last loop iteration, success or caught throw alike) - see this file's own doc
+   * comment above for why liveness cannot use the follower's PROGRESS signal
+   * (`ReadinessSnapshot.activityFollowerLastTipAt`) the way readiness does: a dead ROAX RPC would
+   * crash-loop the container instead of just marking the pod not-ready. `src/worker/index.ts`'s
+   * `runActivityFollowerLoop` records this once per iteration, unconditionally, after its
+   * try/catch - the same placement as the payment watcher's own attempt signal below.
    */
-  activityFollowerLastTipAt: Date | null;
+  activityFollowerLastAttemptAt: Date | null;
   /**
-   * The payment watcher's liveness signal, by contrast, IS attempt-based (last tick, success or
-   * caught failure) - `runPaymentWatcherOnce` returns immediately whenever there is no pending
-   * payment on any chain at all, which is the common case, so a progress signal (a per-chain
-   * cursor advancing) would read "stalled" on a perfectly healthy, simply idle clinic. Tick
-   * liveness has no such false positive: it only asks "did the loop wrapper complete an attempt
-   * recently", which is true whether or not there was ever any work to do.
+   * Also attempt-based, for a different reason: `runPaymentWatcherOnce` returns immediately
+   * whenever there is no pending payment on any chain at all, which is the common case, so a
+   * progress signal (a per-chain cursor advancing) would read "stalled" on a perfectly healthy,
+   * simply idle clinic. Tick liveness has no such false positive - it only asks "did the loop
+   * wrapper complete an attempt recently", true whether or not there was ever any work to do.
    */
   paymentWatcherLastPollAt: Date | null;
 }
@@ -82,20 +81,14 @@ export interface HealthReport {
   reasons: string[];
 }
 
-/** Shared by both reports below - liveness's reasons are always a subset of readiness's. */
-function computeLivenessReasons(snapshot: LivenessSnapshot): string[] {
+export function computeLiveness(snapshot: LivenessSnapshot): HealthReport {
   const reasons: string[] = [];
-  if (isStalled(snapshot.activityFollowerLastTipAt, snapshot.now, snapshot.stallMinutes)) {
+  if (isStalled(snapshot.activityFollowerLastAttemptAt, snapshot.now, snapshot.stallMinutes)) {
     reasons.push("activity follower stalled");
   }
   if (isStalled(snapshot.paymentWatcherLastPollAt, snapshot.now, snapshot.stallMinutes)) {
     reasons.push("payment watcher stalled");
   }
-  return reasons;
-}
-
-export function computeLiveness(snapshot: LivenessSnapshot): HealthReport {
-  const reasons = computeLivenessReasons(snapshot);
   return {status: reasons.length === 0 ? "ok" : "degraded", reasons};
 }
 
@@ -104,9 +97,31 @@ export interface PaymentChainCursorInfo {
   cursorBlock: number | null;
 }
 
-export interface ReadinessSnapshot extends LivenessSnapshot {
+export interface ReadinessSnapshot {
+  now: Date;
+  stallMinutes: number;
   mongoConnected: boolean;
+  /**
+   * PROGRESS on the observed ROAX chain tip, not "did an attempt happen" - `src/worker/index.ts`'s
+   * `followOnce` calls `getBlockNumber()` before it even checks whether this clinic has finished
+   * onboarding, and the loop wrapper only advances this timestamp (`recordActivityFollowerTip`,
+   * inside its try) when that observed tip exceeds the highest one seen so far. This is
+   * deliberately the same shape as dogtag-admin's `lastBlockSeenAt`, and for the same reason
+   * stated in that file's own comment: a stalled follower is exactly as likely to show up as a run
+   * of thrown iterations (RPC unreachable) as a run of iterations that complete but never observe
+   * a new block, so an attempt-only timestamp would almost never go stale here - see this file's
+   * module doc comment for why that signal belongs in `LivenessSnapshot` instead, never here AND
+   * there at once.
+   *
+   * This also means a clinic that has not finished the setup wizard yet (`cloneAddress` unset)
+   * reads as fresh, not stalled, for as long as ROAX itself keeps producing blocks - `followOnce`
+   * observes the tip on every iteration regardless of onboarding state, so "not onboarded yet" and
+   * "RPC is dead" are never confused with each other.
+   */
+  activityFollowerLastTipAt: Date | null;
   activityFollowerCursorBlock: number | null;
+  /** Same attempt-based signal `computeLiveness` uses - see `LivenessSnapshot.paymentWatcherLastPollAt`. */
+  paymentWatcherLastPollAt: Date | null;
   paymentWatcherChains: PaymentChainCursorInfo[];
 }
 
@@ -122,17 +137,24 @@ export interface ReadinessReport {
 }
 
 /**
- * The full report served on `/healthz` - everything `computeLiveness` checks, plus Mongo
- * connectivity, plus the diagnostic fields WP4.17 B10 asks this endpoint to report: the activity
- * cursor (block and last poll time) and the payment watcher's per-chain state (last poll, cursor).
- * Every chain currently carries the SAME `lastPollAt` (see `LivenessSnapshot.paymentWatcherLastPollAt`'s
- * doc comment - one shared loop, one cadence, examines every chain each tick) - reported per chain
+ * The full report served on `/healthz` - Mongo connectivity, the activity follower's PROGRESS
+ * signal (deliberately not the attempt-based one `computeLiveness` uses - see this file's module
+ * doc comment), the payment watcher's attempt signal, plus the diagnostic fields WP4.17 B10 asks
+ * this endpoint to report: the activity cursor (block and last poll time) and the payment
+ * watcher's per-chain state (last poll, cursor). Every chain currently carries the SAME
+ * `lastPollAt` (one shared loop, one cadence, examines every chain each tick) - reported per chain
  * anyway, rather than once at the `paymentWatcher` level, so the shape does not need to change if a
  * later revision ever makes the four chains' polling genuinely independent.
  */
 export function computeReadiness(snapshot: ReadinessSnapshot): ReadinessReport {
-  const reasons = computeLivenessReasons(snapshot);
-  if (!snapshot.mongoConnected) reasons.unshift("mongo unreachable");
+  const reasons: string[] = [];
+  if (!snapshot.mongoConnected) reasons.push("mongo unreachable");
+  if (isStalled(snapshot.activityFollowerLastTipAt, snapshot.now, snapshot.stallMinutes)) {
+    reasons.push("activity follower stalled");
+  }
+  if (isStalled(snapshot.paymentWatcherLastPollAt, snapshot.now, snapshot.stallMinutes)) {
+    reasons.push("payment watcher stalled");
+  }
   const paymentWatcherLastPollAtIso = snapshot.paymentWatcherLastPollAt?.toISOString() ?? null;
   return {
     status: reasons.length === 0 ? "ok" : "degraded",

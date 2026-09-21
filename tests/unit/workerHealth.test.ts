@@ -18,16 +18,19 @@ function freshLiveness(): LivenessSnapshot {
   return {
     now: NOW,
     stallMinutes: STALL_MINUTES,
-    activityFollowerLastTipAt: minutesAgo(1),
+    activityFollowerLastAttemptAt: minutesAgo(1),
     paymentWatcherLastPollAt: minutesAgo(1),
   };
 }
 
 function freshReadiness(): ReadinessSnapshot {
   return {
-    ...freshLiveness(),
+    now: NOW,
+    stallMinutes: STALL_MINUTES,
     mongoConnected: true,
+    activityFollowerLastTipAt: minutesAgo(1),
     activityFollowerCursorBlock: 12345,
+    paymentWatcherLastPollAt: minutesAgo(1),
     paymentWatcherChains: [
       {chainKey: "ethereum", cursorBlock: 100},
       {chainKey: "base", cursorBlock: 200},
@@ -64,7 +67,7 @@ describe("computeReadiness (GET /healthz)", () => {
     expect(report.activityFollower).toEqual({cursorBlock: 12345, lastPollAt: minutesAgo(1).toISOString()});
   });
 
-  it("stalled: reports degraded when the activity follower has not observed a fresh tip within the stall window", () => {
+  it("stalled: reports degraded when the activity follower's observed chain tip has not advanced within the stall window", () => {
     const report = computeReadiness({...freshReadiness(), activityFollowerLastTipAt: minutesAgo(30)});
     expect(report.status).toBe("degraded");
     expect(report.reasons).toContain("activity follower stalled");
@@ -102,6 +105,23 @@ describe("computeReadiness (GET /healthz)", () => {
     expect(report.status).toBe("degraded");
     expect(report.reasons).toEqual(["mongo unreachable", "activity follower stalled"]);
   });
+
+  /**
+   * The regression this whole readiness/liveness split exists to prevent (see workerHealth.ts's
+   * module doc comment): a dead ROAX RPC makes `followOnce` throw at its very first call, so the
+   * PROGRESS signal (`activityFollowerLastTipAt`) goes stale while the ATTEMPT signal
+   * (`activityFollowerLastAttemptAt`, computeLiveness below) stays fresh - the loop is very much
+   * alive and retrying on schedule, it just cannot reach ROAX. Readiness must still degrade here
+   * (a real operational fact worth surfacing), but liveness must NOT - see the paired test in the
+   * computeLiveness block below. An earlier draft of this feature read the follower's liveness
+   * from the progress signal too, which would have crash-looped the container on exactly this
+   * scenario, the same trap Mongo is deliberately kept out of liveness for.
+   */
+  it("degrades on a stale observed chain tip even while the follower is still attempting on schedule", () => {
+    const report = computeReadiness({...freshReadiness(), activityFollowerLastTipAt: minutesAgo(30)});
+    expect(report.status).toBe("degraded");
+    expect(report.reasons).toEqual(["activity follower stalled"]);
+  });
 });
 
 describe("computeLiveness (GET /livez)", () => {
@@ -110,7 +130,7 @@ describe("computeLiveness (GET /livez)", () => {
   });
 
   it("stalled: reports degraded when a loop is genuinely stalled", () => {
-    const report = computeLiveness({...freshLiveness(), activityFollowerLastTipAt: minutesAgo(30)});
+    const report = computeLiveness({...freshLiveness(), activityFollowerLastAttemptAt: minutesAgo(30)});
     expect(report.status).toBe("degraded");
     expect(report.reasons).toEqual(["activity follower stalled"]);
   });
@@ -127,6 +147,19 @@ describe("computeLiveness (GET /livez)", () => {
     const readiness = computeReadiness({...freshReadiness(), mongoConnected: false});
     expect(readiness.status).toBe("degraded"); // readiness DOES react to it
     const liveness = computeLiveness(freshLiveness());
+    expect(liveness).toEqual({status: "ok", reasons: []});
+  });
+
+  /**
+   * The companion to the "degrades on a stale observed chain tip" readiness test above, and the
+   * actual regression fix: a dead ROAX RPC (fresh attempts, stale tip) must leave LIVENESS ok even
+   * though it correctly leaves READINESS degraded - liveness restarting the container over an RPC
+   * it does not control would only crash-loop it, never fix the RPC.
+   */
+  it("stays ok on a dead ROAX RPC (fresh attempts, stale tip) even though readiness correctly degrades", () => {
+    const readiness = computeReadiness({...freshReadiness(), activityFollowerLastTipAt: minutesAgo(30)});
+    expect(readiness.status).toBe("degraded");
+    const liveness = computeLiveness(freshLiveness()); // attempts are still fresh - the loop retries on schedule
     expect(liveness).toEqual({status: "ok", reasons: []});
   });
 });

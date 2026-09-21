@@ -14,8 +14,11 @@ import {computeLiveness, computeReadiness, type PaymentChainCursorInfo} from "@/
  */
 
 export interface WorkerPollState {
+  /** Progress signal - feeds readiness only. See `ReadinessSnapshot.activityFollowerLastTipAt`. */
   activityFollowerLastTipAt: Date | null;
   activityFollowerLastTipSeen: bigint | null;
+  /** Attempt signal - feeds liveness only. See `LivenessSnapshot.activityFollowerLastAttemptAt`. */
+  activityFollowerLastAttemptAt: Date | null;
   paymentWatcherLastPollAt: Date | null;
 }
 
@@ -30,23 +33,40 @@ export function createInitialPollState(now: Date = new Date()): WorkerPollState 
   return {
     activityFollowerLastTipAt: now,
     activityFollowerLastTipSeen: null,
+    activityFollowerLastAttemptAt: now,
     paymentWatcherLastPollAt: now,
   };
 }
 
 /**
- * Called once per chain-activity-follower loop iteration with the ROAX block number that
- * iteration observed (`src/worker/index.ts`'s `followOnce` now returns this on every path,
- * including its early "not onboarded yet" and "nothing new" returns - it calls `getBlockNumber()`
- * before checking either). Only advances `lastTipAt` when `observedTip` exceeds the highest tip
- * seen so far, so a follower that is genuinely stuck (repeatedly observing the SAME tip because
- * its RPC is stale/cached, or never called at all because an iteration threw before reaching this)
- * ages into a stall - see `LivenessSnapshot.activityFollowerLastTipAt` in workerHealth.ts.
+ * Called once per chain-activity-follower loop iteration that actually observed a tip (inside
+ * `src/worker/index.ts`'s try block, never on a caught throw) with the ROAX block number that
+ * iteration observed (`followOnce` now returns this on every path, including its early "not
+ * onboarded yet" and "nothing new" returns - it calls `getBlockNumber()` before checking either).
+ * Only advances `lastTipAt` when `observedTip` exceeds the highest tip seen so far, so a follower
+ * that is genuinely stuck (repeatedly observing the SAME tip because its RPC is stale/cached, or
+ * never reaching here at all because an iteration threw first) ages into a readiness stall - see
+ * `ReadinessSnapshot.activityFollowerLastTipAt` in workerHealth.ts. Deliberately feeds readiness
+ * only, never liveness - see `recordActivityFollowerAttempt` below and workerHealth.ts's module
+ * doc comment for why.
  */
 export function recordActivityFollowerTip(state: WorkerPollState, observedTip: bigint, now: Date = new Date()): void {
   if (state.activityFollowerLastTipSeen !== null && observedTip <= state.activityFollowerLastTipSeen) return;
   state.activityFollowerLastTipSeen = observedTip;
   state.activityFollowerLastTipAt = now;
+}
+
+/**
+ * Called once per chain-activity-follower loop iteration, unconditionally, AFTER its try/catch -
+ * whether that iteration observed a tip or threw. This is what liveness reads
+ * (`LivenessSnapshot.activityFollowerLastAttemptAt`), deliberately never the progress signal above:
+ * a dead ROAX RPC makes `followOnce` throw at its very first call, every iteration, forever, and if
+ * liveness reacted to that the way readiness correctly does, a bad `ROAX_RPC_URL` would crash-loop
+ * the container instead of just marking the pod not-ready - see workerHealth.ts's module doc
+ * comment for the full reasoning (the same trap Mongo is kept out of liveness for).
+ */
+export function recordActivityFollowerAttempt(state: WorkerPollState, now: Date = new Date()): void {
+  state.activityFollowerLastAttemptAt = now;
 }
 
 /** Called once per payment-watcher loop iteration, whether that iteration succeeded, found
@@ -137,7 +157,7 @@ export function createHealthServer(
       const report = computeLiveness({
         now: new Date(),
         stallMinutes,
-        activityFollowerLastTipAt: state.activityFollowerLastTipAt,
+        activityFollowerLastAttemptAt: state.activityFollowerLastAttemptAt,
         paymentWatcherLastPollAt: state.paymentWatcherLastPollAt,
       });
       respondJson(res, report.status === "ok" ? 200 : 503, report);

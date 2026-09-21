@@ -41,6 +41,7 @@ import {recoverInterruptedSessions} from "@/lib/mint/bootRecovery";
 import {recoverInterruptedRecords} from "@/lib/records/bootRecovery";
 import {
   createInitialPollState,
+  recordActivityFollowerAttempt,
   recordActivityFollowerTip,
   recordPaymentWatcherPoll,
   startHealthServer,
@@ -207,14 +208,20 @@ async function runActivityFollowerLoop(pollMs: number, pollState: WorkerPollStat
   for (;;) {
     try {
       const observedTip = await followOnce();
-      // Progress-based, deliberately - only iterations that actually observed a tip advance this
-      // (a caught throw below does not). See src/lib/health/workerHealth.ts's
-      // `LivenessSnapshot.activityFollowerLastTipAt` doc comment for why an attempt-based signal
-      // here would almost never go stale.
+      // Progress-based, deliberately - only iterations that actually observed a tip advance this.
+      // Feeds readiness only (src/lib/health/workerHealth.ts's
+      // `ReadinessSnapshot.activityFollowerLastTipAt`) - see recordActivityFollowerAttempt below
+      // for the separate signal that feeds liveness, and why the two must stay separate.
       recordActivityFollowerTip(pollState, observedTip);
     } catch (err) {
       console.error("[worker] follower iteration failed", err);
     }
+    // Attempt-based, deliberately - recorded whether this iteration observed a tip or threw.
+    // Feeds liveness only (`LivenessSnapshot.activityFollowerLastAttemptAt`): a dead ROAX RPC
+    // makes followOnce throw at its very first call, every iteration, forever, and liveness must
+    // never crash-loop the container over an external RPC it cannot fix by restarting - the exact
+    // reasoning workerHealth.ts's module doc comment gives for keeping Mongo out of liveness too.
+    recordActivityFollowerAttempt(pollState);
     await new Promise((resolve) => setTimeout(resolve, pollMs));
   }
 }
