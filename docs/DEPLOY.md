@@ -135,6 +135,7 @@ kubectl create secret generic dogtag-vet-secrets \
 
 `helm/dogtag-vet/values.yaml` documents every value; `ingress.enabled` plus `ingress.host` wires up an Ingress if your cluster has a controller, otherwise reach the web Service directly or with your own Ingress/Gateway resource.
 `helm/dogtag-vet/values-example.yaml` is a complete, documented example (fake addresses and URLs throughout) covering every value in this section, including the worker health port below - copy and edit it for a real install: `helm install dogtag-vet ./helm/dogtag-vet -f helm/dogtag-vet/values-example.yaml --set existingSecret=dogtag-vet-secrets`.
+That example file sets `env.AUTH_TRUST_HOST` directly (to demonstrate the plain-value path) - if you also pass `--set existingSecret=...` pointing at a Secret that carries its own `AUTH_TRUST_HOST` (as the `kubectl create secret` command above now does), delete the `AUTH_TRUST_HOST` line from your copy of the values file first, per the "never both" rule two paragraphs up.
 
 Verify the chart with `helm lint helm/dogtag-vet` and `helm template dogtag-vet ./helm/dogtag-vet` before installing against a real cluster.
 
