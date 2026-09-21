@@ -15,11 +15,13 @@ import {ClientPicker} from "@/components/pickers/ClientPicker";
 import {PetMultiPicker} from "@/components/pickers/PetMultiPicker";
 import {formatUnixSeconds} from "@/lib/format";
 import {appointmentSourceLabel, appointmentStatusLabel, appointmentStatusTone} from "@/lib/appointmentTone";
+import {paymentStatusLabel, paymentStatusTone} from "@/lib/paymentTone";
 import {availableStatusActions} from "@/lib/booking/appointmentStatusGuard";
 import type {AppointmentDoc, AppointmentStatus, TagResolution} from "@/lib/models/Appointment";
 import type {SchedulingMode} from "@/lib/models/Availability";
 import type {ClientDoc} from "@/lib/models/Client";
 import type {PetDoc} from "@/lib/models/Pet";
+import type {PaymentDoc} from "@/lib/models/Payment";
 import type {PractitionerSummary} from "@/lib/booking/queries";
 
 interface PatchBody {
@@ -105,6 +107,33 @@ function NotesSection({appointmentId, notes, onSaved}: {appointmentId: string; n
           {saving ? "Saving..." : "Save notes"}
         </Button>
       </div>
+    </FormSection>
+  );
+}
+
+/**
+ * WP4.18 V6 - every `Payment` linked to this appointment (`Payment.appointmentId`), each a link to
+ * the staff payment detail page (`/payments/:id`, where the QR/rail tabs and Actions already
+ * live - this panel does not duplicate them). The phone's own equivalent is `GET /v1/booking/
+ * appointments/{id}`'s new `invoices` field, which this same list of `Payment` documents backs.
+ */
+function LinkedInvoicesSection({payments}: {payments: PaymentDoc[]}) {
+  if (payments.length === 0) return null;
+  return (
+    <FormSection title="Linked invoices" helperText="Created by staff, paid from the appointment screen on the phone or by scanning the QR.">
+      <ul className="divide-y divide-border rounded-control border border-border">
+        {payments.map((payment) => (
+          <li key={payment.paymentId} className="flex items-center justify-between gap-3 px-3 py-2">
+            <Link href={`/payments/${payment.paymentId}`} className="text-link hover:underline">
+              Invoice {payment.invoiceNumber}
+            </Link>
+            <span className="flex items-center gap-2 text-body text-ink-muted">
+              {payment.total} {payment.currency}
+              <StatusBadge tone={paymentStatusTone[payment.status]} label={paymentStatusLabel[payment.status]} />
+            </span>
+          </li>
+        ))}
+      </ul>
     </FormSection>
   );
 }
@@ -483,6 +512,7 @@ export function AppointmentDetailPanel({
   timeZone,
   schedulingMode,
   practitioners,
+  payments,
 }: {
   appointment: AppointmentDoc;
   client: ClientDoc | null;
@@ -491,6 +521,7 @@ export function AppointmentDetailPanel({
   timeZone: string;
   schedulingMode: SchedulingMode;
   practitioners: PractitionerSummary[];
+  payments: PaymentDoc[];
 }) {
   const router = useRouter();
 
@@ -552,6 +583,7 @@ export function AppointmentDetailPanel({
   return (
     <div className="max-w-2xl space-y-6">
       <KeyValuePanel title="Details" rows={rows} />
+      <LinkedInvoicesSection payments={payments} />
       <StatusActions appointmentId={appointment.appointmentId} status={appointment.status} onSaved={refresh} />
       {schedulingMode === "practitioner" && (
         <PractitionerSection

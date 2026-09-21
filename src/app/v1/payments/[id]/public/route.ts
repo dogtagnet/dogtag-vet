@@ -3,6 +3,7 @@ import {Payment, type PaymentDoc} from "@/lib/models/Payment";
 import {enforceRateLimit, errorBody, jsonWithHeaders} from "@/lib/publicApi";
 import {toPaymentPublicStatusResponse} from "@/lib/payments/wire";
 import {getServerEnv} from "@/lib/env";
+import {roaxChainId} from "@/lib/paymentChainRead";
 
 /**
  * `GET /v1/payments/{id}/public?token=...` - `vet-public-api.yaml`'s `getPaymentPublicStatus`.
@@ -11,10 +12,12 @@ import {getServerEnv} from "@/lib/env";
  * DB lookup, unknown id -> 404, mismatched token -> 401.
  *
  * Every optional response field is genuinely OMITTED (not sent as `null`) when its iff-condition
- * doesn't hold, per the schema's documented conditions: `receiptUrl` iff `receiptAvailable`
- * (itself `status === "paid"`), and `chain`/`txHash` iff a real on-chain match populated
- * `paidWith` - both absent for a `pending` payment AND for a manually-settled `paid` one, which
- * has no `paidWith` at all (see `markPaid.ts`).
+ * doesn't hold - see `toPaymentPublicStatusResponse`'s own doc comment for the full list
+ * (`receiptUrl`, `chain`/`chainId`/`txHash`, `rails`) and exactly which condition gates each one.
+ * WP4.18 V6 added `rails` (the fiat amount, token amount, token symbol, chain id, receiving
+ * address, and EIP-681 request for every open crypto rail) and `chainId` alongside the
+ * pre-existing `chain` string - both purely additive, so a pre-WP4.18 consumer of this endpoint
+ * keeps working unchanged.
  */
 export async function GET(request: Request, {params}: {params: Promise<{id: string}>}) {
   const rateLimit = enforceRateLimit(request, "payment-public-status", 30, 60_000);
@@ -39,5 +42,5 @@ export async function GET(request: Request, {params}: {params: Promise<{id: stri
   }
 
   const baseUrl = getServerEnv().PUBLIC_BASE_URL ?? new URL(request.url).origin;
-  return jsonWithHeaders(toPaymentPublicStatusResponse(payment, baseUrl), {headers: rateLimit.headers});
+  return jsonWithHeaders(toPaymentPublicStatusResponse(payment, baseUrl, roaxChainId()), {headers: rateLimit.headers});
 }

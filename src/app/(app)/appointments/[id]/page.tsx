@@ -6,6 +6,7 @@ import {Appointment, type AppointmentDoc} from "@/lib/models/Appointment";
 import {Client, type ClientDoc} from "@/lib/models/Client";
 import {Pet, type PetDoc} from "@/lib/models/Pet";
 import {Service, type ServiceDoc} from "@/lib/models/Service";
+import {Payment, type PaymentDoc} from "@/lib/models/Payment";
 import {getBookingSettings} from "@/lib/models/Availability";
 import {listBookablePractitioners} from "@/lib/booking/queries";
 import {AppointmentDetailPanel} from "@/app/(app)/appointments/[id]/AppointmentDetailPanel";
@@ -30,12 +31,15 @@ export default async function AppointmentDetailPage({params}: {params: Promise<{
   if (!appointment) notFound();
 
   const petIds = appointment.petIds ?? [];
-  const [client, fetchedPets, service, bookingSettings, practitioners] = await Promise.all([
+  const [client, fetchedPets, service, bookingSettings, practitioners, payments] = await Promise.all([
     appointment.clientId ? Client.findOne({clientId: appointment.clientId}).lean<ClientDoc>().then(toPlain) : Promise.resolve(null),
     petIds.length > 0 ? Pet.find({petId: {$in: petIds}}).lean<PetDoc[]>().then(toPlain) : Promise.resolve([]),
     appointment.serviceId ? Service.findOne({serviceId: appointment.serviceId}).lean<ServiceDoc>().then(toPlain) : Promise.resolve(null),
     getBookingSettings(),
     listBookablePractitioners(),
+    // WP4.18 V6 - every invoice linked to this appointment (`Payment.appointmentId`), newest first,
+    // for the detail panel's "Linked invoices" section.
+    Payment.find({appointmentId: appointment.appointmentId}).sort({createdAt: -1}).lean<PaymentDoc[]>().then(toPlain),
   ]);
   // `Pet.find({$in: ...})` does not preserve petIds' order - restore it so this page's pet order
   // matches the stored petName's order everywhere it's shown (see orderPetsByPetIds's doc comment).
@@ -52,6 +56,7 @@ export default async function AppointmentDetailPage({params}: {params: Promise<{
         timeZone={bookingSettings.timezone}
         schedulingMode={bookingSettings.schedulingMode ?? "clinic"}
         practitioners={practitioners}
+        payments={payments.map((p) => omitMongoId(p))}
       />
     </>
   );
