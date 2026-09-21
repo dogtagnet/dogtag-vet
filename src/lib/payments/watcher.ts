@@ -14,22 +14,42 @@ import {markPaymentPaidFromChain, sweepExpiredPayments} from "@/lib/payments/mar
 import {sendPaymentPaidEmails} from "@/lib/payments/emails";
 import type {PaymentChainKey} from "@/lib/chains";
 
+/** Env var name per payment chain, for the confirmation depth and the per-iteration scan chunk
+ * size - a `Record`, not a single constant, so a future second chain (plans/
+ * wp4.18-roax-payments.md section 7) adds a case here rather than forcing every reader to branch
+ * on chain identity again the way the old four-chain "mainnet vs. testnet class" split once did. */
+const CONFIRMATIONS_ENV: Record<PaymentChainKey, keyof ReturnType<typeof getServerEnv>> = {
+  roax: "CONFIRMATIONS_ROAX",
+};
+const CHUNK_BLOCKS_ENV: Record<PaymentChainKey, keyof ReturnType<typeof getServerEnv>> = {
+  roax: "PAYMENT_ACTIVITY_CHUNK_BLOCKS_ROAX",
+};
+
 function requiredConfirmations(chainKey: PaymentChainKey): number {
-  const env = getServerEnv();
-  return chainKey === "ethereum" || chainKey === "base" ? env.CONFIRMATIONS_MAINNET : env.CONFIRMATIONS_TESTNET;
+  return getServerEnv()[CONFIRMATIONS_ENV[chainKey]] as number;
+}
+
+function chunkBlocksFor(chainKey: PaymentChainKey): number {
+  return getServerEnv()[CHUNK_BLOCKS_ENV[chainKey]] as number;
 }
 
 /**
- * Native-asset (ETH) transfers emit no logs, so - unlike the ERC-20 branch below, which is one
- * `getContractEvents` call regardless of range - detecting them means fetching each block's full
- * transaction list and filtering by `to`. This is materially heavier per block than a log query,
- * which is exactly why it only ever runs for a chain that currently has at least one OPEN
- * native-ETH rail (`nativeAddresses` empty => this function is never called), and only over the
- * small range this scan iteration actually needs. It also only sees top-level transactions - a
- * native transfer made via an internal contract call (a multisig, a relayer contract) is invisible
- * to this scan, a real limitation acceptable at the invoice volumes this template targets.
+ * Native-asset (PLASMA) transfers emit no logs, so - unlike the ERC-20 (RUSD) branch below, which
+ * is one `getContractEvents` call regardless of range - detecting them means fetching each block's
+ * full transaction list and filtering by `to`. This is materially heavier per block than a log
+ * query, which is exactly why it only ever runs for a chain that currently has at least one OPEN
+ * native-PLASMA rail (`nativeAddresses` empty => this function is never called), and only over the
+ * small range this scan iteration actually needs (`PAYMENT_ACTIVITY_CHUNK_BLOCKS_ROAX`, a smaller
+ * default than the ERC-20-only chunk size the old four-chain design used, for exactly this reason).
+ * It also only sees top-level transactions - a native transfer made via an internal contract call
+ * (a multisig, a relayer contract) is invisible to this scan, a real limitation acceptable at the
+ * invoice volumes this template targets.
+ *
+ * Exported (alongside `scanErc20Transfers` below) purely for `tests/unit/watcher.test.ts`, which
+ * drives both against a fake `PublicClient`-shaped object - `scanChain` below is the only
+ * production caller.
  */
-async function scanNativeTransfers(
+export async function scanNativeTransfers(
   client: ReturnType<typeof paymentPublicClient>,
   fromBlock: bigint,
   toBlock: bigint,
@@ -54,7 +74,9 @@ async function scanNativeTransfers(
   return transfers;
 }
 
-async function scanErc20Transfers(
+/** RUSD's Transfer-log scan - the same path USDC/USDT used on the four now-removed chains, unchanged
+ * apart from now running on ROAX. See `scanNativeTransfers` above for why this one is exported too. */
+export async function scanErc20Transfers(
   client: ReturnType<typeof paymentPublicClient>,
   fromBlock: bigint,
   toBlock: bigint,
@@ -89,11 +111,12 @@ async function scanChain(chainKey: PaymentChainKey, rails: OpenRail[], rpcOverri
   const confirmations = requiredConfirmations(chainKey);
 
   const cursorDoc = await PaymentChainCursor.findById(chainKey).lean<{blockNumber: number}>();
-  // First-ever observation of this chain skips straight to the tip rather than scanning history:
-  // a payment chain like Ethereum mainnet cannot afford a genesis scan the way the dedicated,
-  // low-volume ROAX activity follower can - see src/worker/index.ts's doc comment for that
-  // contrast. Any payment created before the watcher first ran on this chain simply relies on
-  // staff being able to manually mark it paid instead.
+  // First-ever observation of this chain skips straight to the tip rather than scanning history -
+  // this cursor is independent of `ClinicSettings.activityCursorBlock` (the identity-chain event
+  // follower's own cursor, which DOES scan from genesis - see src/worker/index.ts's doc comment),
+  // even though both now watch the same underlying ROAX chain: a brand-new payment watcher has no
+  // reason to retroactively rescan invoices that predate it. Any payment created before the
+  // watcher first ran simply relies on staff being able to manually mark it paid instead.
   const fromBlock = cursorDoc ? BigInt(cursorDoc.blockNumber) + 1n : latest;
   const safeTip = latest > BigInt(confirmations) ? latest - BigInt(confirmations) : 0n;
   if (fromBlock > latest) {
@@ -101,8 +124,7 @@ async function scanChain(chainKey: PaymentChainKey, rails: OpenRail[], rpcOverri
     return;
   }
 
-  const env = getServerEnv();
-  const chunk = BigInt(env.PAYMENT_ACTIVITY_CHUNK_BLOCKS);
+  const chunk = BigInt(chunkBlocksFor(chainKey));
   const toBlock = fromBlock + chunk - 1n > latest ? latest : fromBlock + chunk - 1n;
 
   const erc20Rails = rails.filter((r) => r.tokenAddress !== undefined);
