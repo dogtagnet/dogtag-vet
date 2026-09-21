@@ -13,11 +13,14 @@ import {roaxChainId} from "@/lib/paymentChainRead";
  *
  * Every optional response field is genuinely OMITTED (not sent as `null`) when its iff-condition
  * doesn't hold - see `toPaymentPublicStatusResponse`'s own doc comment for the full list
- * (`receiptUrl`, `chain`/`chainId`/`txHash`, `rails`) and exactly which condition gates each one.
- * WP4.18 V6 added `rails` (the fiat amount, token amount, token symbol, chain id, receiving
- * address, and EIP-681 request for every open crypto rail) and `chainId` alongside the
- * pre-existing `chain` string - both purely additive, so a pre-WP4.18 consumer of this endpoint
- * keeps working unchanged.
+ * (`receiptUrl`, `chain`/`chainId`/`txHash`, `rails`, `expiresAt`) and exactly which condition
+ * gates each one. WP4.18 V6 added `rails` (the fiat amount, token amount, token symbol, chain id,
+ * receiving address, and EIP-681 request for every open crypto rail), `chainId` alongside the
+ * pre-existing `chain` string, the always-present `confirmationsRequired`, and `expiresAt` - all
+ * purely additive, so a pre-WP4.18 consumer of this endpoint keeps working unchanged. The
+ * `confirmationsRequired`/`expiresAt` pair was settled after the ios and specs waves' own review
+ * of this exact response shape (cross-repo wire contract ruling - vet's rails[] model won, these
+ * two fields were the accepted additions on top of it).
  */
 export async function GET(request: Request, {params}: {params: Promise<{id: string}>}) {
   const rateLimit = enforceRateLimit(request, "payment-public-status", 30, 60_000);
@@ -42,5 +45,8 @@ export async function GET(request: Request, {params}: {params: Promise<{id: stri
   }
 
   const baseUrl = getServerEnv().PUBLIC_BASE_URL ?? new URL(request.url).origin;
-  return jsonWithHeaders(toPaymentPublicStatusResponse(payment, baseUrl, roaxChainId()), {headers: rateLimit.headers});
+  const confirmationsRequired = getServerEnv().CONFIRMATIONS_ROAX;
+  return jsonWithHeaders(toPaymentPublicStatusResponse(payment, baseUrl, roaxChainId(), confirmationsRequired), {
+    headers: rateLimit.headers,
+  });
 }

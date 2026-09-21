@@ -107,9 +107,10 @@ A single appointment can carry more than one linked invoice, and a single invoic
 The staff appointment detail page shows every linked invoice under "Linked invoices": invoice number, total, and status, each linking to the existing staff payment detail page (`/payments/:id`) rather than duplicating its QR codes or actions.
 
 The public, phone-facing side is `GET /v1/booking/appointments/{id}` (gated by the appointment's own `cancelToken`, same as every other field on that response).
-It carries an additive `invoices` array, one entry per linked `Payment`: `paymentId`, `viewToken`, and `status`.
+It carries an additive `invoices` array, one entry per linked `Payment`: `paymentId`, `viewToken`, `status`, `fiatAmount` (decimal string, the invoice total), `currency` (ISO 4217), and `tokenSymbols` (every open crypto rail's token symbol, `[]` when the invoice carries none).
 `viewToken` is the same bearer token that already gates `GET /v1/payments/{id}/public` - the array is omitted entirely (never an empty array) when the appointment has no linked invoice.
-The phone fetches `GET /v1/payments/{id}/public` for each invoice to get the fiat amount, the open rails (token symbol, exact token amount, chain id, receiving address, and the EIP-681 payment request for each of PLASMA and RUSD, when the invoice is still `pending`), and offers Pay into the device's own native ROAX send flow.
+The phone fetches `GET /v1/payments/{id}/public` for each invoice to get the fiat amount, `confirmationsRequired` (the ROAX confirmation depth, always present), `expiresAt` (ISO 8601, present iff the invoice has a due date), and, while still `pending`, the open rails (`rails[]`: token symbol, exact token amount, chain id, receiving address, and the EIP-681 payment request for each of PLASMA and RUSD) - then offers Pay into the device's own native ROAX send flow.
 Scanning a printed invoice QR (`/pay/{id}?token=...`) keeps working unchanged, independent of the phone-native path.
+See this document's own JSON examples in `plans/orchestration/wp4.18-progress.md`'s "vet V1 to V9" section for the exact, byte-for-byte response shape both waves are diffing against.
 
 The booking confirmation email also carries the invoice's `/pay/{id}?token=...` link when one already exists for the just-created appointment, though in today's flow (invoice creation always happens after booking) that is essentially never yet true at send time - see `src/lib/booking/confirmation.ts`'s own doc comment for why the lookup is still always attempted.

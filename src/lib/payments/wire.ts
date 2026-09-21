@@ -28,6 +28,15 @@ export interface PaymentPublicStatusResponse {
   chainId?: number;
   txHash?: string;
   rails?: PaymentPublicRail[];
+  /** The ROAX confirmation depth (CONFIRMATIONS_ROAX) the watcher requires before treating a
+   * matching transfer as final - always present, regardless of status, so a client can show "N
+   * confirmations required" context even before any transfer has landed. Settled orchestrator
+   * ruling (cross-repo wire contract with the ios/spec waves): additive alongside everything
+   * already here. */
+  confirmationsRequired: number;
+  /** ISO 8601, present iff this invoice has a payment deadline (`Payment.dueAt`) - omitted, never
+   * `null`, when there is none. */
+  expiresAt?: string;
 }
 
 /**
@@ -54,13 +63,23 @@ export interface PaymentPublicStatusResponse {
  *   `undefined`) when its iff-condition doesn't hold - built with conditional spreads throughout,
  *   never a plain object literal with optional keys, so a JSON round trip can never turn an absent
  *   key into an explicit `null`.
+ * - `confirmationsRequired` is ALWAYS present (never conditional) - `confirmations` is a
+ *   parameter for the same reason `chainId` is: this module stays free of `server-only`/env reads.
+ * - `expiresAt` present iff `payment.dueAt` is set - omitted, never `null`, for a payment with no
+ *   deadline.
  */
-export function toPaymentPublicStatusResponse(payment: PaymentDoc, baseUrl: string, chainId: number): PaymentPublicStatusResponse {
+export function toPaymentPublicStatusResponse(
+  payment: PaymentDoc,
+  baseUrl: string,
+  chainId: number,
+  confirmationsRequired: number,
+): PaymentPublicStatusResponse {
   const receiptAvailable = payment.status === "paid";
   return {
     status: payment.status,
     amount: {amount: payment.total, currency: payment.currency},
     receiptAvailable,
+    confirmationsRequired,
     ...(receiptAvailable ? {receiptUrl: `${baseUrl.replace(/\/$/, "")}/r/pay/${payment.receiptToken}`} : {}),
     ...(payment.paidWith
       ? {chain: chainKeyToWireChain(payment.paidWith.chainKey), chainId, txHash: payment.paidWith.txHash}
@@ -78,5 +97,6 @@ export function toPaymentPublicStatusResponse(payment: PaymentDoc, baseUrl: stri
           ),
         }
       : {}),
+    ...(payment.dueAt !== undefined ? {expiresAt: new Date(payment.dueAt * 1000).toISOString()} : {}),
   };
 }

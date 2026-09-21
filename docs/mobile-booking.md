@@ -152,9 +152,10 @@ There is no "Download JSON" / offline-verify button on a booking-sourced row yet
 ## Payment (WP4.18)
 
 Booking itself never creates a payment - see `docs/appointments.md`'s own Payments section for the full appointment/invoice model, which this section only summarizes from the app's own point of view.
-`GET /v1/booking/appointments/{id}` (the same token-gated endpoint the app already polls for status) carries an additive `invoices` array whenever this appointment has at least one linked `Payment`: `paymentId`, `viewToken`, and `status` per invoice.
-The app fetches `GET /v1/payments/{id}/public?token=<viewToken>` for each one to read the fiat amount, the open ROAX rails (PLASMA native, RUSD ERC-20 - `plans/wp4.18-roax-payments.md` section 7), and the status, then offers Pay, which routes the exact rail amount into the same native send review `PayFlowRouter.swift` already uses for a scanned QR.
+`GET /v1/booking/appointments/{id}` (the same token-gated endpoint the app already polls for status) carries an additive `invoices` array whenever this appointment has at least one linked `Payment`: `paymentId`, `viewToken`, `status`, `fiatAmount`, `currency`, and `tokenSymbols` per invoice.
+The app fetches `GET /v1/payments/{id}/public?token=<viewToken>` for each one to read the fiat amount, `confirmationsRequired`, `expiresAt` (when the invoice has a due date), the open ROAX rails while still pending (PLASMA native, RUSD ERC-20 - `plans/wp4.18-roax-payments.md` section 7), and the status, then offers Pay, which routes the exact rail amount into the same native send review `PayFlowRouter.swift` already uses for a scanned QR.
 Sending the payment and confirming it are unchanged from the scan-to-pay path - only how the app learned the invoice exists, and how it shows the fiat/status context around it, are new.
+The exact wire shape (settled as a cross-repo contract with the ios and specs waves) is recorded verbatim in `plans/orchestration/wp4.18-progress.md`'s "vet V1 to V9" section.
 
 ## Public API protection
 

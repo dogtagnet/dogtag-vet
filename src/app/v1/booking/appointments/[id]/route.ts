@@ -10,13 +10,17 @@ import {enforceRateLimit, errorBody, jsonWithHeaders} from "@/lib/publicApi";
  * per-appointment `token` issued at booking time - no staff auth.
  *
  * WP4.18 V6 adds `invoices`: every `Payment` linked to this appointment (`Payment.appointmentId`),
- * reduced to just what the phone needs to fetch `GET /v1/payments/{id}/public` for each one
- * itself - `paymentId` and `viewToken` (the SAME bearer token that already gates that endpoint;
- * exposing it here carries no new trust boundary, since this whole response is already gated by
- * the appointment's own `cancelToken`) - plus `status` so a list of several invoices can render
- * without waiting on N further round trips. Additive: an old client that never reads `invoices`
- * keeps working unchanged. Omitted entirely (never an empty array) when this appointment has no
- * linked invoice, matching this endpoint's existing "absent, not null" convention.
+ * each entry carrying `paymentId` and `viewToken` (the SAME bearer token that already gates
+ * `GET /v1/payments/{id}/public`; exposing it here carries no new trust boundary, since this
+ * whole response is already gated by the appointment's own `cancelToken`) so the phone can fetch
+ * full status for each one itself, plus `status`, `fiatAmount` (decimal string, `Payment.total`),
+ * `currency` (ISO 4217), and `tokenSymbols` (every open crypto rail's token, `[]` when the
+ * invoice carries none) so a list of several invoices can render useful context without waiting
+ * on N further round trips first. `fiatAmount`/`currency`/`tokenSymbols` were added after the ios
+ * and specs waves' own review of this response shape (cross-repo wire contract ruling).
+ * Additive: an old client that never reads `invoices` keeps working unchanged. `invoices` itself
+ * is omitted entirely (never an empty array) when this appointment has no linked invoice, matching
+ * this endpoint's existing "absent, not null" convention.
  */
 export async function GET(request: Request, {params}: {params: Promise<{id: string}>}) {
   const rateLimit = enforceRateLimit(request, "booking-appointment-status", 30, 60_000);
@@ -66,6 +70,9 @@ export async function GET(request: Request, {params}: {params: Promise<{id: stri
               paymentId: p.paymentId,
               viewToken: p.viewToken,
               status: p.status,
+              fiatAmount: p.total,
+              currency: p.currency,
+              tokenSymbols: p.crypto.map((rail) => rail.token),
             })),
           }
         : {}),
