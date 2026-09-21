@@ -117,6 +117,7 @@ async function scanChain(chainKey: PaymentChainKey, rails: OpenRail[], rpcOverri
   // even though both now watch the same underlying ROAX chain: a brand-new payment watcher has no
   // reason to retroactively rescan invoices that predate it. Any payment created before the
   // watcher first ran simply relies on staff being able to manually mark it paid instead.
+  const isFirstObservation = !cursorDoc;
   const fromBlock = cursorDoc ? BigInt(cursorDoc.blockNumber) + 1n : latest;
   const safeTip = latest > BigInt(confirmations) ? latest - BigInt(confirmations) : 0n;
   if (fromBlock > latest) {
@@ -176,8 +177,22 @@ async function scanChain(chainKey: PaymentChainKey, rails: OpenRail[], rpcOverri
   // the confirmation window is deliberately re-scanned on the next tick until it matures, per
   // match.ts's doc comment on why the matcher itself, not cursor placement, is what enforces the
   // confirmation threshold.
+  //
+  // Bug fixed by this wave's own e2e spec (roax-payment.spec.ts), the first thing to ever drive
+  // this function through more than one real tick: `newCursor >= fromBlock - 1n` is the right
+  // no-regression guard on every LATER tick (there, fromBlock IS cursorDoc.blockNumber + 1, so the
+  // check is exactly "don't write a value less than the cursor already on disk") - but on the
+  // FIRST-EVER tick, fromBlock is redefined to `latest` (no real cursor exists yet to regress
+  // from), and `newCursor = safeTip = latest - confirmations` is ALWAYS less than `fromBlock - 1 =
+  // latest - 1` whenever confirmations >= 2 - the shipped default for every confirmations env
+  // value this app has ever had (CONFIRMATIONS_ROAX included). The guard failed on every single
+  // first-ever tick, so the cursor was NEVER durably written, so every subsequent tick ALSO ran in
+  // first-ever mode forever (always rescanning only the CURRENT tip, one block, never returning to
+  // an already-passed block) - a transfer that had already landed by the first tick could never be
+  // rediscovered on any later tick, no matter how many ran. `isFirstObservation` bypasses the
+  // regression guard exactly once, for exactly the case where there is nothing to regress from.
   const newCursor = toBlock < safeTip ? toBlock : safeTip;
-  if (newCursor >= fromBlock - 1n) {
+  if (isFirstObservation || newCursor >= fromBlock - 1n) {
     await PaymentChainCursor.updateOne({_id: chainKey}, {$set: {blockNumber: Number(newCursor)}}, {upsert: true});
   }
 }
