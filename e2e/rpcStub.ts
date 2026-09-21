@@ -111,8 +111,24 @@ const ABIS: Abi[] = [
 
 // Overridable for the same reason playwright.config.ts's E2E_WEB_PORT and mongo-fixture.ts's
 // E2E_MONGO_PORT are - a copy of this checkout synced elsewhere needs to run its own stub without
-// colliding with one already bound to the default port. Default unchanged for every normal run.
-export const RPC_STUB_PORT = Number(process.env.E2E_RPC_STUB_PORT ?? 45_601);
+// colliding with one already bound to the default port.
+//
+// WP4.17B vet-mongod-ports follow-up - found live while proving the ephemeral-mongod port fix:
+// `tests/unit/chainWriteGas.integration.test.ts` calls `startRpcStub()` directly from a plain
+// `vitest run` (not Playwright e2e, which already sets `E2E_RPC_STUB_PORT` per scratchpad copy by
+// convention) with no override, so two concurrent copies of the FULL vitest suite - the exact
+// "grader on an archived copy, builder on the checkout" scenario this whole fix exists for - both
+// fell back to the identical literal 45_601 and collided (`EADDRINUSE`), reproduced directly by
+// this fix's own concurrent-run proof. `RPC_STUB_URL` is a plain synchronous module-level constant
+// consumed by `playwright.config.ts` at config-EVALUATION time (before any server starts), so it
+// cannot become the ask-the-OS-for-a-free-port async design `ephemeralMongod.ts` uses without
+// restructuring that shared e2e contract - out of scope here. The default itself can still avoid
+// being a single global magic number, though: `process.pid` is unique among every process actually
+// running concurrently on this machine, so two real concurrent processes can never derive the same
+// fallback port from it (a same-remainder DIFFERENT pid is the only residual collision, far rarer
+// than every run sharing one fixed literal). Explicit `E2E_RPC_STUB_PORT` overrides (every existing
+// e2e scratchpad convention) are unaffected - this only changes what happens when nobody sets one.
+export const RPC_STUB_PORT = Number(process.env.E2E_RPC_STUB_PORT ?? 45_601 + (process.pid % 1000));
 export const RPC_STUB_URL = `http://127.0.0.1:${RPC_STUB_PORT}`;
 
 // WP4.15 multi-owner (PLANNED) - widened for `delegationLeaves`'s `bytes32[16]` single-array
