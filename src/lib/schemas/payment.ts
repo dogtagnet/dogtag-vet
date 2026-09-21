@@ -35,10 +35,11 @@ export const createPaymentSchema = z.object({
       z.object({
         chainKey: paymentChainKey,
         token: paymentToken,
-        /** A staff-entered rate (fiat per token) to use ONLY if the live CoinGecko quote (and its
-         * 10-minute cache) both fail - the manual-rate fallback UI in wp4-vet.md's payments
-         * section. Omitted rails always attempt the live/cached quote first. */
-        manualRate: decimalString.optional(),
+        /** A staff-entered rate (fiat per token), REQUIRED on every rail - ROAX rails are
+         * manual-rate only (plans/wp4.18-roax-payments.md section 7: "rates are manual only");
+         * there is no live price feed to fall back to, so a rail without one is rejected here,
+         * before any allocation, rather than accepted and only discovered unquoted later. */
+        manualRate: decimalString,
       }),
     )
     .default([]),

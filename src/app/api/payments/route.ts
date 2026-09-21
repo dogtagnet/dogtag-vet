@@ -6,7 +6,6 @@ import {nextSequence} from "@/lib/models/Counter";
 import {createPaymentSchema} from "@/lib/schemas/payment";
 import {badRequest, requireStaffSession} from "@/lib/staffApi";
 import {getServerEnv} from "@/lib/env";
-import {getSpotRate} from "@/lib/payments/priceFeed";
 import {buildCryptoRail} from "@/lib/payments/buildRail";
 import {releaseReservationsForPayment} from "@/lib/payments/reservations";
 import {allocateInvoiceNumber} from "@/lib/payments/invoiceNumber";
@@ -16,9 +15,15 @@ import {randomUUID} from "node:crypto";
 /**
  * `POST /api/payments` - staff-only invoice creation (not part of `vet-public-api.yaml`; that spec
  * only covers the public payment-status/receipt surface). Every fiat amount is recomputed
- * server-side from `lineItems` (`src/lib/payments/money.ts`) rather than trusted from the client,
- * and every accepted crypto rail is quoted server-side too - the client only says WHICH rails to
- * accept and, optionally, a manual rate to use if the live quote is unavailable.
+ * server-side from `lineItems` (`src/lib/payments/money.ts`) rather than trusted from the client.
+ *
+ * ROAX rails are manual-rate only (plans/wp4.18-roax-payments.md section 7: "rates are manual
+ * only") - there is no live price feed to fall back to, so `manualRate` is a REQUIRED field on
+ * every accepted rail (`createPaymentSchema`), checked here before any allocation (invoice number,
+ * dust reservations), same "preflight before allocate" ordering as tag issuance. A missing rate
+ * never reaches this route at all: `createPaymentSchema.safeParse` already rejects it with a plain
+ * `400` (there is no live-quote retry path left to recover from, so the old two-step
+ * `manual_rate_required` 409 dance this route used to need is gone).
  */
 export async function POST(request: Request) {
   const {response} = await requireStaffSession();
@@ -43,12 +48,8 @@ export async function POST(request: Request) {
   const tax = input.tax ? buildTaxLine(subtotal, input.tax.label, input.tax.rate) : undefined;
   const total = tax ? addAmounts(subtotal, tax.amount) : subtotal;
 
-  // Resolve a fiat-per-token rate for every accepted rail before allocating anything durable
-  // (invoice number, dust reservations) - a rail this deployment can't quote or configure a
-  // receiving address for fails the whole request cleanly, same "preflight before allocate"
-  // ordering as tag issuance.
-  const env = getServerEnv();
-  const needsManualRate: {chainKey: string; token: string}[] = [];
+  // Every accepted rail needs a configured receiving address - a rail this deployment has no
+  // address for fails the whole request cleanly, before anything durable is allocated.
   const missingReceivingAddress: string[] = [];
   const resolvedRails: {chainKey: (typeof input.acceptedRails)[number]["chainKey"]; token: (typeof input.acceptedRails)[number]["token"]; rate: string; receivingAddress: string}[] = [];
 
@@ -58,35 +59,12 @@ export async function POST(request: Request) {
       missingReceivingAddress.push(rail.chainKey);
       continue;
     }
-
-    const quote = await getSpotRate(
-      {fetchImpl: fetch, now: Date.now(), apiBase: env.COINGECKO_API_BASE},
-      rail.token,
-      input.currency,
-    );
-    const rate = quote.ok ? quote.rate : (quote.staleRate ?? rail.manualRate);
-    if (!rate) {
-      needsManualRate.push({chainKey: rail.chainKey, token: rail.token});
-      continue;
-    }
-    resolvedRails.push({chainKey: rail.chainKey, token: rail.token, rate, receivingAddress: receiving});
+    resolvedRails.push({chainKey: rail.chainKey, token: rail.token, rate: rail.manualRate, receivingAddress: receiving});
   }
 
   if (missingReceivingAddress.length > 0) {
     return badRequest(
       `No receiving address configured for: ${missingReceivingAddress.join(", ")}. Set one in Settings before accepting this rail.`,
-    );
-  }
-  if (needsManualRate.length > 0) {
-    return NextResponse.json(
-      {
-        error: {
-          code: "manual_rate_required",
-          message: "A live rate could not be fetched for one or more rails. Enter a manual rate to continue.",
-          details: {rails: needsManualRate},
-        },
-      },
-      {status: 409},
     );
   }
 
@@ -114,7 +92,10 @@ export async function POST(request: Request) {
     throw err;
   }
 
-  const invoiceNumber = await allocateInvoiceNumber({nextHandle: () => nextSequence("invoiceNumber")}, env.INVOICE_NUMBER_PREFIX);
+  const invoiceNumber = await allocateInvoiceNumber(
+    {nextHandle: () => nextSequence("invoiceNumber")},
+    getServerEnv().INVOICE_NUMBER_PREFIX,
+  );
 
   const payment = await Payment.create({
     paymentId,
