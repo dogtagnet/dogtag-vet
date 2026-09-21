@@ -15,6 +15,17 @@ Then open http://localhost:3000 to run the setup wizard.
 First run: open the app and complete the setup wizard (connect a wallet, discover this clinic's
 clone, set receiving addresses). See docs/DEPLOY.md for the full walkthrough.
 
+Worker health: the worker exposes GET /healthz (readiness) and GET /livez (liveness) on port
+{{ .Values.worker.healthPort }} - both probes above already use it, so `kubectl get pods` READY
+column reflects it directly:
+  kubectl port-forward -n {{ .Release.Namespace }} deploy/{{ include "dogtag-vet.fullname" . }}-worker {{ .Values.worker.healthPort }}:{{ .Values.worker.healthPort }}
+  curl localhost:{{ .Values.worker.healthPort }}/healthz
+
+Sitting behind a reverse proxy or tunnel (Cloudflare Tunnel, nginx - the workstation runbook's
+path)? Set AUTH_TRUST_HOST=1 (alongside AUTH_SECRET in your existingSecret/secretEnv, or as a
+plain --set env.AUTH_TRUST_HOST=1 - see values.yaml's own comment on why not both) or Auth.js
+refuses to serve /api/auth/* at all.
+
 Check both workloads came up clean:
   kubectl get pods -l app.kubernetes.io/instance={{ .Release.Name }}
   kubectl logs -l app.kubernetes.io/instance={{ .Release.Name }},app.kubernetes.io/component=worker

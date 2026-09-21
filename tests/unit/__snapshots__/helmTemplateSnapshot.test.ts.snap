@@ -1,0 +1,240 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`helm template (dogtag-vet chart, documented example values) > renders the documented example values file the same way 1`] = `
+"---
+# Source: dogtag-vet/templates/serviceaccount.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: dogtag-vet
+  labels:
+    app.kubernetes.io/name: dogtag-vet
+    app.kubernetes.io/instance: dogtag-vet
+    app.kubernetes.io/managed-by: Helm
+    helm.sh/chart: dogtag-vet-0.1.0
+
+---
+# Source: dogtag-vet/templates/secret.yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: dogtag-vet-secrets
+  labels:
+    app.kubernetes.io/name: dogtag-vet
+    app.kubernetes.io/instance: dogtag-vet
+    app.kubernetes.io/managed-by: Helm
+    helm.sh/chart: dogtag-vet-0.1.0
+type: Opaque
+stringData:
+  AUTH_SECRET: "REPLACE-WITH-openssl-rand--base64-32"
+  EMAIL_FROM: "no-reply@example-clinic.test"
+  EMAIL_SERVER: "smtp://REPLACE_USER:REPLACE_PASSWORD@smtp.example-clinic.test:587"
+
+---
+# Source: dogtag-vet/templates/web-service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: dogtag-vet-web
+  labels:
+    app.kubernetes.io/name: dogtag-vet
+    app.kubernetes.io/instance: dogtag-vet
+    app.kubernetes.io/managed-by: Helm
+    helm.sh/chart: dogtag-vet-0.1.0
+    app.kubernetes.io/component: web
+spec:
+  type: ClusterIP
+  ports:
+    - port: 80
+      targetPort: 3000
+      protocol: TCP
+      name: http
+  selector:
+    app.kubernetes.io/name: dogtag-vet
+    app.kubernetes.io/instance: dogtag-vet
+    app.kubernetes.io/component: web
+
+---
+# Source: dogtag-vet/templates/web-deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dogtag-vet-web
+  labels:
+    app.kubernetes.io/name: dogtag-vet
+    app.kubernetes.io/instance: dogtag-vet
+    app.kubernetes.io/managed-by: Helm
+    helm.sh/chart: dogtag-vet-0.1.0
+    app.kubernetes.io/component: web
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: dogtag-vet
+      app.kubernetes.io/instance: dogtag-vet
+      app.kubernetes.io/component: web
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: dogtag-vet
+        app.kubernetes.io/instance: dogtag-vet
+        app.kubernetes.io/component: web
+    spec:
+      serviceAccountName: dogtag-vet
+      containers:
+        - name: web
+          image: "your-registry/dogtag-vet-web:v1"
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 3000
+          env:
+            - name: AUTH_TRUST_HOST
+              value: "1"
+            - name: DELEGATION_REGISTRY_ADDRESS
+              value: "0x5555555555555555555555555555555555555555"
+            - name: DOGTAG_SBT_ADDRESS
+              value: "0x3333333333333333333333333333333333333333"
+            - name: ENTITY_REGISTRY_ADDRESS
+              value: "0x2222222222222222222222222222222222222222"
+            - name: MONGODB_URI
+              value: "mongodb://mongo:27017/dogtag-vet"
+            - name: NODE_ENV
+              value: "production"
+            - name: PUBLIC_BASE_URL
+              value: "https://vet.example-clinic.test"
+            - name: ROAX_CHAIN_ID
+              value: "135"
+            - name: ROAX_EXPLORER_URL
+              value: "https://explorer.roax.net"
+            - name: ROAX_RPC_URL
+              value: "https://devrpc.roax.net"
+            - name: VERIFICATION_REGISTRY_ADDRESS
+              value: "0x4444444444444444444444444444444444444444"
+            - name: VET_ISSUER_FACTORY_ADDRESS
+              value: "0x1111111111111111111111111111111111111111"
+          envFrom:
+            - secretRef:
+                name: dogtag-vet-secrets
+          # The web app has no dependency-heavy startup work (no migrations, no schema sync) - it
+          # is ready as soon as Next.js accepts connections, so the readiness probe is a plain TCP-
+          # equivalent HTTP check against a route the auth middleware always treats as public
+          # (\`src/auth.config.ts\`), never one behind sign-in.
+          readinessProbe:
+            httpGet:
+              path: /sign-in
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /sign-in
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          resources:
+            limits:
+              memory: 512Mi
+            requests:
+              cpu: 100m
+              memory: 256Mi
+
+---
+# Source: dogtag-vet/templates/worker-deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dogtag-vet-worker
+  labels:
+    app.kubernetes.io/name: dogtag-vet
+    app.kubernetes.io/instance: dogtag-vet
+    app.kubernetes.io/managed-by: Helm
+    helm.sh/chart: dogtag-vet-0.1.0
+    app.kubernetes.io/component: worker
+spec:
+  # Exactly one replica, always - the chain-activity follower and payment watcher each keep a
+  # single cursor in Mongo (ClinicSettings.activityCursorBlock, PaymentChainCursor); two workers
+  # racing the same cursor would double-process blocks, not add throughput. Scale this clinic's
+  # load by tuning ACTIVITY_POLL_MS / PAYMENT_WATCHER_POLL_MS, never by replica count.
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: dogtag-vet
+      app.kubernetes.io/instance: dogtag-vet
+      app.kubernetes.io/component: worker
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: dogtag-vet
+        app.kubernetes.io/instance: dogtag-vet
+        app.kubernetes.io/component: worker
+    spec:
+      serviceAccountName: dogtag-vet
+      containers:
+        - name: worker
+          image: "your-registry/dogtag-vet-worker:v1"
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: healthz
+              containerPort: 8091
+          env:
+            # WP4.17 B10 - sourced from .Values.worker, never .Values.env, so containerPort/the
+            # probes below and the env var this process actually reads can never drift apart.
+            - name: WORKER_HEALTH_PORT
+              value: "8091"
+            - name: WORKER_STALL_MINUTES
+              value: "10"
+            - name: AUTH_TRUST_HOST
+              value: "1"
+            - name: DELEGATION_REGISTRY_ADDRESS
+              value: "0x5555555555555555555555555555555555555555"
+            - name: DOGTAG_SBT_ADDRESS
+              value: "0x3333333333333333333333333333333333333333"
+            - name: ENTITY_REGISTRY_ADDRESS
+              value: "0x2222222222222222222222222222222222222222"
+            - name: MONGODB_URI
+              value: "mongodb://mongo:27017/dogtag-vet"
+            - name: NODE_ENV
+              value: "production"
+            - name: PUBLIC_BASE_URL
+              value: "https://vet.example-clinic.test"
+            - name: ROAX_CHAIN_ID
+              value: "135"
+            - name: ROAX_EXPLORER_URL
+              value: "https://explorer.roax.net"
+            - name: ROAX_RPC_URL
+              value: "https://devrpc.roax.net"
+            - name: VERIFICATION_REGISTRY_ADDRESS
+              value: "0x4444444444444444444444444444444444444444"
+            - name: VET_ISSUER_FACTORY_ADDRESS
+              value: "0x1111111111111111111111111111111111111111"
+          envFrom:
+            - secretRef:
+                name: dogtag-vet-secrets
+          # WP4.17 B10 - GET /healthz (readiness: Mongo connectivity plus both loops' recent
+          # progress) and GET /livez (liveness: both loops' recent progress only, never Mongo - a
+          # dependency outage marks this worker not-ready without ever restarting the container
+          # over it). See src/lib/health/workerHealth.ts for the full readiness/liveness split.
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: healthz
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /livez
+              port: healthz
+            initialDelaySeconds: 15
+            periodSeconds: 20
+            failureThreshold: 6
+          resources:
+            limits:
+              memory: 384Mi
+            requests:
+              cpu: 50m
+              memory: 192Mi
+"
+`;

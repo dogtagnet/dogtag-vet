@@ -121,18 +121,28 @@ helm install dogtag-vet ./helm/dogtag-vet \
 Build and push the two images first (`docker build -f Dockerfile -t your-registry/dogtag-vet-web:v1 .` and the same with `Dockerfile.worker`) - there is no public image for this app.
 The web image needs no per-environment build (see "Protocol addresses and RPC config are runtime values" above): the SAME `v1` tag can be promoted from dev to staging to production, each supplying its own `env.VET_ISSUER_FACTORY_ADDRESS`/`env.ROAX_RPC_URL`/etc. (or a Secret key) at install time, exactly like `env.PUBLIC_BASE_URL` and `env.MONGODB_URI` in the example below - never a rebuild with different `--build-arg` values.
 
-Secrets (`AUTH_SECRET`, SMTP credentials, the Google OAuth client secret) do not belong in `values.yaml`, committed or otherwise.
+Sitting behind a reverse proxy or tunnel (Cloudflare Tunnel, nginx - every path this guide recommends) - which the "AUTH_TRUST_HOST" step of the Quickstart above already calls out as required for Compose - also applies here: add `--from-literal=AUTH_TRUST_HOST=1` to the `kubectl create secret` command below (never `--set env.AUTH_TRUST_HOST=1` in the same install alongside `existingSecret` - see `helm/dogtag-vet/values.yaml`'s own comment on why a container's plain `env:` entries shadow an `envFrom:` Secret for the same name), or Auth.js refuses to serve `/api/auth/*` at all.
+
+Secrets (`AUTH_SECRET`, `AUTH_TRUST_HOST`, SMTP credentials, the Google OAuth client secret) do not belong in `values.yaml`, committed or otherwise.
 Create the Secret yourself and reference it:
 
 ```
 kubectl create secret generic dogtag-vet-secrets \
   --from-literal=AUTH_SECRET=$(openssl rand -base64 32) \
+  --from-literal=AUTH_TRUST_HOST=1 \
   --from-literal=EMAIL_SERVER=smtp://user:pass@smtp.example.com:587
 ```
 
 `helm/dogtag-vet/values.yaml` documents every value; `ingress.enabled` plus `ingress.host` wires up an Ingress if your cluster has a controller, otherwise reach the web Service directly or with your own Ingress/Gateway resource.
+`helm/dogtag-vet/values-example.yaml` is a complete, documented example (fake addresses and URLs throughout) covering every value in this section, including the worker health port below - copy and edit it for a real install: `helm install dogtag-vet ./helm/dogtag-vet -f helm/dogtag-vet/values-example.yaml --set existingSecret=dogtag-vet-secrets`.
 
 Verify the chart with `helm lint helm/dogtag-vet` and `helm template dogtag-vet ./helm/dogtag-vet` before installing against a real cluster.
+
+### Worker health (`/healthz`, `/livez`)
+
+The worker container serves `GET /healthz` (readiness - Mongo connectivity plus both background loops' recent progress, with the activity-follower cursor and per-chain payment watcher state) and `GET /livez` (liveness - both loops' recent progress only, never Mongo, so a database outage marks the worker not-ready instead of getting its container restarted) on `WORKER_HEALTH_PORT` (default 8091, `.env.example`).
+The Helm chart's worker Deployment already wires both Kubernetes probes to these routes (`helm/dogtag-vet/values.yaml`'s `worker.healthPort`/`worker.stallMinutes`); Compose publishes the same port, so `curl localhost:8091/healthz` works against either.
+A response reports `"status": "degraded"` (HTTP 503) once either loop has gone `WORKER_STALL_MINUTES` (default 10) without progress, or Mongo is unreachable - see `src/lib/health/workerHealth.ts` for exactly what "progress" means for each loop.
 
 ## Managed MongoDB
 

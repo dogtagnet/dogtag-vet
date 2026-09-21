@@ -54,6 +54,17 @@ worker:
 # Non-secret environment variables, shared by both the web and worker containers - anything from
 # .env.example that is not a credential. PUBLIC_BASE_URL and MONGODB_URI are the two values every
 # deployment MUST set; everything else has the same defaults `.env.example` documents.
+#
+# AUTH_TRUST_HOST is deliberately NOT listed here even though it is not a secret. This map is
+# rendered as a literal `env:` list on both containers (see web-deployment.yaml/
+# worker-deployment.yaml), and in Kubernetes a container's `env:` entries take precedence over
+# `envFrom:` (existingSecret/secretEnv below) for the SAME name - so a blank `AUTH_TRUST_HOST: ""`
+# added here would silently shadow a real value supplied through the secret, and Auth.js refuses
+# to serve /api/auth/* at all once behind a reverse proxy or tunnel without it. Set it either way,
+# just once: alongside AUTH_SECRET in your existingSecret/secretEnv (as WORKSTATION-RUNBOOK.md's
+# `dogtag-vet-secrets` does), or as a plain `--set env.AUTH_TRUST_HOST=1` (see
+# values-example.yaml, which demonstrates the plain-value path for the chart's own snapshot test)
+# - never both.
 env:
   PUBLIC_BASE_URL: ""
   MONGODB_URI: ""
