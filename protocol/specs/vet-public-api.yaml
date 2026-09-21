@@ -1103,6 +1103,16 @@ paths:
       operationId: getPaymentPublicStatus
       tags: [payments]
       summary: Public payment status and receipt availability
+      description: |-
+        WP4.18: ROAX (chain id `135`) is the only payment chain, with two assets - the native
+        coin `PLASMA` (18 decimals) and the ERC-20 dev stablecoin `RUSD` (6 decimals; its
+        address is set per clinic in the vet's own configuration, not this spec - see
+        `docs/DEV-TOKENS.md`). Every rail is quoted at a manually-entered fiat rate; there is no
+        automatic price feed for either asset (`plans/wp4.18-roax-payments.md` section 6). A
+        pending payment MAY offer more than one open rail at once - see `rails` - and the client
+        presents every entry and lets the payer pick exactly one to pay with; paying any one
+        rail settles the whole payment. `status`/`expiresAt` describe whether it has settled yet;
+        `confirmationsRequired` is always present, regardless of `status`.
       parameters:
         - name: id
           in: path
@@ -1111,7 +1121,7 @@ paths:
         - name: token
           in: query
           required: true
-          description: The one-time payment-view token stamped on the invoice's QR.
+          description: "The payment-view token stamped on the invoice's shareable link (`Payment.viewToken`); NOT one-time-consumed - the same link keeps working for repeated status polling up to and past payment."
           schema: {type: string}
       responses:
         "200":
@@ -2401,14 +2411,69 @@ components:
         cancellable:
           type: boolean
           description: Whether `POST .../cancel` will currently succeed (false once past the vet's cancellation cutoff, or already cancelled).
+        invoices:
+          type: array
+          description: |-
+            WP4.18: every `Payment` linked to this appointment through `Payment.appointmentId`,
+            most-recently-created first. Optional and back-compatible (per this spec's schema-
+            change rule): present once a deployment's vet exposes linked invoices on this
+            endpoint (V6); absent on a deployment that has not upgraded yet. A client MUST treat
+            an absent `invoices` the same as an empty array - never as an error. Each entry is a
+            summary only, carrying its own `viewToken` - the SAME bearer token that gates `GET
+            /v1/payments/{id}/public`, passed there as that endpoint's `token` query parameter -
+            so the phone can fetch that endpoint's full pay-and-poll detail per invoice (the
+            per-rail `tokenAmount`, `chainId`, `receivingAddress`, `eip681`, plus the always-
+            present `confirmationsRequired` and the optional `expiresAt`) without any further
+            credential exchange.
+          items: {$ref: '#/components/schemas/AppointmentInvoiceSummary'}
+
+    AppointmentInvoiceSummary:
+      type: object
+      description: "WP4.18 - one invoice as listed on its linked appointment; see `AppointmentStatusResponse.invoices`."
+      required: [paymentId, viewToken, status, fiatAmount, currency, tokenSymbols]
+      properties:
+        paymentId:
+          type: string
+          description: "The `id` `GET /v1/payments/{id}/public` takes."
+        viewToken:
+          type: string
+          description: "The bearer token that endpoint requires as its `token` query parameter - the SAME `Payment.viewToken` printed on the invoice's own shareable link; exposing it here carries no new trust boundary, since this whole response is already gated by the appointment's own token. NOT one-time-consumed."
+        status:
+          $ref: '#/components/schemas/PaymentPublicStatus'
+        fiatAmount:
+          type: string
+          description: "Canonical decimal string, minor-unit-free (e.g. `\"45.00\"`) - same convention as `Money.amount`, flattened here for a list row rather than nested."
+        currency:
+          type: string
+          description: ISO 4217 currency code.
+        tokenSymbols:
+          type: array
+          items: {type: string}
+          description: "WP4.18: one entry per open rail's `PaymentPublicRail.tokenSymbol` on the full payment resource, e.g. `[\"PLASMA\"]` or `[\"PLASMA\", \"RUSD\"]` when both rails are open at once; `[]` once the invoice carries no open rail (settled, cancelled, or expired)."
+
+    PaymentPublicStatus:
+      type: string
+      enum: [pending, paid, cancelled, expired]
+      description: |-
+        The vet's own `Payment.status` enum values, verbatim (`PaymentStatus` in
+        `dogtag-vet/src/lib/models/Payment.ts`) - shared between this schema and
+        `AppointmentInvoiceSummary.status` below. `pending` means at least one crypto rail is
+        still open for payment (see `PaymentPublicStatusResponse.rails`); the phone polls until
+        it reads `paid` (a matching on-chain transfer observed with at least
+        `confirmationsRequired` confirmations, or a staff member's manual mark-paid) or `expired`
+        (the vet's payment deadline - `Payment.dueAt`, surfaced as `expiresAt` - passed first
+        with no match). `cancelled` is a distinct terminal state for an invoice a staff member
+        voided before either outcome. Reconciled against the vet's own implementation: an
+        earlier draft of this spec added a planned `confirmed` value as a rename of `paid` that
+        the vet never built; this release documents the vet's four actual status values instead
+        of a rename that never shipped.
 
     PaymentPublicStatusResponse:
       type: object
-      required: [status, receiptAvailable]
+      required: [status, amount, receiptAvailable, confirmationsRequired]
       properties:
         status:
-          type: string
-          enum: [pending, paid, cancelled, expired]
+          $ref: '#/components/schemas/PaymentPublicStatus'
         amount: {$ref: '#/components/schemas/Money'}
         receiptAvailable: {type: boolean}
         receiptUrl:
@@ -2416,8 +2481,87 @@ components:
           description: "Present iff `receiptAvailable`; the `GET /r/pay/{receiptToken}` URL."
         chain:
           type: string
-          description: "Chain the matching transfer was observed on, e.g. `base-sepolia`. Absent while `status == pending`."
-        txHash: {type: string}
+          description: |-
+            Chain the CONFIRMED transfer was observed on, e.g. `roax` (a pre-WP4.18 deployment
+            could instead send a name like `base-sepolia`) - present under the exact same
+            condition as `chainId` and `txHash` below: a real on-chain match settled this
+            payment. Absent for a `pending` payment AND for a manually-settled `paid` one (no
+            on-chain match at all). Never present while `status == pending`; see `rails` for
+            what is left to pay before then. The pre-WP4.18 wire-chain-name spelling, kept
+            alongside `chainId` per the spec's wire-contract rule. Every payment this release
+            creates is on ROAX, so this reads `roax` once present.
+        chainId:
+          type: integer
+          description: |-
+            The numeric chain id of the CONFIRMED transfer above - `135` for ROAX, the only
+            payment chain this release supports. Present under the same condition as `chain`/
+            `txHash` (a real on-chain match settled this payment) - for the chain id of an
+            UNPAID rail still open to pay, see `rails[].chainId` instead; the two are never both
+            present at once, since `rails` itself is only present while `status == pending`.
+        txHash:
+          type: string
+          description: "Present under the same condition as `chain`/`chainId` above."
+        rails:
+          type: array
+          description: |-
+            The open crypto rails this payment can still be settled with - present iff
+            `status == "pending"` AND at least one rail is still open; omitted (never an empty
+            array) once there is nothing left to pay (settled, cancelled, or expired). ROAX-only
+            still means one payment MAY offer more than one rail at once - e.g. both a PLASMA
+            and a RUSD rail for the same invoice - because the fiat amount and status are this
+            RESPONSE's own top-level `amount`/`status`, shared across every rail, while the rest
+            is per rail (`Payment.crypto`, an array). The client presents every entry and the
+            payer picks exactly one to pay with; paying any one rail settles the whole payment.
+          items: {$ref: '#/components/schemas/PaymentPublicRail'}
+        confirmationsRequired:
+          type: integer
+          description: "Blocks mined after the block containing a matching transfer before the vet treats it settled (`paid`) - `CONFIRMATIONS_ROAX`, 2 by default on ROAX. Always present, regardless of `status`, so a client can show \"N confirmations required\" context even before any transfer has landed; protects against a chain reorganisation - see `plans/wp4.18-roax-payments.md` section 6."
+        expiresAt:
+          type: string
+          format: date-time
+          description: "Present iff this payment has a deadline (`Payment.dueAt`); absent, never `null`, when it has not set one. `status` itself reads `expired` once this passes without a settled match - a client does not need to compare timestamps to know when to stop polling."
+
+    PaymentPublicRail:
+      type: object
+      description: |-
+        One open crypto rail as the phone (or any other public consumer) needs to pay it - a
+        `PaymentPublicStatusResponse.rails` entry, following `PaymentPublicRail` in
+        `dogtag-vet/src/lib/payments/wire.ts`, the implementation of record this schema mirrors.
+      required: [tokenSymbol, tokenAmount, chainId, receivingAddress, eip681]
+      properties:
+        tokenSymbol:
+          type: string
+          description: |-
+            The asset this rail expects - `PLASMA` (ROAX's native coin, 18 decimals) or `RUSD`
+            (the ROAX-testnet ERC-20 dev stablecoin, 6 decimals; see `docs/DEV-TOKENS.md`) as of
+            this release. Free-form like `chain` above, not a closed enum, so a future asset is a
+            registry addition here, never a spec rewrite.
+        tokenAmount:
+          type: string
+          description: |-
+            The exact expected crypto amount for THIS rail, as a canonical decimal string in the
+            token's display units (not base units) - e.g. `"12.500000"` for RUSD (6 decimals) or
+            `"0.05"` for PLASMA (18 decimals), same decimal-string convention as `Money.amount`.
+            Derived from the vet's manually-entered fiat-per-token rate for this rail - ROAX has
+            no automatic price feed (`plans/wp4.18-roax-payments.md` section 6); once an invoice
+            is raised this quoted amount does not move even if the rate changes later.
+        chainId:
+          type: integer
+          description: "The numeric chain id THIS rail is on - `135` for ROAX, the only payment chain this release supports; per `specs/qr-formats.md`'s Payment QR parsing rules, a wallet MUST validate a scanned `eip681` URI's own `<chainId>` against this value before sending."
+        receivingAddress:
+          type: string
+          description: "The vet's receiving address for this rail, `0x`-prefixed 40 hex - the same address that appears inside `eip681` (as the URI authority for a native transfer, or the `address=` query parameter for an ERC-20 transfer)."
+        eip681:
+          type: string
+          description: |-
+            The exact EIP-681 payment request string for this rail, per `specs/qr-formats.md`'s
+            "Payment QR" grammar - `ethereum:<receivingAddress>@<chainId>?value=<wei>` for
+            PLASMA (native), or `ethereum:<RUSD contract address>@<chainId>/transfer?address=
+            <receivingAddress>&uint256=<amount>` for RUSD (ERC-20; note the URI authority is the
+            TOKEN contract, not `receivingAddress`, for this shape only - `<wei>`/`<amount>` are
+            base units, not `tokenAmount`'s display units). A wallet driven entirely by this API
+            (the phone's appointment-linked Pay action) builds its send review from this string
+            directly; a wallet that already scanned the invoice's printed QR does not need it.
 
     EntityCard:
       type: object

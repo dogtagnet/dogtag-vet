@@ -329,7 +329,7 @@ ethereum:<token>@<chainId>/transfer?address=<to>&uint256=<amount>
 ### Parsing rules
 
 1. The scheme MUST be `ethereum`, not `https`; a general-purpose QR scanner without wallet integration will typically offer to open this in whatever wallet app is registered for the scheme, which is the intended fallback.
-2. `<chainId>` MUST be validated against the set of chains the vet platform actually watches for that payment (mainnet or the matching Sepolia testnet, per the payment's own `chain` field from `specs/vet-public-api.yaml`'s `PaymentPublicStatusResponse`) before a wallet is asked to send funds; a chain id mismatch between the QR and the invoice record is a hard reject, never a warning.
+2. `<chainId>` MUST be validated against the chain the vet platform actually watches for that payment - `135` for ROAX, the only payment chain this release supports - per the matching rail's own `chainId` field, `specs/vet-public-api.yaml`'s `PaymentPublicStatusResponse.rails[].chainId` (`PaymentPublicRail.chainId`), the authoritative numeric value for an unpaid rail's QR. `PaymentPublicStatusResponse.chainId`/`chain` at the top level instead describe a CONFIRMED transfer once one has already settled the payment, not the rail being scanned, and are absent while there is still something to pay. A chain id mismatch between the QR and the matching rail is a hard reject, never a warning.
 3. The amount parameter (`value` or `uint256`) MUST be parsed as an unsigned decimal integer string, never as a native floating-point number, for the same bit-exactness reason every other protocol amount is string-encoded.
 
 ## Receipt URL

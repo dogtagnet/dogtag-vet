@@ -484,5 +484,23 @@
     "event": "Upgraded",
     "signature": "Upgraded(address)",
     "topic0": "0xbc7cd75a20ee27fd9adebab32041f755214dbc6bffa90cc0225b39da2e5c2d3b"
+  },
+  {
+    "contract": "RUSD",
+    "event": "Approval",
+    "signature": "Approval(address,address,uint256)",
+    "topic0": "0x8c5be1e5ebec7d5bd14f71427d1e84f3dd0314c0f7b2291e5b200ac8c7c3b925"
+  },
+  {
+    "contract": "RUSD",
+    "event": "OwnershipTransferred",
+    "signature": "OwnershipTransferred(address,address)",
+    "topic0": "0x8be0079c531659141344cd1fd0a4f28419497f9722a3daafe3b4186f6b6457e0"
+  },
+  {
+    "contract": "RUSD",
+    "event": "Transfer",
+    "signature": "Transfer(address,address,uint256)",
+    "topic0": "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
   }
 ]
