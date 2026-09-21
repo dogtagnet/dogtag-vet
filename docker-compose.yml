@@ -29,10 +29,24 @@ services:
     restart: unless-stopped
     depends_on:
       - mongo
+    # WORKER_HEALTH_PORT default (WP4.17 B10, see .env.example) - published so `curl
+    # localhost:8091/healthz` works from the host without any extra config. Change both sides of
+    # this mapping together if you override WORKER_HEALTH_PORT.
+    ports:
+      - "8091:8091"
     env_file:
       - .env
     environment:
       MONGODB_URI: mongodb://mongo:27017/dogtag-vet
+    # node:22-slim has no curl/wget; Node's own global fetch (Node 22+) needs no extra tooling in
+    # the image. Feeds `docker compose ps`'s health column and this service's own restart-on-
+    # unhealthy behavior (paired with `restart: unless-stopped` above).
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:8091/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
 
 volumes:
   mongo-data:

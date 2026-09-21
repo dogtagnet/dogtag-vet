@@ -113,6 +113,16 @@ const envSchema = z.object({
   ACTIVITY_POLL_MS: z.coerce.number().default(15_000),
   ACTIVITY_CHUNK_BLOCKS: z.coerce.number().default(2000),
 
+  // Worker health server (WP4.17 B10 - src/worker/health.ts). WORKER_HEALTH_PORT default 8091
+  // deliberately differs from dogtag-admin's own worker health port default (8090) so both apps'
+  // worker containers can sit on the same Docker/Kubernetes network without a collision.
+  // WORKER_STALL_MINUTES mirrors dogtag-admin's INDEXER_STALL_MINUTES (default 10) - how long
+  // either loop may go without observed progress (see workerHealth.ts's LivenessSnapshot doc
+  // comment for what "progress" means for each of the two loops) before /healthz and /livez
+  // report "degraded".
+  WORKER_HEALTH_PORT: z.coerce.number().default(8091),
+  WORKER_STALL_MINUTES: z.coerce.number().default(10),
+
   // Worker boot recovery (src/worker/index.ts's recoverInterruptedSessions): how long a
   // MintSession may sit `issuing` before it is considered stale enough to act on. wp4-vet.md
   // itself calls this recovery step "stale" - a seconds-old in-flight `issueTag` transaction from

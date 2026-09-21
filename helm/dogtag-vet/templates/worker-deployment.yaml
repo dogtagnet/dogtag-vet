@@ -36,7 +36,16 @@ spec:
         - name: worker
           image: "{{ .Values.image.worker.repository }}:{{ .Values.image.worker.tag }}"
           imagePullPolicy: {{ .Values.image.worker.pullPolicy }}
+          ports:
+            - name: healthz
+              containerPort: {{ .Values.worker.healthPort }}
           env:
+            # WP4.17 B10 - sourced from .Values.worker, never .Values.env, so containerPort/the
+            # probes below and the env var this process actually reads can never drift apart.
+            - name: WORKER_HEALTH_PORT
+              value: {{ .Values.worker.healthPort | quote }}
+            - name: WORKER_STALL_MINUTES
+              value: {{ .Values.worker.stallMinutes | quote }}
             {{- range $key, $value := .Values.env }}
             - name: {{ $key }}
               value: {{ $value | quote }}
@@ -46,6 +55,23 @@ spec:
             - secretRef:
                 name: {{ include "dogtag-vet.secretName" . }}
           {{- end }}
+          # WP4.17 B10 - GET /healthz (readiness: Mongo connectivity plus both loops' recent
+          # progress) and GET /livez (liveness: both loops' recent progress only, never Mongo - a
+          # dependency outage marks this worker not-ready without ever restarting the container
+          # over it). See src/lib/health/workerHealth.ts for the full readiness/liveness split.
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: healthz
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /livez
+              port: healthz
+            initialDelaySeconds: 15
+            periodSeconds: 20
+            failureThreshold: 6
           resources:
             {{- toYaml .Values.worker.resources | nindent 12 }}
       {{- with .Values.nodeSelector }}

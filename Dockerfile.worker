@@ -1,4 +1,6 @@
-# dogtag-vet worker image: chain-activity follower, payment watcher, and boot recovery.
+# dogtag-vet worker image: chain-activity follower, payment watcher, boot recovery, and a
+# GET /healthz + GET /livez health endpoint (WP4.17 B10 - src/worker/health.ts) on
+# WORKER_HEALTH_PORT (default 8091, see EXPOSE below).
 # A plain long-running Node process (tsx), not a Next.js build - no standalone-output tracing
 # involved, so none of the crypto-dependency-resolution caveats in Dockerfile/next.config.ts apply
 # here: `pnpm install` in the deps stage produces a complete, correctly-resolved node_modules and
@@ -33,6 +35,11 @@ COPY src ./src
 COPY protocol ./protocol
 
 USER worker
+
+# WORKER_HEALTH_PORT's default (.env.example) - documentation only (Docker never enforces this),
+# but `docker inspect`/`docker port` and a Kubernetes container port name (helm/dogtag-vet's
+# worker template) both read it. Keep in sync with src/lib/env.ts's WORKER_HEALTH_PORT default.
+EXPOSE 8091
 
 # `--conditions=react-server`: src/lib/env.ts (imported transitively by everything the worker
 # touches - src/lib/db.ts, the payment watcher, the activity follower) imports the `server-only`

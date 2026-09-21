@@ -36,6 +36,14 @@ web:
 
 worker:
   replicaCount: 1
+  # WP4.17 B10: GET /healthz (readiness) and GET /livez (liveness) on this port - see
+  # src/worker/health.ts and .env.example's WORKER_HEALTH_PORT. The template below renders this
+  # value as BOTH the container port and the WORKER_HEALTH_PORT env var, and wires the probes to
+  # it, so changing it here is enough on its own.
+  healthPort: 8091
+  # How many minutes either loop may go without observed progress before both probes report
+  # degraded - mirrors WORKER_STALL_MINUTES in .env.example.
+  stallMinutes: 10
   resources:
     requests:
       cpu: 50m

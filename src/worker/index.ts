@@ -24,6 +24,11 @@
  * 3. The payment watcher (`runPaymentWatcherLoop`, `src/lib/payments/watcher.ts`): scans the four
  *    payment chains for matching transfers to open invoices, marks them paid, fires receipt/notice
  *    emails, and sweeps past-due payments to `expired`.
+ *
+ * A fourth, non-polling piece (WP4.17 B10): `startHealthServer` (`./health.ts`) opens
+ * `GET /healthz` and `GET /livez` on `WORKER_HEALTH_PORT` so Kubernetes (or anything else) can
+ * probe this process - see that file's doc comment, and `src/lib/health/workerHealth.ts`'s, for
+ * the readiness/liveness split and what each loop's "last poll" actually measures.
  */
 import {connectToDatabase} from "@/lib/db";
 import {getServerEnv} from "@/lib/env";
@@ -34,6 +39,13 @@ import {roaxPublicClient} from "@/lib/chainRead";
 import {vetIssuerAbi, dogTagSBTConsentAbi, verificationRegistryConsentAbi} from "@/lib/abi";
 import {recoverInterruptedSessions} from "@/lib/mint/bootRecovery";
 import {recoverInterruptedRecords} from "@/lib/records/bootRecovery";
+import {
+  createInitialPollState,
+  recordActivityFollowerTip,
+  recordPaymentWatcherPoll,
+  startHealthServer,
+  type WorkerPollState,
+} from "./health";
 import {recoverStuckDelegationSessions} from "@/lib/delegation/bootRecovery";
 import {runPaymentWatcherOnce} from "@/lib/payments/watcher";
 import type {Log} from "viem";
@@ -87,15 +99,22 @@ const CLONE_EVENT_NAMES = [
   "RefundSkipped",
 ] as const;
 
-async function followOnce(): Promise<void> {
+/**
+ * Returns the ROAX block number this iteration observed on EVERY path, including the two early
+ * returns below - `client.getBlockNumber()` is called before `settings.cloneAddress` is even
+ * checked specifically so `./health.ts`'s tip-progress tracking keeps working (and a not-yet-
+ * onboarded clinic reads as fresh, not stalled) whether or not there is anything to sync yet. See
+ * `src/lib/health/workerHealth.ts`'s `LivenessSnapshot.activityFollowerLastTipAt` doc comment.
+ */
+async function followOnce(): Promise<bigint> {
   const env = getServerEnv();
-  const settings = await getClinicSettings();
-  if (!settings.cloneAddress) return; // setup not finished yet - nothing to follow
-
   const client = roaxPublicClient();
   const latest = await client.getBlockNumber();
+  const settings = await getClinicSettings();
+  if (!settings.cloneAddress) return latest; // setup not finished yet - nothing to follow
+
   const fromBlock = BigInt(settings.activityCursorBlock ?? env.ACTIVITY_START_BLOCK);
-  if (fromBlock > latest) return;
+  if (fromBlock > latest) return latest;
 
   const knownDogTagIds = new Set(
     (await Pet.find({"dogTag.dogTagIdField": {$exists: true}}).select("dogTag.dogTagIdField").lean<PetDoc[]>()).map(
@@ -160,6 +179,7 @@ async function followOnce(): Promise<void> {
     await updateClinicSettings({activityCursorBlock: Number(toBlock) + 1});
     cursor = toBlock + 1n;
   }
+  return latest;
 }
 
 /** The payment watcher's own loop (`src/lib/payments/watcher.ts`) - a second, independent
@@ -167,21 +187,31 @@ async function followOnce(): Promise<void> {
  * comment anticipating exactly this addition. Deliberately not merged into `followOnce`'s loop:
  * the two watch entirely different chains (ROAX vs. the four payment chains) on different
  * cadences, and a failure in one must never stall the other. */
-async function runPaymentWatcherLoop(pollMs: number): Promise<never> {
+async function runPaymentWatcherLoop(pollMs: number, pollState: WorkerPollState): Promise<never> {
   for (;;) {
     try {
       await runPaymentWatcherOnce();
     } catch (err) {
       console.error("[payment-watcher] iteration failed", err);
     }
+    // Attempt-based, deliberately - recorded whether this iteration succeeded, found nothing to
+    // do, or threw and was caught. See src/lib/health/workerHealth.ts's
+    // `LivenessSnapshot.paymentWatcherLastPollAt` doc comment for why (this loop's early "nothing
+    // pending" return makes a progress-based signal false-positive on an idle, healthy clinic).
+    recordPaymentWatcherPoll(pollState);
     await new Promise((resolve) => setTimeout(resolve, pollMs));
   }
 }
 
-async function runActivityFollowerLoop(pollMs: number): Promise<never> {
+async function runActivityFollowerLoop(pollMs: number, pollState: WorkerPollState): Promise<never> {
   for (;;) {
     try {
-      await followOnce();
+      const observedTip = await followOnce();
+      // Progress-based, deliberately - only iterations that actually observed a tip advance this
+      // (a caught throw below does not). See src/lib/health/workerHealth.ts's
+      // `LivenessSnapshot.activityFollowerLastTipAt` doc comment for why an attempt-based signal
+      // here would almost never go stale.
+      recordActivityFollowerTip(pollState, observedTip);
     } catch (err) {
       console.error("[worker] follower iteration failed", err);
     }
@@ -196,11 +226,16 @@ async function main() {
   await recoverStuckDelegationSessions();
 
   const env = getServerEnv();
+
+  const pollState = createInitialPollState();
+  startHealthServer(env.WORKER_HEALTH_PORT, pollState, env.WORKER_STALL_MINUTES);
+  console.log(`[worker] health endpoint listening on :${env.WORKER_HEALTH_PORT} (/healthz, /livez)`);
+
   console.log(`[worker] starting chain-activity follower (poll every ${env.ACTIVITY_POLL_MS}ms)`);
   console.log(`[worker] starting payment watcher (poll every ${env.PAYMENT_WATCHER_POLL_MS}ms)`);
   await Promise.all([
-    runActivityFollowerLoop(env.ACTIVITY_POLL_MS),
-    runPaymentWatcherLoop(env.PAYMENT_WATCHER_POLL_MS),
+    runActivityFollowerLoop(env.ACTIVITY_POLL_MS, pollState),
+    runPaymentWatcherLoop(env.PAYMENT_WATCHER_POLL_MS, pollState),
   ]);
 }
 
