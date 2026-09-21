@@ -22,6 +22,9 @@ import {enforceRateLimit, errorBody, jsonWithHeaders} from "@/lib/publicApi";
  * were added after the ios and specs waves' own review of this response shape (cross-repo wire
  * contract ruling); the `tokenSymbols` iff-condition itself was corrected in a WP4.18 fix round
  * (D1) after the Fable grade caught it disagreeing with the spec and `docs/appointments.md`.
+ * Sorted most-recently-created first (`createdAt` descending, D2) - the newest invoice is the one
+ * most likely to still need paying, so it leads the list; mirrors `confirmation.ts`'s own lookup
+ * for the same appointment, which already sorted this way.
  * Additive: an old client that never reads `invoices` keeps working unchanged. `invoices` itself
  * is omitted entirely (never an empty array) when this appointment has no linked invoice, matching
  * this endpoint's existing "absent, not null" convention.
@@ -58,7 +61,9 @@ export async function GET(request: Request, {params}: {params: Promise<{id: stri
   const [serviceName, cancellable, payments] = await Promise.all([
     loadServiceName(appointment.serviceId),
     computeCancellable(appointment, now),
-    Payment.find({appointmentId: appointment.appointmentId}).lean<PaymentDoc[]>(),
+    Payment.find({appointmentId: appointment.appointmentId})
+      .sort({createdAt: -1})
+      .lean<PaymentDoc[]>(),
   ]);
 
   return jsonWithHeaders(
