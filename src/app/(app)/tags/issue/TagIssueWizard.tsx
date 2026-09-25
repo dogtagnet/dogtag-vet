@@ -12,12 +12,14 @@ import {HashCell} from "@/components/ui/HashCell";
 import {ClientPicker} from "@/components/pickers/ClientPicker";
 import {WeightHistoryEditor} from "@/components/pets/WeightHistoryEditor";
 import {useSnackbar} from "@/components/ui/Snackbar";
+import {GasPreflightBanner} from "@/components/wallet/GasPreflightBanner";
 import {vetIssuerAbi} from "@/lib/abi";
 import {roax} from "@/lib/chains";
 import {legacyTxWithGas} from "@/lib/chainWrite";
 import {reasonCodeHash} from "@/lib/reasonCodes";
 import {decodeRefundOutcome, refundFeedbackMessage, type RefundOutcome} from "@/lib/refundFeedback";
 import {mintSessionStatusLabel, mintSessionStatusTone} from "@/lib/tagStatusTone";
+import {useGasPreflight} from "@/lib/useGasPreflight";
 import type {ClientDoc} from "@/lib/models/Client";
 import type {PetDoc, PetSex, WeightEntry} from "@/lib/models/Pet";
 
@@ -108,6 +110,10 @@ export function TagIssueWizard() {
   // checks logs against the SAME address the write targeted.
   const issueCloneAddressRef = useRef<string | undefined>(undefined);
   const [issueRefundOutcome, setIssueRefundOutcome] = useState<RefundOutcome | null>(null);
+  // WP4.19 V3 - shared by both writes this wizard can send (issueTag in the "ready" state,
+  // revokeTag of the superseded tag in the "bound" replace-flow state below) - only one of the two
+  // is ever visible/actionable at once, so one instance is enough.
+  const gasPreflight = useGasPreflight();
 
   // The replace wizard (wp4-vet.md: "replace ... start new mint session for the same pet, and
   // after the new tag binds, prompt revoke of the old tag with REASON_REPLACED"). `replacingPet`
@@ -260,6 +266,10 @@ export function TagIssueWizard() {
 
   async function handleRevokePrevious() {
     if (!replacingPet?.dogTag.cloneAddress || !replacingPet.dogTag.dogTagIdField || !address) return;
+    // WP4.19 V3 - refuse to send when the wallet cannot even cover this revoke's own gas floor at
+    // the current gas price; the banner (rendered below, next to this button) explains why and
+    // offers a top-up request.
+    if (!(await gasPreflight.ensure(publicClient, address, "revokeTag"))) return;
     setRevokingPrevious(true);
     try {
       const hash = await writeContractAsync(
@@ -344,6 +354,10 @@ export function TagIssueWizard() {
         snackbar.show("This clinic has not completed setup", "danger");
         return;
       }
+      // WP4.19 V3 - refuse to send when the wallet cannot even cover issueTag's own gas floor at
+      // the current gas price; the banner below the Issue button explains why and offers a top-up
+      // request, and this returns before ever calling writeContractAsync.
+      if (!(await gasPreflight.ensure(publicClient, address, "issueTag"))) return;
       issueCloneAddressRef.current = settings.cloneAddress;
       setIssueRefundOutcome(null);
       const hash = await writeContractAsync(
@@ -567,6 +581,7 @@ export function TagIssueWizard() {
               <Button onClick={handleIssue} disabled={issuing}>
                 {issuing ? "Issuing..." : "Issue on chain"}
               </Button>
+              {gasPreflight.block && <GasPreflightBanner message={gasPreflight.block.message} walletAddress={address} />}
             </div>
           )}
 
@@ -598,6 +613,11 @@ export function TagIssueWizard() {
                   >
                     Revoke previous tag
                   </Button>
+                  {gasPreflight.block && (
+                    <div className="mt-3">
+                      <GasPreflightBanner message={gasPreflight.block.message} walletAddress={address} />
+                    </div>
+                  )}
                 </Banner>
               )}
               {previousTagRevoked && (

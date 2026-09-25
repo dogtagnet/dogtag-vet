@@ -10,6 +10,7 @@ import {Button, Select} from "@/components/ui/controls";
 import {useSnackbar} from "@/components/ui/Snackbar";
 import {ExportQrPanel} from "@/components/tags/ExportQrPanel";
 import {MaskedExportPanel} from "@/components/tags/MaskedExportPanel";
+import {GasPreflightBanner} from "@/components/wallet/GasPreflightBanner";
 import {vetIssuerAbi} from "@/lib/abi";
 import {roax} from "@/lib/chains";
 import {legacyTxWithGas} from "@/lib/chainWrite";
@@ -17,6 +18,7 @@ import {REASON_CODES, reasonCodeHash, type ReasonCodeName} from "@/lib/reasonCod
 import {formatUnixSeconds} from "@/lib/format";
 import {decodeRefundOutcome, refundFeedbackMessage} from "@/lib/refundFeedback";
 import {dogTagStatusLabel, dogTagStatusTone, mintSessionStatusLabel, mintSessionStatusTone} from "@/lib/tagStatusTone";
+import {useGasPreflight} from "@/lib/useGasPreflight";
 import type {PetDoc} from "@/lib/models/Pet";
 import type {MintSessionDoc} from "@/lib/models/MintSession";
 
@@ -44,6 +46,11 @@ export function TagsTable({timeZone}: {timeZone: string}) {
   const [pendingTx, setPendingTx] = useState<
     {hash: `0x${string}`; petId: string; cloneAddress: string; action: "revoke" | "reactivate"; reasonCode: ReasonCodeName} | null
   >(null);
+  // WP4.19 V3 - one shared preflight instance for every row (only one row's write is ever
+  // in-flight at a time - `busyPetId` already enforces that); `preflightBlockPetId` remembers WHICH
+  // row's refusal the banner below belongs to, since `gasPreflight.block` itself carries no petId.
+  const gasPreflight = useGasPreflight();
+  const [preflightBlockPetId, setPreflightBlockPetId] = useState<string | null>(null);
 
   const receipt = useWaitForTransactionReceipt({hash: pendingTx?.hash, chainId: roax.id});
 
@@ -95,15 +102,23 @@ export function TagsTable({timeZone}: {timeZone: string}) {
   async function handleLifecycle(pet: PetDoc, action: "revoke" | "reactivate") {
     if (!address || !pet.dogTag.dogTagIdField) return;
     const reasonCode = reasonByPet[pet.petId] ?? REASON_CODES[0].name;
+    const functionName = action === "revoke" ? "revokeTag" : "reactivateTag";
     setBusyPetId(pet.petId);
+    setPreflightBlockPetId(null);
     try {
+      // WP4.19 V3 - refuse to send when the wallet cannot even cover this write's own gas floor at
+      // the current gas price; the banner rendered below this row's Actions cell explains why.
+      if (!(await gasPreflight.ensure(publicClient, address, functionName))) {
+        setPreflightBlockPetId(pet.petId);
+        return;
+      }
       const hash = await writeContractAsync(
         // Headroom over the bare estimate - see legacyTxWithGas's doc comment for the incident
         // txs the refund tail starved at the wallet's own estimate.
         await legacyTxWithGas(publicClient, {
           address: pet.dogTag.cloneAddress as `0x${string}`,
           abi: vetIssuerAbi,
-          functionName: action === "revoke" ? "revokeTag" : "reactivateTag",
+          functionName,
           args: [BigInt(pet.dogTag.dogTagIdField), reasonCodeHash(reasonCode)],
           account: address,
         }),
@@ -156,6 +171,7 @@ export function TagsTable({timeZone}: {timeZone: string}) {
             key: "actions",
             header: "Actions",
             render: (p: PetDoc) => (
+              <div className="flex flex-col gap-2">
               <div className="flex items-center gap-2">
                 <Select
                   className="w-auto"
@@ -215,6 +231,10 @@ export function TagsTable({timeZone}: {timeZone: string}) {
                     </Button>
                   </>
                 )}
+              </div>
+              {preflightBlockPetId === p.petId && gasPreflight.block && (
+                <GasPreflightBanner message={gasPreflight.block.message} walletAddress={address} />
+              )}
               </div>
             ),
           },

@@ -74,7 +74,11 @@ export const GAS_FLOORS: Readonly<Record<string, bigint>> = {
  * see that constant's own doc comment for why this is never `0n`. */
 export const DEFAULT_GAS_FLOOR = 400_000n;
 
-function gasFloorFor(functionName: string): bigint {
+/** Exported (WP4.19 V3) so the pre-flight balance check (`gasPreflight.ts`'s `checkGasPreflight`,
+ * called from `TagIssueWizard.tsx`/`TagsTable.tsx` before ever sending) checks against the exact
+ * SAME floor `legacyTxWithGas` itself would apply, never a second, possibly-drifting copy of the
+ * `GAS_FLOORS[fn] ?? DEFAULT_GAS_FLOOR` fallback logic. */
+export function gasFloorFor(functionName: string): bigint {
   return GAS_FLOORS[functionName] ?? DEFAULT_GAS_FLOOR;
 }
 
