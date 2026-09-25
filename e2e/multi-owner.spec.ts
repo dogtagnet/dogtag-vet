@@ -248,7 +248,12 @@ function buildVerifiableProfile(name: string, species: string): {leaves: OpenedL
  * start route and the post-confirm bundle both need (`docs/DELEGATION.md` section 4.3). Raw
  * `insertOne`s (mirroring `mint-issue-revert.spec.ts`'s own convention) - this suite is not testing
  * issuance or wallet registration, both of which have their own coverage. */
-async function seedPetAndSecondaryClient(): Promise<{
+/** `secondaryName` (WP4.19 V5) - defaults to "Jamie Rivera" (byte-identical default behavior for
+ * every pre-existing caller); a test that ALSO drives the client-search combobox (which this
+ * file's own first test already does) and runs after another such test in this same serial suite
+ * needs its own distinct name, since every call creates ANOTHER row and the combobox has no other
+ * way to disambiguate two identically-named, contact-info-free clients. */
+async function seedPetAndSecondaryClient(secondaryName = "Jamie Rivera"): Promise<{
   petId: string;
   dogTagIdField: string;
   clientId: string;
@@ -295,10 +300,10 @@ async function seedPetAndSecondaryClient(): Promise<{
   const clientId = randomUUID();
   await mongoClient.db().collection("clients").insertOne({
     clientId,
-    name: "Jamie Rivera",
+    name: secondaryName,
     petIds: [],
     wallets: [{address: account.address.toLowerCase(), registeredAt: Math.floor(Date.now() / 1000)}],
-    searchKey: "jamie rivera",
+    searchKey: secondaryName.toLowerCase(),
     createdAt: new Date(),
     updatedAt: new Date(),
   });
@@ -415,6 +420,73 @@ test("Add secondary owner: full ceremony from the Owners card through on-chain c
   for (const key of allKeysDeep(bundle)) {
     expect(key, `bundle must not carry a "${key}" key`).not.toMatch(forbidden);
   }
+});
+
+/**
+ * WP4.19 V5 - the reverted-receipt gap the 2026-09-25 incident fix disclosed but did not fix in
+ * this component (`TagIssueWizard.tsx`'s own fix-round-2 doc comment names AddSecondaryOwnerAction
+ * explicitly as one of five sibling gaps "recorded here as a ticket for a future wave"). Reproduced
+ * first (as the coordinator's own instruction requires): before this fix, scripting the receipt
+ * "reverted" here left the panel stuck on the bare `StatusBadge tone="info" label="Confirming on
+ * chain..."` forever - `useWaitForTransactionReceipt` never resolves `isSuccess` for a REVERTED
+ * receipt (it throws internally, surfacing as `isError` instead), and the pre-fix effect only ever
+ * fired on `isSuccess`. This test proves the FIXED behavior: a "Transaction failed" banner with the
+ * dead tx hash kept for the record, and a working "Start over" retry path.
+ */
+test("Add secondary owner: a REVERTED receipt (status 0x0) shows Transaction failed with the kept hash, not a stuck 'Confirming on chain...' forever", async ({page}) => {
+  // A distinct name (not the default "Jamie Rivera") - this file's own first test already seeded
+  // one "Jamie Rivera" by the time this test runs (shared Mongo, serial suite), and neither client
+  // carries an email/phone to otherwise disambiguate two identically-named combobox results.
+  const {petId, dogTagIdField, account} = await seedPetAndSecondaryClient("Priya Lindqvist");
+
+  await page.goto(`/pets/${petId}`);
+  await expect(ownersCard(page).getByRole("heading", {name: "DogTag owners"})).toBeVisible();
+
+  await page.getByRole("button", {name: "Add secondary owner"}).click();
+  await page.getByPlaceholder("Search clients with a registered wallet").fill("Priya");
+  await page.getByText("Priya Lindqvist").click();
+  await page.getByRole("button", {name: "Start"}).click();
+
+  const link = page.getByTestId("delegation-add-link");
+  await expect(link).toBeVisible({timeout: 10_000});
+  const qr = await link.textContent();
+  const token = new URL(qr!).pathname.split("/").pop()!;
+
+  const challengeRes = await page.request.get(`/d/${token}`);
+  expect(challengeRes.ok()).toBe(true);
+  const challenge = (await challengeRes.json()) as Challenge;
+  const commitment = randomHex32();
+  const claim = await signClaim(challenge, account, commitment);
+  const completeRes = await page.request.post(`/d/${token}/complete`, {data: claim});
+  expect(completeRes.ok()).toBe(true);
+
+  const addOnChainButton = page.getByRole("button", {name: "Add on chain"});
+  await expect(addOnChainButton).toBeVisible({timeout: 10_000});
+
+  // `isSecondary` scripted false (the honest, correct answer for a write that never actually
+  // landed) - `reconcileDelegationWrite`'s own decisive check, so the confirm route agrees this
+  // never happened, exactly matching what a real reverted `addSecondaryOwner` would leave on chain.
+  await setRpcScenario("isSecondary", DELEGATION_REGISTRY_ADDRESS, [dogTagIdField, commitment], false);
+  await addOnChainButton.click();
+  await expect(page.getByText("Confirming on chain...")).toBeVisible({timeout: 10_000});
+
+  const hash = await getLastSentTxHash();
+  expect(hash).not.toBeNull();
+  await setRpcReceipt(hash!, "reverted"); // status 0x0
+
+  await expect(page.getByRole("status").filter({hasText: "Transaction failed"})).toBeVisible({timeout: 15_000});
+  await expect(page.getByText("Confirming on chain...")).toHaveCount(0);
+  // The dead tx hash is kept for the record, not silently dropped - HashCell truncates to
+  // `value.slice(0, 6)`...`value.slice(-4)` (MonoValue.tsx's own default prefix/suffix), so the
+  // truncated prefix is what actually appears in the DOM.
+  await expect(page.getByText(hash!.slice(0, 6), {exact: false})).toBeVisible();
+
+  // The retry path: "Start over" clears the failed ceremony session (never the picked client) and
+  // returns to the "Start" button for the SAME already-selected client - a working way back, not
+  // a dead end.
+  await page.getByRole("button", {name: "Start over"}).click();
+  await expect(page.getByText("Priya Lindqvist")).toBeVisible();
+  await expect(page.getByRole("button", {name: "Start"})).toBeVisible();
 });
 
 test("Revoke a secondary owner: no QR, straight to the operator wallet write", async ({page}) => {

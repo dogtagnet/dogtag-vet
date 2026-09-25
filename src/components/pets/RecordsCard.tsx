@@ -15,6 +15,7 @@ import {vetIssuerAbi} from "@/lib/abi";
 import {roax} from "@/lib/chains";
 import {legacyTxWithGas} from "@/lib/chainWrite";
 import {REASON_CODES, reasonCodeHash, type ReasonCodeName} from "@/lib/reasonCodes";
+import {decodeRefundOutcome, refundFeedbackMessage} from "@/lib/refundFeedback";
 import {recordStatusLabel, recordStatusTone, recordValidityLabel, recordValidityTone} from "@/lib/recordStatusTone";
 import {computeRecordValidity, formatIsoCalendarDate} from "@/lib/records/validity";
 import {formatUnixSeconds} from "@/lib/format";
@@ -63,7 +64,16 @@ export function RecordsCard({petId, timeZone, dogTagIssued}: {petId: string; tim
   const [reasonByRecord, setReasonByRecord] = useState<Record<string, ReasonCodeName>>({});
   const [busyRecordId, setBusyRecordId] = useState<string | null>(null);
   const [retryingRecordId, setRetryingRecordId] = useState<string | null>(null);
-  const [pendingTx, setPendingTx] = useState<{hash: `0x${string}`; recordId: string; reasonCode: ReasonCodeName} | null>(null);
+  const [pendingTx, setPendingTx] = useState<{hash: `0x${string}`; recordId: string; cloneAddress: string; reasonCode: ReasonCodeName} | null>(null);
+  // WP4.19 V5 - the reverted-receipt gap `TagsTable.tsx`/`TagIssueWizard.tsx` were fixed for
+  // (2026-09-25 incident, round 2) also applies here: `useWaitForTransactionReceipt` never resolves
+  // `isSuccess` for a REVERTED receipt (it throws internally and surfaces as `isError` instead), so
+  // gating this card's confirm effect on `isSuccess` alone left a reverted `revokeRecord` stuck on
+  // "Revoke" being disabled with no feedback forever - reproduced directly before this fix (a
+  // scripted status:"reverted" receipt left `busyRecordId` cleared but no banner/snackbar ever
+  // fired). Kept for the record, like `TagIssueWizard`'s own `lastFailedTxHash` - shown next to the
+  // row's Revoke button so staff can retry without losing which tx failed.
+  const [failedRevoke, setFailedRevoke] = useState<{recordId: string; hash: string; message: string} | null>(null);
 
   const receipt = useWaitForTransactionReceipt({hash: pendingTx?.hash, chainId: roax.id});
 
@@ -78,26 +88,46 @@ export function RecordsCard({petId, timeZone, dogTagIssued}: {petId: string; tim
   }, [petId]);
 
   useEffect(() => {
-    if (receipt.isSuccess && pendingTx) {
+    // `isError` too, not just `isSuccess` (WP4.19 V5, replicating the 2026-09-25 incident fix round
+    // 2 - see `failedRevoke`'s own doc comment above for the full reasoning, identical to
+    // `TagsTable.tsx`'s `revokeTag`/`reactivateTag` effect). `/lifecycle` already re-reads
+    // `isValid(root)` on chain before trusting either outcome (that route's own doc comment), so
+    // calling it on `isError` is exactly as safe as calling it on `isSuccess` already was.
+    if ((receipt.isSuccess || receipt.isError) && pendingTx) {
       fetch(`/api/records/${pendingTx.recordId}/lifecycle`, {
         method: "POST",
         headers: {"Content-Type": "application/json"},
         body: JSON.stringify({reasonCode: pendingTx.reasonCode, txHash: pendingTx.hash}),
       })
-        .then((r) => r.json())
-        .then(() => {
-          snackbar.show("Record revoked", "ok");
+        .then(async (r) => ({ok: r.ok, body: await r.json().catch(() => null)}))
+        .then(({ok, body}) => {
+          if (ok) {
+            setFailedRevoke(null);
+            // WP4.19 V2 - only on an actually-successful receipt (see TagIssueWizard.tsx's
+            // identical comment on why an isError receipt has nothing to decode).
+            const refundMessage =
+              receipt.isSuccess && receipt.data ? ` ${refundFeedbackMessage(decodeRefundOutcome(receipt.data.logs, pendingTx.cloneAddress))}` : "";
+            snackbar.show(`Record revoked.${refundMessage}`, "ok");
+          } else {
+            // Genuine bug this same gap exposed here too (mirroring TagsTable.tsx's own fix): this
+            // handler never checked `r.ok` before this fix, so a confirmed-REVERTED revoke would
+            // have shown a false "Record revoked" snackbar instead of an honest failure.
+            const message = body?.error?.message ?? "Revoke transaction failed";
+            snackbar.show(message, "danger");
+            setFailedRevoke({recordId: pendingTx.recordId, hash: pendingTx.hash, message});
+          }
           setPendingTx(null);
           load();
         });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [receipt.isSuccess]);
+  }, [receipt.isSuccess, receipt.isError]);
 
   async function handleRevoke(record: RecordArtifactDoc) {
     if (!address || !record.chain.contract) return;
     const reasonCode = reasonByRecord[record.recordId] ?? REASON_CODES[0].name;
     setBusyRecordId(record.recordId);
+    setFailedRevoke(null);
     try {
       const hash = await writeContractAsync(
         await legacyTxWithGas(publicClient, {
@@ -108,7 +138,7 @@ export function RecordsCard({petId, timeZone, dogTagIssued}: {petId: string; tim
           account: address,
         }),
       );
-      setPendingTx({hash, recordId: record.recordId, reasonCode});
+      setPendingTx({hash, recordId: record.recordId, cloneAddress: record.chain.contract, reasonCode});
     } catch (err) {
       snackbar.show(err instanceof Error ? err.message : "Transaction failed", "danger");
     } finally {
@@ -221,6 +251,7 @@ export function RecordsCard({petId, timeZone, dogTagIssued}: {petId: string; tim
             key: "actions",
             header: "Actions",
             render: (r: RecordArtifactDoc) => (
+              <div className="flex flex-col gap-2">
               <div className="flex flex-wrap items-center gap-2">
                 <Button
                   variant="ghost"
@@ -284,6 +315,15 @@ export function RecordsCard({petId, timeZone, dogTagIssued}: {petId: string; tim
                     </Button>
                   </>
                 )}
+              </div>
+              {failedRevoke?.recordId === r.recordId && (
+                <Banner tone="danger" title="Transaction failed">
+                  <p>{failedRevoke.message}</p>
+                  <div className="mt-2">
+                    <HashCell value={failedRevoke.hash} chain="roax" kind="tx" label="failed tx" />
+                  </div>
+                </Banner>
+              )}
               </div>
             ),
           },

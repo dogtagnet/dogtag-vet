@@ -193,6 +193,58 @@ test.beforeEach(async ({page}) => {
   await setRpcScenario("operators", CLONE_ADDRESS, [MOCK_WALLET_ADDRESS], true);
 });
 
+/**
+ * WP4.19 V5 - the reverted-receipt gap the 2026-09-25 incident fix disclosed but did not fix here
+ * (`TagIssueWizard.tsx`'s own fix-round-2 doc comment names `IssueRecordForm.tsx` explicitly as one
+ * of five sibling gaps). Drives the form up to a sent transaction (mirrors
+ * `issueAndConfirmRabiesRecord` through the "Issue on chain" click) but scripts the receipt
+ * REVERTED (status 0x0) instead of mined-success.
+ */
+async function issueRecordAndRevert(page: Page, petId: string): Promise<string> {
+  await page.goto(`/pets/${petId}`);
+  await page.getByRole("tab", {name: "Records"}).click();
+  const issueVaccinationButton = page.getByRole("button", {name: "Issue vaccination record"});
+  await expect(issueVaccinationButton).toBeEnabled({timeout: 15_000});
+  await issueVaccinationButton.click();
+
+  await page.getByLabel("Target disease", {exact: true}).fill("Rabies");
+  await page.getByLabel("Vaccine product", {exact: true}).fill("Rabvac 3");
+  await page.getByLabel("Manufacturer").fill("Boehringer Ingelheim");
+  await page.getByLabel("Batch / lot number").fill("LOT-998");
+  await page.getByLabel("Vaccination date").fill("2026-09-01");
+  await page.getByLabel("Valid from").fill("2026-09-01");
+  await page.getByLabel("Valid until").fill("2099-01-01");
+
+  await page.getByRole("button", {name: "Create draft"}).click();
+  await expect(page.getByRole("button", {name: "Issue on chain"})).toBeEnabled({timeout: 15_000});
+  await page.getByRole("button", {name: "Issue on chain"}).click();
+
+  await expect.poll(async () => getLastSentTxHash(), {timeout: 15_000}).not.toBeNull();
+  const hash = (await getLastSentTxHash())!;
+  await setRpcReceipt(hash, "reverted"); // status 0x0 - the confirm route's own chain re-read (isValid) is never scripted true, so it independently agrees this never anchored
+  return hash;
+}
+
+test.describe("WP4.19 V5 - IssueRecordForm reacts to a reverted receipt (status 0x0)", () => {
+  test("shows Transaction failed with the kept hash, not stuck on 'Waiting for the transaction to confirm...' forever", async ({page}) => {
+    test.setTimeout(60_000);
+    const petId = await createPetWithDogTag(page, "Echo", "80101");
+    const hash = await issueRecordAndRevert(page, petId);
+
+    // WP4.19 V5's own wording, matching TagIssueWizard.tsx's identical 2026-09-25 incident-fix
+    // banner title exactly.
+    await expect(page.getByRole("status").filter({hasText: "Transaction failed"})).toBeVisible({timeout: 15_000});
+    await expect(page.getByText("Waiting for the transaction to confirm...")).toHaveCount(0);
+    // The dead tx kept for the record, not silently dropped - HashCell truncates to
+    // value.slice(0,6) (MonoValue.tsx's own default prefix).
+    await expect(page.getByText(hash.slice(0, 6), {exact: false})).toBeVisible();
+
+    // The retry path: back to "draft" with "Issue on chain" re-enabled on the SAME record, no
+    // redraft needed.
+    await expect(page.getByRole("button", {name: "Issue on chain"})).toBeEnabled({timeout: 10_000});
+  });
+});
+
 test.describe("vaccination record lifecycle (plan section 11.2 V8)", () => {
   // Grade round 1 D3 (MINOR, e2e reliability): this ONE test used to also drive the export and
   // verify ceremony, serially cold-compiling FOUR route trees (/pets/:id's Records tab,

@@ -3,12 +3,15 @@
 import {useEffect, useRef, useState} from "react";
 import {useRouter} from "next/navigation";
 import {useAccount, usePublicClient, useWaitForTransactionReceipt, useWriteContract} from "wagmi";
+import {Banner} from "@/components/ui/Banner";
 import {Button} from "@/components/ui/controls";
+import {HashCell} from "@/components/ui/HashCell";
 import {StatusBadge} from "@/components/ui/StatusBadge";
 import {useSnackbar} from "@/components/ui/Snackbar";
 import {vetIssuerAbi} from "@/lib/abi";
 import {roax} from "@/lib/chains";
 import {legacyTxWithGas} from "@/lib/chainWrite";
+import {decodeRefundOutcome, refundFeedbackMessage} from "@/lib/refundFeedback";
 
 interface StaffStatus {
   kind: "add" | "revoke";
@@ -59,6 +62,8 @@ export function RevokeSecondaryOwnerAction({
    * showing again. Cleared at the top of every fresh `handleRevoke()` attempt so a retry never
    * shows a stale message next to an in-flight one. */
   const [inlineError, setInlineError] = useState<string | null>(null);
+  // WP4.19 V2 - the clone `revokeSecondaryOwner` was actually sent to, captured at send time.
+  const cloneAddressRef = useRef<string | undefined>(undefined);
   const pollRef = useRef<ReturnType<typeof setInterval> | undefined>(undefined);
   // WP4.17A D8 - same fix as `AddSecondaryOwnerAction.tsx`'s identical `settledRef`: the poll
   // branch below and the receipt effect further down both observe the same confirmed session and
@@ -76,11 +81,14 @@ export function RevokeSecondaryOwnerAction({
 
   /** The one place either the poll branch or the receipt effect is allowed to act on a confirmed
    * revoke - see `settledRef`'s own doc comment above. */
-  function onConfirmed() {
+  function onConfirmed(refundMessage?: string) {
     if (settledRef.current) return;
     settledRef.current = true;
     stopPolling();
-    snackbar.show("Secondary owner revoked", "ok");
+    // WP4.19 V2 - the poll branch below never has refund-feedback to report (it only ever learns
+    // "confirmed" from Mongo, never the receipt's own logs), so `refundMessage` is only ever set
+    // from the receipt-effect branch, which decoded it directly.
+    snackbar.show(refundMessage ? `Secondary owner revoked. ${refundMessage}` : "Secondary owner revoked", "ok");
     router.refresh();
   }
 
@@ -151,6 +159,7 @@ export function RevokeSecondaryOwnerAction({
         backToIdle();
         return;
       }
+      cloneAddressRef.current = settings.cloneAddress;
 
       const hash = await writeContractAsync(
         await legacyTxWithGas(publicClient, {
@@ -178,19 +187,56 @@ export function RevokeSecondaryOwnerAction({
   }
 
   useEffect(() => {
-    if (receipt.isSuccess && registrationId) {
+    // `isError` too, not just `isSuccess` (WP4.19 V5, replicating the 2026-09-25 incident fix
+    // round 2 - `@wagmi/core`'s own `waitForTransactionReceipt` throws instead of resolving for a
+    // REVERTED receipt, leaving this stuck on the bare "Revoking..." badge forever for a reverted
+    // `revokeSecondaryOwner` before this fix, with no way back to idle at all). `/confirm` already
+    // re-reads `isSecondary` on chain before trusting either outcome, so calling it on `isError` is
+    // exactly as safe as `isSuccess` already was.
+    if ((receipt.isSuccess || receipt.isError) && registrationId) {
       fetch(`/api/pets/${petId}/delegations/${registrationId}/confirm`, {method: "POST"})
-        .then((r) => r.json())
-        .then((body) => {
-          if (body.status === "confirmed") onConfirmed();
-        });
+        .then(async (r) => ({ok: r.ok, body: await r.json().catch(() => null)}))
+        .then(({ok, body}) => {
+          if (ok && body?.status === "confirmed") {
+            // WP4.19 V2 - only on an actually-successful receipt.
+            const refundMessage =
+              receipt.isSuccess && receipt.data && cloneAddressRef.current
+                ? refundFeedbackMessage(decodeRefundOutcome(receipt.data.logs, cloneAddressRef.current))
+                : undefined;
+            onConfirmed(refundMessage);
+            return;
+          }
+          // The `/confirm` route already flipped this session's own Mongo status to "error" with a
+          // reason (shared `confirm/route.ts`'s "reverted" branch) - reflected here immediately
+          // rather than waiting for the next 2s poll tick, with the dead tx (`pendingTxHash`, kept
+          // - see render below) still visible.
+          setStatus((prev) => ({kind: "revoke", status: "error", errorReason: prev?.errorReason, txHash: prev?.txHash, commitment: prev?.commitment}));
+        })
+        .catch(() => setStatus((prev) => ({kind: "revoke", status: "error", errorReason: prev?.errorReason, txHash: prev?.txHash, commitment: prev?.commitment})));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [receipt.isSuccess]);
+  }, [receipt.isSuccess, receipt.isError]);
 
   if (registrationId) {
     if (status?.status === "error") {
-      return <StatusBadge tone="danger" label={status.errorReason ?? "Revoke failed"} />;
+      // WP4.19 V5 - upgraded from a bare StatusBadge (which had no retry affordance at all once
+      // reached, per this component's own header comment on that pre-existing gap) to the same
+      // "Transaction failed" Banner + kept hash + a way back to idle that
+      // AddSecondaryOwnerAction.tsx's own error state already has, now that this path is actually
+      // reachable client-side (not just from a later poll tick).
+      return (
+        <Banner tone="danger" title="Transaction failed">
+          <p className="mb-3">{status.errorReason ?? "Revoke failed. Start over to try again."}</p>
+          {pendingTxHash && (
+            <div className="mb-3">
+              <HashCell value={pendingTxHash} chain="roax" kind="tx" label="failed tx" />
+            </div>
+          )}
+          <Button size="sm" onClick={backToIdle}>
+            Start over
+          </Button>
+        </Banner>
+      );
     }
     return <StatusBadge tone="info" label="Revoking..." />;
   }

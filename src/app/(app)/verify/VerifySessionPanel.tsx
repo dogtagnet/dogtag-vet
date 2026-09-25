@@ -13,6 +13,7 @@ import {verificationRegistryConsentAbi, vetIssuerAbi} from "@/lib/abi";
 import {roax} from "@/lib/chains";
 import {legacyTxWithGas} from "@/lib/chainWrite";
 import {publicEnv} from "@/lib/env.public";
+import {decodeRefundOutcome, refundFeedbackMessage, type RefundOutcome} from "@/lib/refundFeedback";
 import {verifySessionStatusLabel, verifySessionStatusTone} from "@/lib/verifySessionTone";
 import type {PetDoc} from "@/lib/models/Pet";
 import type {VerifySessionStatus} from "@/lib/models/VerifySession";
@@ -77,6 +78,15 @@ export function VerifySessionPanel({
   const [session, setSession] = useState<SessionState | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [pendingTxHash, setPendingTxHash] = useState<`0x${string}` | undefined>(undefined);
+  // WP4.19 V5 - the dead tx kept for the record after a reverted submission (mirrors every other
+  // fixed component's own `lastFailedTxHash`/`failedRevoke` field).
+  const [txFailedHash, setTxFailedHash] = useState<string | undefined>(undefined);
+  // WP4.19 V2 - which write path the LAST submit actually took (`relayVerification` through the
+  // clone, refund-tail-wrapped, vs. `recordVerificationZK` directly, which has no refund tail at
+  // all per chainWrite.ts's own doc comment) - captured at send time so the refund-feedback decode
+  // only ever runs for the clone path, never the direct one (nothing to decode there).
+  const viaCloneRef = useRef(false);
+  const [refundOutcome, setRefundOutcome] = useState<RefundOutcome | null>(null);
 
   const pollRef = useRef<ReturnType<typeof setInterval> | undefined>(undefined);
   const receipt = useWaitForTransactionReceipt({hash: pendingTxHash, chainId: roax.id});
@@ -142,6 +152,9 @@ export function VerifySessionPanel({
       // (server-trusted, from the session row) rather than re-reading `useClone` here, since the
       // toggle could in principle change between starting a session and submitting its proof.
       const viaClone = Boolean(cloneAddress) && session.relayerAddress.toLowerCase() === cloneAddress?.toLowerCase();
+      viaCloneRef.current = viaClone;
+      setTxFailedHash(undefined);
+      setRefundOutcome(null);
       const hash = await writeContractAsync(
         // Headroom over the bare estimate - see legacyTxWithGas's doc comment for the incident
         // txs the refund tail starved at the wallet's own estimate.
@@ -167,15 +180,57 @@ export function VerifySessionPanel({
   }
 
   useEffect(() => {
+    // `isError` too, not just `isSuccess` (WP4.19 V5, replicating the 2026-09-25 incident fix
+    // round 2 - `@wagmi/core`'s own `waitForTransactionReceipt` throws instead of resolving for a
+    // REVERTED receipt, so `isSuccess` alone left this stuck with no feedback at all: the "Submit
+    // consent proof" button had already re-enabled (`handleSubmit`'s own `finally` clears
+    // `submitting` right after the write is SENT, not once it confirms), so staff had no way to
+    // tell a stuck session apart from one about to succeed).
+    //
+    // Deliberately does NOT call `POST .../recorded` on the isError branch, UNLIKE every sibling
+    // fix in this same wave (TagIssueWizard/TagsTable/RecordsCard/IssueRecordForm/
+    // AddSecondaryOwnerAction/RevokeSecondaryOwnerAction all call their own confirm route either
+    // way and let ITS OWN independent chain re-read decide - "a receipt is not proof"). This
+    // route (`recorded/route.ts`) is NOT one of those fail-closed confirm routes: it has no
+    // `readTxReceiptStatus`/`isValid`-style re-check of its own at all and blindly trusts whatever
+    // `txHash` it is given, so calling it here on a receipt already known to have REVERTED would
+    // mark this session "recorded" against a fact that is false - strictly worse than doing
+    // nothing. Disclosed here rather than silently patched over: `recorded/route.ts` trusting its
+    // caller with no independent verification is a real, separate gap this pass found but did not
+    // fix (out of this V5 UI-reconciliation fix's scope) - recorded as a ticket for a future wave,
+    // the same way the 2026-09-25 incident note itself flagged the other five components' "own
+    // reconciliation semantics" as deserving their own dedicated pass rather than a blanket one.
+    if (receipt.isError && pendingTxHash) {
+      setTxFailedHash(pendingTxHash);
+      setPendingTxHash(undefined);
+      return;
+    }
     if (receipt.isSuccess && session?.sessionId && pendingTxHash) {
+      const txHash = pendingTxHash;
       fetch(`/api/verify/${session.sessionId}/recorded`, {
         method: "POST",
         headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({txHash: pendingTxHash}),
-      }).then(() => snackbar.show("Verification recorded on chain", "ok"));
+        body: JSON.stringify({txHash}),
+      })
+        .then(async (r) => ({ok: r.ok, body: await r.json().catch(() => null)}))
+        .then(({ok, body}) => {
+          if (!ok) {
+            snackbar.show(body?.error?.message ?? "Could not record this verification", "danger");
+            return;
+          }
+          // WP4.19 V2 - only the clone (relayVerification) path has a refund tail to decode at
+          // all - see viaCloneRef's own doc comment above.
+          if (viaCloneRef.current && receipt.data && cloneAddress) {
+            const outcome = decodeRefundOutcome(receipt.data.logs, cloneAddress);
+            setRefundOutcome(outcome);
+            snackbar.show(`Verification recorded on chain. ${refundFeedbackMessage(outcome)}`, "ok");
+          } else {
+            snackbar.show("Verification recorded on chain", "ok");
+          }
+        });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [receipt.isSuccess]);
+  }, [receipt.isSuccess, receipt.isError]);
 
   if (!address) {
     return (
@@ -199,7 +254,15 @@ export function VerifySessionPanel({
             </div>
           )}
           {session.status === "proof_received" && (
-            <div className="mt-4">
+            <div className="mt-4 space-y-3">
+              {txFailedHash && (
+                // WP4.19 V5 - "Transaction failed", the same wording every sibling fix in this
+                // wave uses, with the dead tx kept for the record.
+                <Banner tone="danger" title="Transaction failed">
+                  <p className="mb-2">The submission did not confirm on chain. You can submit the same proof again.</p>
+                  <HashCell value={txFailedHash} chain="roax" kind="tx" label="failed tx" />
+                </Banner>
+              )}
               <p className="mb-3 text-body text-ink-muted">A proof was received. Submit it on chain.</p>
               <Button onClick={handleSubmit} disabled={submitting || chainId !== roax.id}>
                 {submitting ? "Submitting..." : "Submit consent proof"}
@@ -207,7 +270,10 @@ export function VerifySessionPanel({
             </div>
           )}
           {session.status === "recorded" && (
-            <p className="mt-4 text-body text-ok">Consent recorded. Nullifier: {session.nullifier}</p>
+            <div className="mt-4 space-y-1">
+              <p className="text-body text-ok">Consent recorded. Nullifier: {session.nullifier}</p>
+              {refundOutcome && <p className="text-caption text-ink-muted">{refundFeedbackMessage(refundOutcome)}</p>}
+            </div>
           )}
         </FormSection>
       </div>

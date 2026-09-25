@@ -5,6 +5,7 @@ import {useRouter} from "next/navigation";
 import {useAccount, usePublicClient, useWaitForTransactionReceipt, useWriteContract} from "wagmi";
 import {Button} from "@/components/ui/controls";
 import {Banner} from "@/components/ui/Banner";
+import {HashCell} from "@/components/ui/HashCell";
 import {Combobox} from "@/components/pickers/Combobox";
 import {QrSurface} from "@/components/ui/QrSurface";
 import {StatusBadge} from "@/components/ui/StatusBadge";
@@ -12,6 +13,7 @@ import {useSnackbar} from "@/components/ui/Snackbar";
 import {vetIssuerAbi} from "@/lib/abi";
 import {roax} from "@/lib/chains";
 import {legacyTxWithGas} from "@/lib/chainWrite";
+import {decodeRefundOutcome, refundFeedbackMessage, type RefundOutcome} from "@/lib/refundFeedback";
 import type {ClientDoc} from "@/lib/models/Client";
 
 interface StartAddResponse {
@@ -69,6 +71,11 @@ export function AddSecondaryOwnerAction({petId, dogTagIdField, disabled}: {petId
   // never on close, so a stray late poll tick or receipt event after either path has already
   // settled this ceremony can never re-fire the toast/refresh/close sequence a second time.
   const settledRef = useRef(false);
+  // WP4.19 V2 - the clone `addSecondaryOwner` was actually sent to, captured at send time (never
+  // re-fetched a second time in the receipt effect below) - mirrors TagIssueWizard.tsx's own
+  // `issueCloneAddressRef`.
+  const cloneAddressRef = useRef<string | undefined>(undefined);
+  const [refundOutcome, setRefundOutcome] = useState<RefundOutcome | null>(null);
 
   const receipt = useWaitForTransactionReceipt({hash: pendingTxHash, chainId: roax.id});
 
@@ -168,6 +175,8 @@ export function AddSecondaryOwnerAction({petId, dogTagIdField, disabled}: {petId
         snackbar.show("This clinic has not completed setup", "danger");
         return;
       }
+      cloneAddressRef.current = settings.cloneAddress;
+      setRefundOutcome(null);
       const hash = await writeContractAsync(
         await legacyTxWithGas(publicClient, {
           address: settings.cloneAddress as `0x${string}`,
@@ -191,15 +200,37 @@ export function AddSecondaryOwnerAction({petId, dogTagIdField, disabled}: {petId
   }
 
   useEffect(() => {
-    if (receipt.isSuccess && session?.registrationId) {
+    // `isError` too, not just `isSuccess` (WP4.19 V5, replicating the 2026-09-25 incident fix
+    // round 2 - `@wagmi/core`'s own `waitForTransactionReceipt` throws instead of resolving for a
+    // REVERTED receipt, so `isSuccess` alone left this stuck on "Confirming on chain..." forever
+    // for a reverted `addSecondaryOwner`, reproduced directly before this fix). `/confirm` already
+    // re-reads `isSecondary` on chain before trusting either outcome (that route's own doc
+    // comment), so calling it on `isError` is exactly as safe as `isSuccess` already was.
+    if ((receipt.isSuccess || receipt.isError) && session?.registrationId) {
       fetch(`/api/pets/${petId}/delegations/${session.registrationId}/confirm`, {method: "POST"})
-        .then((r) => r.json())
-        .then((body) => {
-          if (body.status === "confirmed") onConfirmed();
+        .then(async (r) => ({ok: r.ok, body: await r.json().catch(() => null)}))
+        .then(({ok, body}) => {
+          if (ok && body?.status === "confirmed") {
+            // WP4.19 V2 - only on an actually-successful receipt (an isError receipt never reaches
+            // here as "confirmed" - the route's own reconcile would refuse it).
+            if (receipt.isSuccess && receipt.data && cloneAddressRef.current) {
+              setRefundOutcome(decodeRefundOutcome(receipt.data.logs, cloneAddressRef.current));
+            }
+            onConfirmed();
+            return;
+          }
+          // The `/confirm` route already updated the session's own Mongo status to "error" with a
+          // reason (`confirm/route.ts`'s "reverted" branch) - reflected here immediately, without
+          // waiting for the next 2s poll tick, so "Transaction failed" shows right away with the
+          // dead tx (`pendingTxHash`, kept - never cleared on this path) still visible below.
+          setSession((prev) => (prev ? {...prev, status: {...(prev.status ?? {kind: "add", status: "error"}), status: "error"}} : prev));
+        })
+        .catch(() => {
+          setSession((prev) => (prev ? {...prev, status: {...(prev.status ?? {kind: "add", status: "error"}), status: "error"}} : prev));
         });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [receipt.isSuccess]);
+  }, [receipt.isSuccess, receipt.isError]);
 
   if (!open) {
     return (
@@ -282,10 +313,21 @@ export function AddSecondaryOwnerAction({petId, dogTagIdField, disabled}: {petId
           </Button>
         </>
       )}
-      {(status === "submitting" || (pendingTxHash && !receipt.isSuccess)) && <StatusBadge tone="info" label="Confirming on chain..." />}
+      {status === "confirmed" && refundOutcome && <p className="text-caption text-ink-muted">{refundFeedbackMessage(refundOutcome)}</p>}
+      {(status === "submitting" || (pendingTxHash && !receipt.isSuccess && !receipt.isError && status !== "error")) && (
+        <StatusBadge tone="info" label="Confirming on chain..." />
+      )}
       {status === "error" && (
-        <Banner tone="danger" title="Could not add this secondary owner">
+        // WP4.19 V5 - "Transaction failed" (matching TagIssueWizard.tsx's own 2026-09-25
+        // incident-fix-round-2 wording), with the dead tx kept for the record (`pendingTxHash` is
+        // never cleared on this path - only "Start over" below clears it).
+        <Banner tone="danger" title="Transaction failed">
           <p className="mb-3">{session.status?.errorReason ?? "Something went wrong. Start a new ceremony to try again."}</p>
+          {pendingTxHash && (
+            <div className="mb-3">
+              <HashCell value={pendingTxHash} chain="roax" kind="tx" label="failed tx" />
+            </div>
+          )}
           <Button
             onClick={() => {
               setSession(null);

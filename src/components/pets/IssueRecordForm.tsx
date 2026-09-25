@@ -12,6 +12,7 @@ import {useSnackbar} from "@/components/ui/Snackbar";
 import {vetIssuerAbi} from "@/lib/abi";
 import {roax} from "@/lib/chains";
 import {legacyTxWithGas} from "@/lib/chainWrite";
+import {decodeRefundOutcome, refundFeedbackMessage, type RefundOutcome} from "@/lib/refundFeedback";
 import {recordStatusLabel, recordStatusTone} from "@/lib/recordStatusTone";
 import {KNOWN_RECORD_STANDARDS} from "@/lib/records/standards";
 import type {RecordArtifactDoc} from "@/lib/models/RecordArtifact";
@@ -58,7 +59,14 @@ export function IssueRecordForm({petId, onDone}: {petId: string; onDone: () => v
   const [pendingTxHash, setPendingTxHash] = useState<`0x${string}` | undefined>(undefined);
   const [confirming, setConfirming] = useState(false);
   const [lastIssueError, setLastIssueError] = useState<string | undefined>(undefined);
+  // WP4.19 V5 - the dead tx hash kept for the record after a confirmed revert, mirroring
+  // TagIssueWizard.tsx's own `lastFailedTxHash` (2026-09-25 incident fix round 2): the confirm
+  // route deliberately clears `chain.txHash` server-side on a reverted outcome (`confirm/route.ts`'s
+  // own `txHash: undefined` in its "reverted" branch), so this is the ONE place that hash survives
+  // client-side for the "Transaction failed" banner below to still show it.
+  const [lastFailedTxHash, setLastFailedTxHash] = useState<string | undefined>(undefined);
   const [attestationSigned, setAttestationSigned] = useState(false);
+  const [refundOutcome, setRefundOutcome] = useState<RefundOutcome | null>(null);
 
   const receipt = useWaitForTransactionReceipt({hash: pendingTxHash, chainId: roax.id});
 
@@ -123,6 +131,8 @@ export function IssueRecordForm({petId, onDone}: {petId: string; onDone: () => v
     }
     setIssuing(true);
     setLastIssueError(undefined);
+    setLastFailedTxHash(undefined);
+    setRefundOutcome(null);
     try {
       const hash = await writeContractAsync(
         await legacyTxWithGas(publicClient, {
@@ -165,24 +175,39 @@ export function IssueRecordForm({petId, onDone}: {petId: string; onDone: () => v
       if (body.status === "draft") {
         // A CONFIRMED revert - `reconcile.ts`'s own documented design decision: back to draft, no
         // redraft needed (leaves/root already verified), so the SAME record can retry immediately.
+        // WP4.19 V5 - kept hash before it is cleared below, mirroring TagIssueWizard.tsx's own
+        // `lastFailedTxHash` (`lastFailedTxHash`'s own doc comment above).
+        setLastFailedTxHash(pendingTxHash);
         setLastIssueError(body.lastIssueError);
         setPendingTxHash(undefined);
+        setRefundOutcome(null);
         setRecord((prev) => (prev ? {...prev, status: "draft", chain: {...prev.chain, txHash: undefined}} : prev));
         return;
       }
       snackbar.show("Record issued on chain", "ok");
+      // WP4.19 V2 - only reachable once the receipt actually resolved `isSuccess` (the `draft`
+      // branch above is what an `isError`/reverted receipt reconciles to instead), so `receipt.data`
+      // is always the successful receipt's own logs here.
+      if (receipt.data && record?.chain.contract) {
+        setRefundOutcome(decodeRefundOutcome(receipt.data.logs, record.chain.contract));
+      }
       setRecord((prev) => (prev ? {...prev, status: "active", chain: {...prev.chain, contract: body.contract ?? prev.chain.contract}} : prev));
     } finally {
       setConfirming(false);
     }
   }
 
-  // Fires once, when the wallet's own receipt confirms - mirrors TagIssueWizard's identical effect
-  // exactly (a side effect belongs in useEffect, never called inline during render).
+  // `isError` too, not just `isSuccess` (WP4.19 V5, replicating the 2026-09-25 incident fix round
+  // 2 exactly - `@wagmi/core`'s `waitForTransactionReceipt` throws instead of resolving for a
+  // REVERTED receipt, so `isSuccess` alone left a reverted `issueRecord` stuck on "Waiting for the
+  // transaction to confirm..." forever, reproduced directly before this fix). `runConfirm` itself
+  // already re-reads the chain via `reconcileAnchoredRecord` regardless of which outcome triggered
+  // it ("a receipt is not proof"), so calling it on `isError` is exactly as safe as `isSuccess`
+  // already was.
   useEffect(() => {
-    if (receipt.isSuccess) void runConfirm();
+    if (receipt.isSuccess || receipt.isError) void runConfirm();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [receipt.isSuccess]);
+  }, [receipt.isSuccess, receipt.isError]);
 
   async function handleSignAttestation() {
     if (!record) return;
@@ -246,8 +271,17 @@ export function IssueRecordForm({petId, onDone}: {petId: string; onDone: () => v
         {(record.status === "draft" || record.status === "error") && (
           <div className="mt-4 space-y-3">
             {lastIssueError && (
-              <Banner tone="danger" title="Previous attempt did not confirm">
-                {lastIssueError}
+              // WP4.19 V5 - "Transaction failed" (was "Previous attempt did not confirm"),
+              // matching TagIssueWizard.tsx's own 2026-09-25 incident-fix-round-2 wording exactly -
+              // Kenneth's explicit UX ask applied here too, plus the dead tx kept for the record
+              // (copyable, explorer-linked) the way that fix's own banner already does.
+              <Banner tone="danger" title="Transaction failed">
+                <p>{lastIssueError}</p>
+                {lastFailedTxHash && (
+                  <div className="mt-2">
+                    <HashCell value={lastFailedTxHash} chain="roax" kind="tx" label="failed tx" />
+                  </div>
+                )}
               </Banner>
             )}
             {walletMismatch && (
@@ -269,6 +303,8 @@ export function IssueRecordForm({petId, onDone}: {petId: string; onDone: () => v
         {record.status === "active" && (
           <div className="mt-4 space-y-3">
             <p className="text-body text-ok">Record issued successfully.</p>
+            {/* WP4.19 V2 - whether the clinic's clone refunded the gas this wallet fronted. */}
+            {refundOutcome && <p className="text-caption text-ink-muted">{refundFeedbackMessage(refundOutcome)}</p>}
             {record.attestation || attestationSigned ? (
               <StatusBadge label="Issuer attestation signed" tone="ok" />
             ) : (
