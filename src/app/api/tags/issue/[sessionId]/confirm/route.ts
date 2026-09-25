@@ -68,6 +68,10 @@ export async function POST(request: Request, {params}: {params: Promise<{session
       root: session.root,
       txHash: undefined,
       lastIssueError: ISSUE_TX_REVERTED_MESSAGE,
+      // The tx that just confirmed reverted IS the one markSessionRevertedReady just pushed onto
+      // failedIssueTxHashes - returned here so the wizard can show it immediately (copyable,
+      // explorer-linked) without waiting for the next 2s poll tick to re-fetch it.
+      lastFailedTxHash: session.txHash,
     });
   }
 

@@ -40,6 +40,10 @@ interface SessionPoll {
   /** Set when a previous `issueTag` attempt confirmed REVERTED on chain (WP4.5 track 3) - shown
    * next to the re-enabled Issue button on a `ready` session. */
   lastIssueError?: string;
+  /** The LAST reverted `issueTag` tx hash (2026-09-25 incident fix round 2) - kept for the record
+   * (copyable, explorer link) next to the "Transaction failed" banner, unlike `txHash` (the
+   * CURRENT live attempt only, cleared the instant a session reverts). */
+  lastFailedTxHash?: string;
   errorStage?: string;
   errorReason?: string;
   /** Whether the C3 issuer attestation is already stored for this session's tag - read from the
@@ -201,7 +205,23 @@ export function TagIssueWizard() {
     // /api/tags/issue/:sessionId/confirm` has by now already overwritten that same field with the
     // NEW tag's id/root (see `revoke-superseded/route.ts`'s doc comment for why a petId-keyed
     // lookup here would read back the wrong tag and wrongly refuse to confirm).
-    if (revokePrevReceipt.isSuccess && revokePrevTxHash && replacingPet?.dogTag.cloneAddress && replacingPet.dogTag.dogTagIdField && replacingPet.dogTag.root) {
+    //
+    // `isError` too, not just `isSuccess` (2026-09-25 incident fix round 2): wagmi's own
+    // `waitForTransactionReceipt` (`@wagmi/core`, wrapped by `useWaitForTransactionReceipt`) does
+    // NOT resolve normally for a REVERTED receipt the way viem's bare action does - it replays the
+    // call via `eth_call` to extract a revert reason and THROWS, so this query's `isSuccess` would
+    // never become true for a reverted `revokeTag`, leaving the "Revoke previous tag" prompt
+    // waiting forever with no feedback. `revoke-superseded/route.ts` already re-reads
+    // `isValid(root)` on the chain itself before trusting either outcome (its own `.catch` below
+    // already handles that route refusing), so it is safe to call it either way and let the
+    // server's own chain read decide.
+    if (
+      (revokePrevReceipt.isSuccess || revokePrevReceipt.isError) &&
+      revokePrevTxHash &&
+      replacingPet?.dogTag.cloneAddress &&
+      replacingPet.dogTag.dogTagIdField &&
+      replacingPet.dogTag.root
+    ) {
       fetch("/api/tags/revoke-superseded", {
         method: "POST",
         headers: {"Content-Type": "application/json"},
@@ -221,7 +241,7 @@ export function TagIssueWizard() {
         .catch(() => snackbar.show("Revoke transaction sent, but confirmation failed. Refresh and retry.", "danger"));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [revokePrevReceipt.isSuccess]);
+  }, [revokePrevReceipt.isSuccess, revokePrevReceipt.isError]);
 
   async function handleRevokePrevious() {
     if (!replacingPet?.dogTag.cloneAddress || !replacingPet.dogTag.dogTagIdField || !address) return;
@@ -335,7 +355,18 @@ export function TagIssueWizard() {
   }
 
   useEffect(() => {
-    if (receipt.isSuccess && session?.sessionId) {
+    // `isError` too, not just `isSuccess` (2026-09-25 incident fix round 2 - the actual root cause
+    // of the session getting stuck on "Issuing" / "Waiting for the transaction to confirm..."
+    // forever after a reverted `issueTag`): wagmi's own `waitForTransactionReceipt`
+    // (`@wagmi/core`, what `useWaitForTransactionReceipt` calls under the hood) does NOT resolve
+    // normally for a REVERTED receipt the way viem's bare `waitForTransactionReceipt` action does -
+    // it replays the call via `eth_call` to extract a revert reason and THROWS instead, so
+    // `receipt.isSuccess` never becomes `true` for a reverted tx and this effect, gated on
+    // `isSuccess` alone, never ran. The confirm route re-reads the receipt status itself via a raw
+    // JSON-RPC call (`readTxReceiptStatus`, independent of wagmi's own client-side interpretation)
+    // and is the sole source of truth either way ("a receipt is not proof") - calling it on
+    // `isError` is exactly as safe as calling it on `isSuccess` already was.
+    if ((receipt.isSuccess || receipt.isError) && session?.sessionId) {
       fetch(`/api/tags/issue/${session.sessionId}/confirm`, {method: "POST"})
         .then((r) => r.json())
         .then((body) => {
@@ -343,21 +374,27 @@ export function TagIssueWizard() {
           // WP4.5 track 3: a reverted `issueTag` lands back on `ready` (not `error`) with
           // `lastIssueError` set - shown immediately here (not left to wait for the next 2s poll
           // tick) and the now-dead `txHash` cleared, matching what the next GET poll will confirm.
-          // A bare `body.status ?? prev.status` (every other outcome) deliberately leaves
+          // `lastFailedTxHash` (2026-09-25 fix round 2) is the one the "Transaction failed" banner
+          // below renders - kept for the record even though the live `txHash` is cleared. A bare
+          // `body.status ?? prev.status` (every other outcome) deliberately leaves
           // `txHash`/`lastIssueError` untouched - `JSON.stringify` drops an explicit `undefined`
           // key entirely, so those OTHER response shapes (202 chain-read-failed passthrough, the
           // plain `{error}` badRequest body) never actually carry these fields to distinguish
           // "clear it" from "this response just doesn't mention it".
           if (body.status === "ready") {
             if (body.lastIssueError) snackbar.show(body.lastIssueError, "danger");
-            setSession((prev) => (prev ? {...prev, status: "ready", txHash: undefined, lastIssueError: body.lastIssueError} : prev));
+            setSession((prev) =>
+              prev
+                ? {...prev, status: "ready", txHash: undefined, lastIssueError: body.lastIssueError, lastFailedTxHash: body.lastFailedTxHash}
+                : prev,
+            );
           } else {
             setSession((prev) => (prev ? {...prev, status: body.status ?? prev.status} : prev));
           }
         });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [receipt.isSuccess]);
+  }, [receipt.isSuccess, receipt.isError]);
 
   async function handleSignAttestation() {
     if (!session?.sessionId || !address) return;
@@ -429,7 +466,15 @@ export function TagIssueWizard() {
       stopPolling();
       setSession((prev) =>
         prev
-          ? {...prev, status: "ready", dogTagId: body.dogTagId ?? prev.dogTagId, root: body.root ?? prev.root, txHash: undefined, lastIssueError: body.lastIssueError}
+          ? {
+              ...prev,
+              status: "ready",
+              dogTagId: body.dogTagId ?? prev.dogTagId,
+              root: body.root ?? prev.root,
+              txHash: undefined,
+              lastIssueError: body.lastIssueError,
+              lastFailedTxHash: body.lastFailedTxHash,
+            }
           : prev,
       );
       if (body.lastIssueError) snackbar.show(body.lastIssueError, "danger");
@@ -474,8 +519,19 @@ export function TagIssueWizard() {
           {session.status === "ready" && (
             <div className="mt-4 space-y-3">
               {session.lastIssueError && (
-                <Banner tone="danger" title="Previous attempt did not confirm">
-                  {session.lastIssueError}
+                // Kenneth, 2026-09-25 incident fix round 2: an explicit "Transaction failed" state
+                // (not the earlier "Previous attempt did not confirm" wording) with the dead tx kept
+                // for the record - copyable, explorer-linked, via the same HashCell every other tx
+                // hash in this wizard renders through - rather than silently dropped once the
+                // session (correctly) returns to `ready` so staff can retry. The session itself is
+                // NEVER lost: same sessionId/root, "Issue on chain" below is the retry action.
+                <Banner tone="danger" title="Transaction failed">
+                  <p>{session.lastIssueError}</p>
+                  {session.lastFailedTxHash && (
+                    <div className="mt-2">
+                      <HashCell value={session.lastFailedTxHash} chain="roax" kind="tx" label="failed tx" />
+                    </div>
+                  )}
                 </Banner>
               )}
               <p className="text-body text-ink-muted">

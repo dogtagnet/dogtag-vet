@@ -54,21 +54,34 @@ export function TagsTable({timeZone}: {timeZone: string}) {
   }, []);
 
   useEffect(() => {
-    if (receipt.isSuccess && pendingTx) {
+    // `isError` too, not just `isSuccess` (2026-09-25 incident fix round 2): wagmi's own
+    // `waitForTransactionReceipt` (`@wagmi/core`, what `useWaitForTransactionReceipt` calls under
+    // the hood) does NOT resolve normally for a REVERTED receipt the way viem's bare action does -
+    // it replays the call via `eth_call` to extract a revert reason and THROWS, so `isSuccess`
+    // alone left a reverted `revokeTag`/`reactivateTag` stuck here forever with no feedback (the
+    // same root cause `TagIssueWizard.tsx`'s `issueTag` receipt effect had). `/lifecycle` already
+    // re-reads `isValid(root)` on chain itself before trusting either outcome (this route's own doc
+    // comment), so it is safe to call it either way; `r.ok` is now checked instead of assumed, so a
+    // genuine revert (400) shows an honest failure instead of a false "Tag revoked"/"reactivated".
+    if ((receipt.isSuccess || receipt.isError) && pendingTx) {
       fetch(`/api/tags/${pendingTx.petId}/lifecycle`, {
         method: "POST",
         headers: {"Content-Type": "application/json"},
         body: JSON.stringify({action: pendingTx.action, reasonCode: pendingTx.reasonCode, txHash: pendingTx.hash}),
       })
-        .then((r) => r.json())
-        .then(() => {
-          snackbar.show(`Tag ${pendingTx.action === "revoke" ? "revoked" : "reactivated"}`, "ok");
+        .then(async (r) => ({ok: r.ok, body: await r.json().catch(() => null)}))
+        .then(({ok, body}) => {
+          if (ok) {
+            snackbar.show(`Tag ${pendingTx.action === "revoke" ? "revoked" : "reactivated"}`, "ok");
+          } else {
+            snackbar.show(body?.error?.message ?? `Tag ${pendingTx.action} transaction failed`, "danger");
+          }
           setPendingTx(null);
           load();
         });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [receipt.isSuccess]);
+  }, [receipt.isSuccess, receipt.isError]);
 
   async function handleLifecycle(pet: PetDoc, action: "revoke" | "reactivate") {
     if (!address || !pet.dogTag.dogTagIdField) return;

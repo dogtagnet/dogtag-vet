@@ -38,6 +38,11 @@ export async function GET(request: Request, {params}: {params: Promise<{sessionI
     root: session.root,
     txHash: session.txHash,
     lastIssueError: session.lastIssueError,
+    // 2026-09-25 incident fix round 2: the LAST reverted issueTag tx, kept for the record
+    // (copyable, explorer-linked) next to the "Transaction failed" banner - `failedIssueTxHashes`
+    // is an append-only audit trail (`MintSessionDoc`'s own doc comment), so `.at(-1)` is the most
+    // recent attempt, matching the one `lastIssueError` itself describes.
+    lastFailedTxHash: session.failedIssueTxHashes?.at(-1),
     errorStage: session.errorStage,
     errorReason: session.errorReason,
     attestationSigned: Boolean(pet?.dogTag?.attestation),

@@ -5,7 +5,7 @@ import {fileURLToPath} from "node:url";
 import {randomBytes, randomUUID} from "node:crypto";
 import {MongoClient} from "mongodb";
 import {E2E_MONGO_URI} from "./mongo-fixture";
-import {RPC_STUB_URL, getLastSendTransaction, resetRpcStub, setRpcGasEstimate, setRpcReceipt, setRpcScenario} from "./rpcStub";
+import {RPC_STUB_URL, getLastSendTransaction, getLastSentTxHash, resetRpcStub, setRpcGasEstimate, setRpcReceipt, setRpcScenario} from "./rpcStub";
 
 // Same scratchpad directory calendar-services.spec.ts/booking-config-timezone.spec.ts/others
 // already write their own both-theme screenshots into - one shared, obviously-scratch location
@@ -190,6 +190,58 @@ function randomToken(): string {
   return randomBytes(16).toString("hex");
 }
 
+/**
+ * REPRODUCTION (coordinator's additional defect, 2026-09-25 screenshot: session stuck on "Issuing"
+ * / "Waiting for the transaction to confirm..." indefinitely after a reverted `issueTag`) - the
+ * FULL client round trip through the mock connector: click "Issue on chain", let the mock
+ * connector's own `eth_sendTransaction` actually submit, learn the hash it really returned
+ * (`getLastSentTxHash`, WP4.7 A9's own documented-but-previously-unused recipe for exactly this),
+ * THEN script that hash as reverted so wagmi's `useWaitForTransactionReceipt` polling picks it up
+ * on its own next tick - unlike every other revert test in this file, which triggers
+ * `reconcileAnchoredSession` directly via `page.request.post(.../confirm)` and so never actually
+ * proves whether the BROWSER's own receipt-watch -> confirm-POST wiring fires for a reverted
+ * receipt at all.
+ */
+test("REPRODUCE: a reverted issueTag receipt, discovered through the real wagmi receipt watch (not an API-level confirm call), does not get stuck on Issuing", async ({page}) => {
+  const {sessionId} = await seedReadySession();
+  await setRpcGasEstimate(300_000n);
+
+  await page.goto(`/tags/issue?session=${sessionId}`);
+  const issueButton = page.getByRole("button", {name: "Issue on chain"});
+  await expect(issueButton).toBeEnabled({timeout: 15_000});
+  await issueButton.click();
+
+  await expect(page.getByText("Waiting for the transaction to confirm...")).toBeVisible({timeout: 15_000});
+
+  // The REAL hash the mock connector's eth_sendTransaction actually returned to the app (never one
+  // this test invents) - poll until the app's own request has landed in the stub.
+  let realHash: string | null = null;
+  await expect
+    .poll(async () => {
+      realHash = await getLastSentTxHash();
+      return realHash;
+    }, {timeout: 15_000})
+    .not.toBeNull();
+  await setRpcReceipt(realHash!, "reverted");
+
+  // 2026-09-25 fix round 2: wagmi's own waitForTransactionReceipt throws (not resolves) on a
+  // reverted receipt, so TagIssueWizard's confirm-triggering effect must react to isError too, not
+  // just isSuccess - the actual root cause of the stuck-forever symptom this test reproduces
+  // against pre-fix code. Once fixed, this session must leave "Waiting for the transaction to
+  // confirm..." within a couple of poll ticks (2s each, TagIssueWizard.startPolling) and show the
+  // re-enabled Issue button with the "Transaction failed" banner and the dead tx hash kept for the
+  // record.
+  await expect(page.getByText("Waiting for the transaction to confirm...")).toBeHidden({timeout: 20_000});
+  // Scoped to <main> (src/app/(app)/layout.tsx) - the transient Snackbar toast (also role="status",
+  // like Banner's own root) shows the identical lastIssueError text outside <main> at the same
+  // moment, which would otherwise make a bare page-level getByText ambiguous (strict mode).
+  const main = page.getByRole("main");
+  await expect(main.getByText("Transaction failed")).toBeVisible({timeout: 5_000});
+  await expect(main.getByText(ISSUE_TX_REVERTED_MESSAGE)).toBeVisible();
+  await expect(main.getByText("failed tx")).toBeVisible();
+  await expect(page.getByRole("button", {name: "Issue on chain"})).toBeEnabled();
+});
+
 /** Seeds a `MintSession` at `status: "pending"` with a real `BindToken`, mirroring exactly what
  * `POST /api/tags/issue/start` creates - for `GET /p/:token` resolve-payload tests that need a
  * real token rather than driving the full preflight/allocate start flow (this suite's own
@@ -255,6 +307,9 @@ test("reverted issueTag receipt: confirm flips the session back to ready with a 
   const confirmBody = await confirmRes.json();
   expect(confirmBody.status).toBe("ready");
   expect(confirmBody.lastIssueError).toMatch(/reverted/i);
+  // 2026-09-25 fix round 2 - the dead tx kept for the record (the "Transaction failed" banner's
+  // own hash), even though the LIVE txHash below is cleared.
+  expect(confirmBody.lastFailedTxHash).toBe(txHash);
 
   const stored = await mongoClient.db().collection("mintsessions").findOne({sessionId});
   expect(stored?.status).toBe("ready");
@@ -270,6 +325,7 @@ test("reverted issueTag receipt: confirm flips the session back to ready with a 
   expect(pollBody.status).toBe("ready");
   expect(pollBody.lastIssueError).toMatch(/reverted/i);
   expect(pollBody.txHash).toBeUndefined();
+  expect(pollBody.lastFailedTxHash).toBe(txHash);
 });
 
 test("retry after a revert: a fresh attempt that confirms successfully clears lastIssueError and binds the tag", async ({page}) => {
@@ -428,6 +484,7 @@ test("retry on an error session whose tx later reads back reverted: reconciles s
   expect(retryBody.status).toBe("ready");
   expect(retryBody.root).toBe(root); // the SAME root - never discarded/re-armed
   expect(retryBody.lastIssueError).toMatch(/reverted/i);
+  expect(retryBody.lastFailedTxHash).toBe(txHash); // 2026-09-25 fix round 2
 
   const stored = await mongoClient.db().collection("mintsessions").findOne({sessionId});
   expect(stored?.status).toBe("ready");
@@ -534,8 +591,11 @@ test("UI: a ready session with a recorded revert shows the banner, the sponsorsh
   // pays the mock connector's own connect round trip on top of the cold-`next dev`-compile budget
   // every other spec's first navigation already carries (see signInAsStaff's own comments elsewhere
   // in this suite for that class of flake).
-  await expect(page.getByText("Previous attempt did not confirm")).toBeVisible({timeout: 15_000});
+  // 2026-09-25 fix round 2: "Transaction failed" (not the earlier "Previous attempt did not
+  // confirm" wording), with the dead tx kept for the record next to it.
+  await expect(page.getByText("Transaction failed")).toBeVisible({timeout: 15_000});
   await expect(page.getByText(ISSUE_TX_REVERTED_MESSAGE)).toBeVisible();
+  await expect(page.getByText("failed tx")).toBeVisible();
 
   const issueButton = page.getByRole("button", {name: "Issue on chain"});
   await expect(issueButton).toBeVisible();
@@ -627,7 +687,7 @@ test("UI: both-theme screenshots of the revert state", async ({page}) => {
 
   for (const theme of ["Light", "Dark"] as const) {
     await page.goto(`/tags/issue?session=${sessionId}`);
-    await expect(page.getByText("Previous attempt did not confirm")).toBeVisible({timeout: 15_000});
+    await expect(page.getByText("Transaction failed")).toBeVisible({timeout: 15_000});
     await setTheme(page, theme);
     await page.screenshot({path: `${SHOTS_DIR}/tag-issue-revert-${theme.toLowerCase()}.png`});
   }
@@ -751,6 +811,50 @@ test("UI: the Tags page Revoke click sends the gas FLOOR for revokeTag, not the 
   // clears in handleLifecycle's `finally` regardless), so it does not assert on post-confirm UI -
   // the wire-level gas value is the whole point, mirroring the issueTag test above exactly.
   void petId;
+});
+
+/**
+ * REPRODUCTION + fix proof for the SAME root cause as the issueTag REPRODUCE test above, this time
+ * on `TagsTable.tsx`'s shared `revokeTag`/`reactivateTag` receipt effect (coordinator's explicit
+ * ask: "check revokeTag and reactivateTag polling for the same gap and fix them the same way if
+ * present"). Same mechanism: wagmi's `waitForTransactionReceipt` throws (does not resolve) on a
+ * REVERTED receipt, so an effect gated on `receipt.isSuccess` alone never fires - `TagsTable.tsx`'s
+ * effect must react to `receipt.isError` too. `/lifecycle`'s own `isValid(root)` re-read (unscripted
+ * here) does not match a `revoke` action's expectation regardless of receipt status, so this proves
+ * two things at once: the effect actually FIRES on a reverted receipt (an honest danger snackbar
+ * appears, not a silent stuck "Revoke" click with zero feedback), and it does NOT show a false
+ * "Tag revoked" success message the way a response-status-blind `.then` would have.
+ */
+test("REPRODUCE: TagsTable's revokeTag receipt effect reacts to a reverted receipt (isError), not just isSuccess, and never shows a false success snackbar", async ({page}) => {
+  await configureClinic(page);
+  const {dogTagIdField, root} = await seedIssuedActivePet(CLONE_ADDRESS);
+  await setRpcGasEstimate(300_000n);
+  // Force a genuine mismatch regardless of the revert: the stub's own unscripted `isValid` default
+  // is `false` (rpcStub.ts's defaultResultFor), which would ACCIDENTALLY match `revoke`'s own
+  // expectedValid=false and let `/lifecycle` succeed regardless of what the tx actually did -
+  // scripting `true` here simulates the chain still showing the tag valid/active because the
+  // revoke never actually took effect, the genuinely alarming case `/lifecycle`'s own mismatch
+  // check exists to catch.
+  await setRpcScenario("isValid", CLONE_ADDRESS, [root], true);
+
+  await page.goto("/tags");
+  const row = page.getByRole("row", {name: new RegExp(dogTagIdField)});
+  await expect(row).toBeVisible({timeout: 15_000});
+  await row.getByRole("button", {name: "Revoke"}).click();
+
+  let realHash: string | null = null;
+  await expect
+    .poll(async () => {
+      realHash = await getLastSentTxHash();
+      return realHash;
+    }, {timeout: 15_000})
+    .not.toBeNull();
+  await setRpcReceipt(realHash!, "reverted");
+
+  // An honest failure snackbar, never the false "Tag revoked" positive a status-blind `.then`
+  // would show, and never silence (the pre-fix stuck-forever shape).
+  await expect(page.getByText(/chain does not yet reflect this action/i)).toBeVisible({timeout: 15_000});
+  await expect(page.getByText("Tag revoked", {exact: true})).toHaveCount(0);
 });
 
 /**

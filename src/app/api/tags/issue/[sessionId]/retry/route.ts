@@ -72,6 +72,9 @@ export async function POST(request: Request, {params}: {params: Promise<{session
           dogTagId: session.dogTagIdDec,
           root: session.root,
           lastIssueError: ISSUE_TX_REVERTED_MESSAGE,
+          // Same as confirm's own reverted branch (2026-09-25 fix round 2) - the failed tx kept for
+          // the record next to the "Transaction failed" banner.
+          lastFailedTxHash: session.txHash,
         });
       }
     }
