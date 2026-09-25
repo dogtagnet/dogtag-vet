@@ -108,6 +108,13 @@ test.describe.serial("WP4.7C - vet self-service wallet + whitelist status", () =
     // Inviting is still owner-only (D4, unchanged by this WP) - everything from here on is the
     // VET acting on their OWN session, which is this WP's whole point.
     await page.goto("/settings");
+    // WP4.19 - /settings now mounts an extra client-side live-balance read (IssuanceWalletBalanceLine)
+    // that shifted this page's own hydration timing enough to expose a pre-existing hydration race
+    // on a still-pre-hydration <select>'s selectOption elsewhere in this suite
+    // (practitioner-mode.spec.ts/practitioner-profile.spec.ts, both fixed the same way) - applied
+    // here proactively too, since this test's own header comment already documents this exact route
+    // as fragile under load even before that change.
+    await page.waitForLoadState("networkidle");
     await page.getByLabel("Invite by email").fill(VET_EMAIL);
     await page.getByLabel("Role to invite as").selectOption("vet");
     await page.getByRole("button", {name: "Invite"}).click();
