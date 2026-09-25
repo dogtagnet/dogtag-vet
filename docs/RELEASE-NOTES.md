@@ -12,7 +12,7 @@ The issue wizard and the tags table now react to `isError` too, and show a "Tran
 
 ### Seamless gas for clinic operators (WP4.19)
 
-The clinic's admin now funds each newly whitelisted issuance operator wallet with a base amount of native PLASMA, and tops it back up when it drops low, so a vet or owner should never need to think about gas at all.
+The DogTag admin now funds each newly whitelisted issuance operator wallet with a base amount of native PLASMA, and tops it back up when it drops low, so a vet or owner should never need to think about gas at all.
 This repo's own half of that work:
 
 - The "My issuance wallet" card (Settings) and the wallet banner on `/tags`, `/tags/issue`, and a pet's own page all show the connected operator wallet's live PLASMA balance, plus a low-balance warning below `OPERATOR_LOW_PLASMA` (env, default 0.1) with a "Request a top-up" button.

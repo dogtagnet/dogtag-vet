@@ -112,7 +112,18 @@ export function RecordsCard({petId, timeZone, dogTagIssued}: {petId: string; tim
             // Genuine bug this same gap exposed here too (mirroring TagsTable.tsx's own fix): this
             // handler never checked `r.ok` before this fix, so a confirmed-REVERTED revoke would
             // have shown a false "Record revoked" snackbar instead of an honest failure.
-            const message = body?.error?.message ?? "Revoke transaction failed";
+            //
+            // WP4.19 fix round 1 N4 - when the receipt itself is already known REVERTED
+            // (`receipt.isError`), never surface `/lifecycle`'s own generic "The chain does not
+            // yet reflect this action. Wait for the transaction to confirm and retry." here: that
+            // route's badRequest text is written for a write that has not been INDEXED yet, not
+            // one this browser already watched fail for good - telling staff to wait for a
+            // transaction that has already reverted is actively misleading (grade round 1 N4). Any
+            // OTHER failure (a chain-read error on the route's own side, or a race this app cannot
+            // yet distinguish) still surfaces that route's own text unchanged.
+            const message = receipt.isError
+              ? "Transaction reverted on chain - you can revoke again."
+              : (body?.error?.message ?? "Revoke transaction failed");
             snackbar.show(message, "danger");
             setFailedRevoke({recordId: pendingTx.recordId, hash: pendingTx.hash, message});
           }

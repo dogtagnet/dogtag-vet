@@ -255,7 +255,9 @@ test.describe("WP4.19 V5 - IssueRecordForm reacts to a reverted receipt (status 
  * LEFT scripted true (from `issueAndConfirmRabiesRecord`'s own setup) rather than flipped false:
  * the record's root was never actually invalidated by a revoke that reverted, so `/lifecycle`'s
  * own re-read correctly still agrees - the honest, decisive-re-read property the SUCCESS revoke
- * test in "vaccination record lifecycle" below exercises the other way.
+ * test in "vaccination record lifecycle" below exercises the other way. Also pins fix round 1 N4
+ * (RecordsCard.tsx): the banner no longer surfaces `/lifecycle`'s stale "wait for the transaction
+ * to confirm and retry" text on a receipt already known reverted.
  */
 test.describe("WP4.19 V5 - RecordsCard reacts to a reverted revokeRecord receipt", () => {
   test("shows Transaction failed with the kept hash, and the row stays Active", async ({page}) => {
@@ -279,6 +281,13 @@ test.describe("WP4.19 V5 - RecordsCard reacts to a reverted revokeRecord receipt
     // The dead tx kept for the record, not silently dropped - HashCell truncates to
     // value.slice(0,6) (MonoValue.tsx's own default prefix).
     await expect(page.getByText(revokeHash.slice(0, 6), {exact: false})).toBeVisible();
+    // WP4.19 fix round 1 N4 - never the lifecycle route's stale "wait for the transaction to
+    // confirm and retry" text, which told staff to wait for a transaction that had already failed
+    // for good; an honest "reverted, try again" message instead. Scoped to the row: the identical
+    // message also transiently toasts as a snackbar (`role="status"` too), which would otherwise
+    // strict-mode-collide with this same text.
+    await expect(page.getByText(/Wait for the transaction to confirm and retry/)).toHaveCount(0);
+    await expect(row.getByText("Transaction reverted on chain - you can revoke again.")).toBeVisible();
 
     // The row itself never flipped: the revoke never actually landed.
     await expect(row.getByText("Active", {exact: true})).toBeVisible();
