@@ -128,6 +128,27 @@ The same helper, same short (5s) cache, backs three surfaces so they can never d
 The panel is now read-only, and its own copy points whoever is looking at it to the DogTag admin portal instead.
 See `docs/DEPLOY.md`'s "Vet role, issuance operators, and per-practitioner scheduling" section for the operational procedure a clinic now follows (apply in the DogTag admin portal, the admin approves) to get a vet's recorded wallet whitelisted on a real chain.
 
+## Seamless gas for clinic operators (WP4.19)
+
+Kenneth's ask, after the workstation acceptance run: gas fees should never be something a vet has to think about.
+The DogTag admin now funds each whitelisted issuance operator wallet directly (a base amount of native PLASMA on whitelisting, topped back up when it drops low); this repo's own share of that work is showing the operator wallet's balance honestly and refusing to send a transaction that is certain to fail, never holding or moving funds itself.
+
+**Wallet balance and low-balance warning.**
+`useIssuanceWalletBalance` (`src/lib/useIssuanceWalletBalance.ts`) reads the connected operator wallet's live PLASMA balance straight from the public client, polling roughly every 15 seconds, and compares it against `OPERATOR_LOW_PLASMA` (env, default 0.1 - the vet runtime public config, `src/lib/env.public.ts`).
+`IssuanceWalletBalanceLine` (`src/components/wallet/`) renders the balance and, when it is low, a warning plus a "Request a top-up" button - shared verbatim between the "My issuance wallet" card (Settings) and the `/tags` + `/tags/issue` + pet-page wallet banner, so the two surfaces can never disagree about a wallet's own balance any more than they already could about its whitelist status.
+"Request a top-up" deep-links to the DogTag admin portal's own status page (`ADMIN_PORTAL_URL`, a new env value) rather than filing the admin's `topup` operator-request itself: that endpoint is gated by a session scoped to the clinic's admin-portal account, which this app has no way to hold or proxy.
+Left unconfigured, the button is replaced by plain instructions and a copyable wallet address instead of a broken link.
+
+**Refund feedback.**
+Every clone write that confirms (issue, revoke, reactivate, a vaccination record, adding or revoking a secondary owner, and a clone-relayed consent verification) decodes its own mined receipt's logs (`src/lib/refundFeedback.ts`) and reports "Gas refunded by the clinic contract" or "Refund skipped, the clinic's refund pool is low: tell your admin".
+There is no `GasRefunded` event anywhere in this protocol snapshot (checked directly against the vendored `VetIssuer.json` ABI) - a successful refund is a bare native transfer with no event of its own, so "refunded" is read as the absence of a `RefundSkipped` log on that receipt, never the presence of a positive one.
+
+**Pre-flight balance check.**
+Issuing, revoking, and reactivating a tag now refuse to send outright when the connected wallet's balance cannot cover that write's own gas floor (`chainWrite.ts`'s `GAS_FLOORS`, the same table the 2026-09-25 incident fix added) at the CURRENT gas price (`src/lib/gasPreflight.ts`, `src/lib/useGasPreflight.ts`), with the message "Your wallet needs about X PLASMA for this transaction; ask your admin for a top-up" and the same top-up request button - a clear refusal before the wallet ever gets involved, rather than a generic "insufficient funds" error from MetaMask.
+
+**The same reverted-receipt gap the 2026-09-25 incident fix disclosed but did not fix**, in `RecordsCard`, `IssueRecordForm`, `AddSecondaryOwnerAction`, `RevokeSecondaryOwnerAction`, and `VerifySessionPanel`, is closed here too: each now reacts to `isError`, not just `isSuccess`, on its own `useWaitForTransactionReceipt` (the same root cause - `@wagmi/core`'s own action throws instead of resolving for a reverted receipt), shows a "Transaction failed" banner with the dead transaction hash kept for the record, and keeps its own existing retry path.
+`VerifySessionPanel` is the one deliberate exception to "call the confirm route either way": its own `POST .../recorded` route has no independent chain re-check of its own (unlike every other confirm route this fix touches) and would otherwise mark a reverted submission as recorded, so that one path is client-only - see that component's own doc comment.
+
 ## Practitioner profile: first/last name, title, government accreditation
 
 Kenneth's ask (issue 3): split a practitioner's name into first and last name, add a qualification/title field (e.g. "DVM"), and add a government accreditation number, with a UI placeholder example of "USDA accreditation number".

@@ -74,6 +74,26 @@ This never fails silently: if the app cannot get a live estimate at all (no publ
 
 If you are running an older image (built before this fix) against a workstation deployment, the equivalent manual workaround in MetaMask is: before confirming any DogTag write, click "Edit" on the gas fee screen and raise the gas LIMIT (not the gas price) to at least 500,000 for a tag/record write or 2,000,000 for an add/revoke-secondary-owner write, rather than accepting whatever MetaMask pre-fills - MetaMask's own pre-fill is exactly the bare, un-headroomed estimate this fix now overrides.
 
+### Operator wallet funding (1.4.1, WP4.19)
+
+Since the DogTag admin now funds every whitelisted issuance operator wallet directly (a base amount of native PLASMA on whitelisting, topped back up whenever it drops low - see `dogtag-admin`'s own DEPLOY.md for that half), a clinic should rarely need to manually fund a staff wallet at all.
+This app's own share of "seamless gas" is entirely about SHOWING that state honestly, never about holding or moving funds itself - this repo still never holds a private key server-side, the same "no server-held private keys" rule the section above already states.
+
+Two new environment values, both RUNTIME values injected into every page the same way as the five protocol addresses above (`PublicConfigInitScript`), never build-time-inlined alone:
+
+- `OPERATOR_LOW_PLASMA` (default `0.1`) - the same low-balance threshold the admin funds operators against. Set it to match whatever value the admin deployment actually uses; a mismatch is not dangerous (both sides simply disagree about when to warn), but keeping them equal avoids a confusing "the admin already topped me up but the vet portal still calls it low" moment.
+- `ADMIN_PORTAL_URL` - this clinic's own DogTag admin portal base URL, e.g. `https://admin.example-clinic.test`, no trailing slash. Used only for the "Request a top-up" button's deep link to the admin portal's status page (the SAME page step 3 below already sends staff to by hand for a whitelist request). Left blank, the button is replaced by plain instructions and a copyable wallet address instead of a broken link.
+
+With both set, three things change on this app's own pages:
+
+1. The "My issuance wallet" card (Settings) and the wallet banner on `/tags`, `/tags/issue`, and a pet's own page all show the CONNECTED operator wallet's live PLASMA balance, read straight from the public client, refreshed roughly every 15 seconds. Below `OPERATOR_LOW_PLASMA`, a warning appears next to it with the "Request a top-up" button.
+2. After every clone write that confirms (issue, revoke, reactivate, a vaccination record, adding or revoking a secondary owner, and a clone-relayed consent verification), the app decodes the mined receipt's own logs and reports whether the clinic's clone actually refunded the gas: "Gas refunded by the clinic contract", or "Refund skipped, the clinic's refund pool is low: tell your admin" if the clone's own refund pool could not cover it. There is no `GasRefunded` event in this protocol snapshot - a successful refund is a bare native transfer with no event of its own, so "refunded" is read as the absence of a `RefundSkipped` log on that receipt, never a positive signal.
+   A skipped refund is a DIFFERENT, unrelated low-balance condition from the wallet warning above - it means the clinic's clone (`setMaxRefund`'s own pool, funded by whoever deployed it, separate from any operator wallet) is short, not the operator's own wallet. Point staff at the clinic's admin/owner to fund the clone directly (the admin approve stepper's own "Optional PLASMA top-up" step, or a manual `cast send` to the clone) - a "Request a top-up" click from the vet side files an OPERATOR wallet top-up request, which does nothing for this.
+3. Issuing, revoking, and reactivating a tag refuse to send outright when the connected wallet's balance cannot cover that specific write's own gas floor (see the floors listed above) at the CURRENT gas price, with the message "Your wallet needs about X PLASMA for this transaction; ask your admin for a top-up" and the same top-up request button, rather than letting the write reach the wallet and fail there with a generic "insufficient funds" error.
+
+"Request a top-up" is a deep link to the admin portal's status page, never a request this app submits on the vet's behalf: the admin's own operator-request endpoint is gated by a session scoped to the clinic's admin-portal account, which this app has no way to hold or proxy.
+Clicking it opens that page in a new tab; the vet (or whoever is signed into the admin portal for this clinic) still files the request there, the same "Issuance operators" section step 3 below already describes for a whitelist request - a `topup` request kind, reviewed and approved by the DogTag protocol admin the same way.
+
 ### Vet role, issuance operators, and per-practitioner scheduling
 
 This section covers two related, Settings-page-only features - neither needs an environment variable or a redeploy.
