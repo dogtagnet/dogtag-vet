@@ -670,6 +670,90 @@ test("UI: the Issue on chain click sends eth_sendTransaction with gas headroom o
 });
 
 /**
+ * 2026-09-25 workstation incident (tx 0xfb3414bac482635a0aa9c4a57e430ddf8a7ce6fb5cd5994564a45b38c5bfea47) -
+ * `legacyTxWithGas`'s gas FLOOR, proven over the wire exactly the way the gas-headroom test above
+ * proves the headroom formula: a REAL browser wallet write, through the mock connector, against a
+ * stubbed estimate low enough that the pre-fix "estimate + 20% + 30k" formula alone would still
+ * undercut issueTag's floor (mirroring the incident's own gas-price-0 refund-tail undercount) -
+ * `src/lib/chainWrite.ts`'s `GAS_FLOORS.issueTag` (400_000n) must win.
+ */
+test("UI: the Issue on chain click sends the gas FLOOR, not the under-headroomed bare estimate, when the stubbed estimate is far below the floor", async ({page}) => {
+  const {sessionId} = await seedReadySession();
+  // 100_000 + 20_000 + 30_000 = 150_000 - comfortably under issueTag's 400_000n floor.
+  await setRpcGasEstimate(100_000n);
+
+  await page.goto(`/tags/issue?session=${sessionId}`);
+  const issueButton = page.getByRole("button", {name: "Issue on chain"});
+  await expect(issueButton).toBeEnabled({timeout: 15_000});
+  await issueButton.click();
+
+  await expect(page.getByText("Waiting for the transaction to confirm...")).toBeVisible({timeout: 15_000});
+
+  const sent = await getLastSendTransaction();
+  expect(sent).not.toBeNull();
+  expect(sent?.gas).toBe(`0x${(400_000).toString(16)}`);
+});
+
+/** Seeds a Pet with an ACTIVE issued tag - the exact shape the `/tags` DataTable's "Revoke" row
+ * action needs (`GET /api/tags`'s own doc comment: `dogTag.dogTagIdDec` present, `external` unset). */
+async function seedIssuedActivePet(cloneAddress: string): Promise<{petId: string; dogTagIdField: string; root: string}> {
+  const petId = randomUUID();
+  const dogTagIdField = String(Math.floor(Math.random() * 1_000_000) + 1);
+  const root = randomHex(32);
+  await mongoClient.db().collection("pets").insertOne({
+    petId,
+    name: "Blaze",
+    microchip: {},
+    weightHistory: [],
+    ownerClientIds: [],
+    dogTag: {
+      dogTagIdDec: dogTagIdField,
+      dogTagIdField,
+      root,
+      status: "active",
+      cloneAddress,
+      issuedTx: randomHex(32),
+      issuedAt: new Date(),
+    },
+    searchKey: "blaze",
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  });
+  return {petId, dogTagIdField, root};
+}
+
+/** Same incident, `revokeTag`'s own floor - the `/tags` page's row-level "Revoke" action
+ * (`TagsTable.tsx`'s `handleLifecycle`), not the wizard's `issueTag` path above. `revokeTag` and
+ * `reactivateTag` share the SAME 400_000n floor (`GAS_FLOORS`) - this proves `revokeTag`'s wire
+ * value; `reactivateTag` shares the identical `legacyTxWithGas` call site (the same line, gated
+ * only by `action === "revoke" ? "revokeTag" : "reactivateTag"`), so proving one proves the shared
+ * floor-selection code path for both.
+ */
+test("UI: the Tags page Revoke click sends the gas FLOOR for revokeTag, not the under-headroomed bare estimate", async ({page}) => {
+  await configureClinic(page);
+  const {petId, dogTagIdField} = await seedIssuedActivePet(CLONE_ADDRESS);
+  await setRpcGasEstimate(100_000n); // same under-floor shape as the issueTag test above
+
+  await page.goto("/tags");
+  // Scoped by this test's own unique dogTagIdField, not the pet name "Blaze" - by the time this
+  // spec file runs to its end, many earlier tests in this SAME suite (shared Mongo, serial run)
+  // have left their own "Blaze"-named rows behind, which a plain name-based row locator would
+  // ambiguously match (strict mode).
+  const row = page.getByRole("row", {name: new RegExp(dogTagIdField)});
+  await expect(row).toBeVisible({timeout: 15_000});
+  await row.getByRole("button", {name: "Revoke"}).click();
+
+  await expect
+    .poll(async () => (await getLastSendTransaction())?.gas, {timeout: 15_000})
+    .toBe(`0x${(400_000).toString(16)}`);
+
+  // Cleanup note: this test intentionally never scripts a receipt for the revoke tx (busyPetId
+  // clears in handleLifecycle's `finally` regardless), so it does not assert on post-confirm UI -
+  // the wire-level gas value is the whole point, mirroring the issueTag test above exactly.
+  void petId;
+});
+
+/**
  * WP4.12V (Kenneth issue 2) - plan section 3.2 item 8's Playwright coverage: the issue wizard's
  * "4. Pet profile" section shows the three new inputs with the plan's own labels and placeholders.
  * A NEW pet name (not an existing one) is enough to reach this section - no session start, no

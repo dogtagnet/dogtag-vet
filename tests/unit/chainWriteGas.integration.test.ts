@@ -26,9 +26,12 @@ describe("legacyTxWithGas against a real RPC stub (network round trip, not a fak
     await stopStartedRpcStub();
   });
 
-  it("the gas it sends carries +20% + 30_000 headroom over whatever the stub's eth_estimateGas answers", async () => {
+  it("the gas it sends carries +20% + 30_000 headroom over whatever the stub's eth_estimateGas answers, once that headroom clears the floor", async () => {
     await resetRpcStub();
-    await setRpcGasEstimate(300_000n);
+    // issueTag's floor is 400_000n (src/lib/chainWrite.ts GAS_FLOORS) - a 900_000n estimate's own
+    // headroom formula clears that on its own, isolating the headroom-formula path from the floor
+    // path (covered by its own test below) even through a real RPC round trip.
+    await setRpcGasEstimate(900_000n);
 
     const publicClient = createPublicClient({chain: roax, transport: http(RPC_STUB_URL)});
     const result = await legacyTxWithGas(publicClient, {
@@ -40,15 +43,15 @@ describe("legacyTxWithGas against a real RPC stub (network round trip, not a fak
       account: "0x2222222222222222222222222222222222222222",
     });
 
-    // 300_000 + 300_000/5 (60_000) + 30_000 = 390_000 - strictly more than the bare stubbed estimate.
-    expect(result.gas).toBe(390_000n);
-    expect(result.gas!).toBeGreaterThan(300_000n);
+    // 900_000 + 900_000/5 (180_000) + 30_000 = 1_110_000 - strictly more than the bare stubbed estimate.
+    expect(result.gas).toBe(1_110_000n);
+    expect(result.gas).toBeGreaterThan(900_000n);
     expect(result.type).toBe("legacy");
   });
 
   it("a different stubbed estimate changes the sent gas by exactly the same headroom formula", async () => {
     await resetRpcStub();
-    await setRpcGasEstimate(100_000n);
+    await setRpcGasEstimate(1_000_000n);
 
     const publicClient = createPublicClient({chain: roax, transport: http(RPC_STUB_URL)});
     const result = await legacyTxWithGas(publicClient, {
@@ -60,6 +63,27 @@ describe("legacyTxWithGas against a real RPC stub (network round trip, not a fak
       account: "0x2222222222222222222222222222222222222222",
     });
 
-    expect(result.gas).toBe(150_000n); // 100_000 + 20_000 + 30_000
+    expect(result.gas).toBe(1_230_000n); // 1_000_000 + 200_000 + 30_000
+  });
+
+  it("2026-09-25 incident shape over a REAL RPC round trip: a stubbed estimate whose headroom formula lands below the floor still sends the floor, never the bare/under-headroomed estimate", async () => {
+    await resetRpcStub();
+    // Mirrors the incident: a low (gas-price-0-style) estimate whose +20%+30k headroom still lands
+    // well under issueTag's 400_000n floor.
+    await setRpcGasEstimate(100_000n);
+
+    const publicClient = createPublicClient({chain: roax, transport: http(RPC_STUB_URL)});
+    const result = await legacyTxWithGas(publicClient, {
+      address: "0x1111111111111111111111111111111111111111",
+      abi: [
+        {type: "function", name: "issueTag", stateMutability: "nonpayable", inputs: [], outputs: []},
+      ] as const,
+      functionName: "issueTag",
+      account: "0x2222222222222222222222222222222222222222",
+    });
+
+    // 100_000 + 20_000 + 30_000 = 150_000, under the 400_000n floor - the floor must win even
+    // though the estimate call itself succeeded over a real network round trip.
+    expect(result.gas).toBe(400_000n);
   });
 });
