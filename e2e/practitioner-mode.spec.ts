@@ -200,6 +200,18 @@ test.describe.serial("flow 3: per-practitioner mode, union availability, and boo
   test("switching to practitioner mode is blocked until a bookable practitioner has hours", async ({page}) => {
     await devLogin(page, "owner@example.com");
     await page.goto("/settings");
+    // WP4.19 - /settings now mounts the "My issuance wallet" card's own live PLASMA balance read
+    // (IssuanceWalletBalanceLine, a new client-side fetch on every page load) alongside everything
+    // else this page already renders, which measurably shifted this page's own hydration timing.
+    // Selecting an option on a still-pre-hydration <select> sets the DOM value but never reaches
+    // React's onChange (the listener is not attached yet), so React's own controlled value snaps
+    // the visible selection straight back on the next render - reproduced directly: without this
+    // wait, `selectOption("practitioner")` followed immediately by Save silently PATCHed
+    // `schedulingMode: "clinic"` (unchanged), the server-side block never ran, and this test's own
+    // assertion below timed out waiting for a banner that was never going to appear. Same fix
+    // `tag-custody.spec.ts`/others already apply to a first, cold-compiled navigation - wait for
+    // the page to actually settle before the first interaction.
+    await page.waitForLoadState("networkidle");
     await page.getByLabel("Scheduling mode").selectOption("practitioner");
     await page.getByRole("button", {name: "Save booking configuration"}).click();
     await expect(
@@ -252,6 +264,9 @@ test.describe.serial("flow 3: per-practitioner mode, union availability, and boo
       }
 
       await page.goto("/settings");
+      // WP4.19 - see this file's own identical wait a few lines up (the "blocked until a bookable
+      // practitioner" test) for the full reasoning.
+      await page.waitForLoadState("networkidle");
       await page.getByLabel("Scheduling mode").selectOption("practitioner");
       await page.getByRole("button", {name: "Save booking configuration"}).click();
       await expect(page.getByText("Booking settings saved")).toBeVisible({timeout: 10_000});

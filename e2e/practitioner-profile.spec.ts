@@ -243,6 +243,11 @@ test.describe.serial("WP4.13 - practitioner first/last name, title, accreditatio
       await ensurePractitionerHours(page, vetStaffId!, 9 * 60, 17 * 60);
 
       await page.goto("/settings");
+      // WP4.19 - see practitioner-mode.spec.ts's identical wait, same doc comment there: /settings
+      // now mounts an extra client-side live-balance read (IssuanceWalletBalanceLine) that shifted
+      // this page's own hydration timing enough to expose a pre-existing hydration race on a
+      // still-pre-hydration <select>'s selectOption - reproduced directly without this wait.
+      await page.waitForLoadState("networkidle");
       await page.getByLabel("Scheduling mode").selectOption("practitioner");
       await page.getByRole("button", {name: "Save booking configuration"}).click();
       await expect(page.getByText("Booking settings saved")).toBeVisible({timeout: 10_000});
