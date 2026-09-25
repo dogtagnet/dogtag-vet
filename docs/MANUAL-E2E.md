@@ -530,3 +530,23 @@ ROAX is the only payment chain; confirmations are 2, so a settled payment shows 
     Proof of success: after the RUSD payment the RUSD balance on ROAX is shown and decreased by the invoice amount; adding a custom network by RPC URL and chain id still works (native only), unchanged by this wave.
 
 A payment that never confirms: check that the clinic's vet worker is running (its `/healthz` reports the payment watcher's cursor advancing) and that the amount sent equals the invoice amount exactly; a short transfer is never matched by design.
+
+## Part 19 - [You + vet] Operator wallet funding and the low-balance flow (WP4.19)
+
+Runs on the workstation deployment after Part 17.
+The clinic contract refunds the gas of every clinic write from its own pool; the operator wallet only fronts it, so a small base amount keeps a vet going indefinitely.
+
+1. [Admin] Approve a clinic (Part 17 flow) or open an existing entity page, Operators panel: each whitelisted operator shows its PLASMA balance; below 0.1 PLASMA the row carries a **Low** badge.
+   Proof of success: the balance matches `cast balance <operator> --ether`.
+2. [Admin] Press **Fund operator wallet** on an operator (prefilled with 1 PLASMA, the `OPERATOR_BASE_PLASMA` default), confirm in MetaMask with the ADMIN wallet.
+   Proof of success: the row's balance rises by 1 PLASMA and the Low badge disappears.
+3. [Vet] Settings, card **My issuance wallet**: the same balance is shown; the /tags banner shows it too.
+   Proof of success: no low-balance warning while the balance is at or above 0.1 PLASMA.
+4. [Vet] Issue a tag (Part 4 flow).
+   Proof of success: after confirmation the session card says the gas was refunded by the clinic contract; the wallet balance is unchanged apart from rounding.
+5. [Vet, negative] Drain the operator wallet below the threshold in MetaMask (send the PLASMA to another address you control), reload Settings.
+   Proof of success: the card shows the low-balance warning and a **Request a top-up** button; pressing it opens the admin status page with the request form set to **Top-up** and the wallet address prefilled; submit it. The Issue tag wizard refuses to send a transaction and says how much PLASMA the wallet needs.
+6. [Admin] `/admin/operator-requests`: the top-up request is listed; open the entity page it links to and press **Fund operator wallet** on that request's row.
+   Proof of success: the request is marked decided with the funding transaction hash, and the vet's warning disappears on reload.
+7. [Vet, negative] With the clinic contract's pool drained below the refund amount (admin: send the clone's PLASMA away, or use a fresh clone with no top-up), issue a tag.
+   Proof of success: the write succeeds and the session card says the refund was skipped because the pool is low; the admin's clone balance banner shows the low pool.

@@ -1,4 +1,4 @@
-# DogTag workstation playbook for the deployment agent (FINAL, 2026-09-22: verified against the release tips protocol 3011e89, vet 2af957e, admin ff65729, ios 0b7bd19 by the WP4.17 phase C evaluation)
+# DogTag workstation playbook for the deployment agent (FINAL revision 2, 2026-09-25, adds the operator wallet funding of WP4.19; revision 1 of 2026-09-22: verified against the release tips protocol 3011e89, vet 2af957e, admin ff65729, ios 0b7bd19 by the WP4.17 phase C evaluation)
 
 ## For Kenneth (human summary)
 
@@ -165,11 +165,12 @@ VERIFY: the grep prints exactly 12 before the scripts run (13 means PUBLISH_TIME
 ## Step 10: onboard the clinic (Kenneth in the browser, agent verifies)
 
 1. Kenneth applies at `https://admin.dogtag.roax.net/apply` with "Platform base URL" `https://vet.dogtag.roax.net`.
-2. Kenneth approves at `/admin/applications/<id>` with the ADMIN wallet: the stepper adds the entity, deploys the clone, initialises delegation, grants the issuer role and whitelists the CLINIC OPERATOR address. ASK KENNETH for the clone address; record it.
+2. Kenneth approves at `/admin/applications/<id>` with the ADMIN wallet: the stepper adds the entity, deploys the clone, initialises delegation, grants the issuer role, whitelists the CLINIC OPERATOR address and, in the same operator step, offers "Fund operator wallet" (1 PLASMA from the ADMIN wallet, the `OPERATOR_BASE_PLASMA` default); Kenneth sends it so the clinic never starts with an empty wallet. ASK KENNETH for the clone address; record it.
 3. CHAIN: `cast send <CLONE> --value 50ether --rpc-url https://devrpc.roax.net --legacy --account dogtag-admin` (the clone's gas refund pool).
 4. Kenneth signs in at `https://vet.dogtag.roax.net/sign-in` (the first real sign-in becomes the clinic owner), completes `/setup` with the CLINIC OPERATOR wallet in MetaMask on chain 135, then Settings: clinic profile, services and availability, practitioner profile, receiving address on the ROAX (testnet) row.
 5. CHAIN (test balances): `cast send <RUSD> "mint(address,uint256)" <PHONE WALLET> 1000000000 --rpc-url https://devrpc.roax.net --legacy --account dogtag-admin` (1000 RUSD); ASK KENNETH for the phone wallet address first.
 VERIFY: `curl -s https://admin.dogtag.roax.net/v1/entities | jq '.entities[0] | {name, cloneAddress, platformBaseUrl}'` shows the clinic with its clone and vet URL; `cast call <CLONE> "operators(address)(bool)" <CLINIC OPERATOR> --rpc-url https://devrpc.roax.net` prints true.
+VERIFY: `cast balance <CLINIC OPERATOR> --rpc-url https://devrpc.roax.net --ether` is at least 1 (the operator wallet was funded); the vet portal's Settings card "My issuance wallet" shows the same balance with no low-balance warning.
 
 ## Step 11: phone build (Kenneth on the Mac; the agent only prepares the values)
 
