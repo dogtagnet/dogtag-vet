@@ -44,12 +44,31 @@ test.describe("V1 - My issuance wallet card + /tags banner show live PLASMA bala
   });
 
   test("a balance below OPERATOR_LOW_PLASMA shows the warning and a Request a top-up button", async ({page}) => {
+    // WP4.19 fix round 1 D1 - stubs `window.open` (`page.addInitScript`, before any app script
+    // runs) to capture its target rather than actually opening a new tab, so this test can pin the
+    // exact URL the button opens - the grade's own recipe (`plans/orchestration/wp4.19-grade.md`
+    // D1): "e2e asserts the `window.open` target ... so the contract is pinned". Bite: reverting
+    // `RequestTopUpButton.tsx`'s `onClick` back to a bare `${adminPortalUrl}/status` (dropping
+    // `?kind=topup&wallet=...`) turns this assertion red.
+    await page.addInitScript(() => {
+      const capture = window as typeof window & {__capturedWindowOpenUrl?: string | null};
+      capture.__capturedWindowOpenUrl = null;
+      window.open = ((url?: string | URL) => {
+        capture.__capturedWindowOpenUrl = url ? String(url) : null;
+        return null;
+      }) as typeof window.open;
+    });
+
     await setRpcBalance(MOCK_WALLET_ADDRESS, 50_000_000_000_000_000n); // 0.05 PLASMA, below the 0.1 default
     await page.goto("/settings");
     const card = page.locator("section", {hasText: "My issuance wallet"});
     await expect(card.getByTestId("issuance-wallet-balance")).toContainText("0.05 PLASMA", {timeout: 15_000});
     await expect(card.getByTestId("low-balance-warning")).toBeVisible();
     await expect(card.getByTestId("request-topup-button")).toBeVisible();
+
+    await card.getByTestId("request-topup-button").click();
+    const openedUrl = await page.evaluate(() => (window as typeof window & {__capturedWindowOpenUrl?: string | null}).__capturedWindowOpenUrl);
+    expect(openedUrl).toBe(`https://admin.example-clinic.test/status?kind=topup&wallet=${MOCK_WALLET_ADDRESS}`);
   });
 
   test("the /tags banner shows the same balance and warning (the status this banner already drives, extended)", async ({page}) => {

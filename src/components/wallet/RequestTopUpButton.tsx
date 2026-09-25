@@ -3,6 +3,7 @@
 import {Button} from "@/components/ui/controls";
 import {AddressChip} from "@/components/ui/AddressChip";
 import {usePublicEnv} from "@/lib/usePublicEnv";
+import {buildTopUpRequestUrl} from "@/lib/topUpRequestUrl";
 
 /**
  * WP4.19 V1/V3 - "Request a top-up", shared by the "My issuance wallet" card, the /tags +
@@ -23,6 +24,13 @@ import {usePublicEnv} from "@/lib/usePublicEnv";
  * `adminPortalUrl` (env.ts's `ADMIN_PORTAL_URL`, this repo's only admin-discovery mechanism today -
  * see that field's own doc comment) is this deployment's own admin portal base URL; blank (never
  * configured) falls back to plain instructions rather than a broken link.
+ *
+ * WP4.19 fix round 1 D1 - the link itself is `buildTopUpRequestUrl` (`src/lib/topUpRequestUrl.ts`):
+ * `${adminPortalUrl}/status?kind=topup&wallet=${walletAddress}`, not the bare `/status` page this
+ * button used to open. Grade round 1 D1's own finding: with no `kind`/`wallet` on the URL, the
+ * admin's status-form select had nothing to preselect and no field to prefill, so a clinic landing
+ * there had to know, unprompted, to pick a "topup" option the form did not even offer yet - the
+ * admin's own fix round (parallel wave) adds that option and reads these exact two params.
  */
 export function RequestTopUpButton({walletAddress}: {walletAddress?: string}) {
   const {adminPortalUrl} = usePublicEnv();
@@ -45,7 +53,7 @@ export function RequestTopUpButton({walletAddress}: {walletAddress?: string}) {
         variant="secondary"
         size="sm"
         data-testid="request-topup-button"
-        onClick={() => window.open(`${adminPortalUrl.replace(/\/+$/, "")}/status`, "_blank", "noreferrer")}
+        onClick={() => window.open(buildTopUpRequestUrl(adminPortalUrl, walletAddress), "_blank", "noreferrer")}
       >
         Request a top-up
       </Button>

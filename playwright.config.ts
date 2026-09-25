@@ -67,9 +67,11 @@ export default defineConfig({
       NEXT_PUBLIC_VERIFICATION_REGISTRY_ADDRESS: "0x41e96ad9e93ecb722e69aec6c0d4b4f15040ddd0",
       // WP4.19 - the low-PLASMA-balance threshold and the admin portal deep-link base URL (see
       // .env.example's own comments on both). A plausible non-empty URL, like the four protocol
-      // addresses above, so seamless-gas.spec.ts's "Request a top-up" button test has something
-      // real to assert against - the button never actually navigates in this suite (it opens a new
-      // tab this suite never asserts on), it only needs a non-empty adminPortalUrl to render at all.
+      // addresses above, so seamless-gas-wallet-balance.spec.ts's "Request a top-up" button test
+      // has something real to assert against. WP4.19 fix round 1 D1 - the button's `window.open`
+      // target IS now asserted (stubbed via `page.addInitScript`, never a real new-tab navigation
+      // in this suite), pinning this exact base URL into the expected
+      // `https://admin.example-clinic.test/status?kind=topup&wallet=...` string.
       OPERATOR_LOW_PLASMA: "0.1",
       ADMIN_PORTAL_URL: "https://admin.example-clinic.test",
       // WP4.5 grade-fix MAJOR 1 - DEV/TEST ONLY (src/lib/wagmi.ts's own doc comment on the gate).
