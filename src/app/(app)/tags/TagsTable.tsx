@@ -15,6 +15,7 @@ import {roax} from "@/lib/chains";
 import {legacyTxWithGas} from "@/lib/chainWrite";
 import {REASON_CODES, reasonCodeHash, type ReasonCodeName} from "@/lib/reasonCodes";
 import {formatUnixSeconds} from "@/lib/format";
+import {decodeRefundOutcome, refundFeedbackMessage} from "@/lib/refundFeedback";
 import {dogTagStatusLabel, dogTagStatusTone, mintSessionStatusLabel, mintSessionStatusTone} from "@/lib/tagStatusTone";
 import type {PetDoc} from "@/lib/models/Pet";
 import type {MintSessionDoc} from "@/lib/models/MintSession";
@@ -40,7 +41,9 @@ export function TagsTable({timeZone}: {timeZone: string}) {
   // uses for its own row expansion. WP4.10V item 4 added the "mask" kind alongside the pre-existing
   // "share" (full, unmasked) export.
   const [expandedExport, setExpandedExport] = useState<{petId: string; kind: "share" | "mask"} | null>(null);
-  const [pendingTx, setPendingTx] = useState<{hash: `0x${string}`; petId: string; action: "revoke" | "reactivate"; reasonCode: ReasonCodeName} | null>(null);
+  const [pendingTx, setPendingTx] = useState<
+    {hash: `0x${string}`; petId: string; cloneAddress: string; action: "revoke" | "reactivate"; reasonCode: ReasonCodeName} | null
+  >(null);
 
   const receipt = useWaitForTransactionReceipt({hash: pendingTx?.hash, chainId: roax.id});
 
@@ -72,7 +75,13 @@ export function TagsTable({timeZone}: {timeZone: string}) {
         .then(async (r) => ({ok: r.ok, body: await r.json().catch(() => null)}))
         .then(({ok, body}) => {
           if (ok) {
-            snackbar.show(`Tag ${pendingTx.action === "revoke" ? "revoked" : "reactivated"}`, "ok");
+            // WP4.19 V2 - only on an actually-successful receipt: a reverted revoke/reactivate
+            // refunds nothing (see TagIssueWizard.tsx's identical comment on its own issueTag
+            // effect for why), and `ok` here already implies `receipt.isSuccess` (the lifecycle
+            // route's own `r.ok` check re-verifies against the chain before ever returning success).
+            const refundMessage =
+              receipt.isSuccess && receipt.data ? ` ${refundFeedbackMessage(decodeRefundOutcome(receipt.data.logs, pendingTx.cloneAddress))}` : "";
+            snackbar.show(`Tag ${pendingTx.action === "revoke" ? "revoked" : "reactivated"}.${refundMessage}`, "ok");
           } else {
             snackbar.show(body?.error?.message ?? `Tag ${pendingTx.action} transaction failed`, "danger");
           }
@@ -99,7 +108,7 @@ export function TagsTable({timeZone}: {timeZone: string}) {
           account: address,
         }),
       );
-      setPendingTx({hash, petId: pet.petId, action, reasonCode});
+      setPendingTx({hash, petId: pet.petId, cloneAddress: pet.dogTag.cloneAddress as string, action, reasonCode});
     } catch (err) {
       snackbar.show(err instanceof Error ? err.message : "Transaction failed", "danger");
     } finally {

@@ -203,8 +203,21 @@ function encodeTransferLog(from: string, to: string, value: bigint) {
  * (viem's `getTransactionReceipt` action itself turns that `null` into
  * `TransactionReceiptNotFoundError` client-side - see `src/lib/chainRead.ts`'s
  * `readTxReceiptStatus`). Never auto-populated by `eth_sendRawTransaction`/anything else - this
- * stub never actually mines a transaction, only ever answers whatever a test explicitly scripted. */
-const receipts = new Map<string, "success" | "reverted">();
+ * stub never actually mines a transaction, only ever answers whatever a test explicitly scripted.
+ *
+ * WP4.19 V2 - `logs` (WIRE-shaped: `address`/`topics`/`data`, already ABI-encoded by the caller -
+ * `encodeRefundSkippedLog` below is the one helper that builds them for this repo's own use) rides
+ * along with the status now, so `eth_getTransactionReceipt`'s reply can carry a scripted
+ * `RefundSkipped` log for the refund-feedback e2e specs - a plain `[]` (every pre-existing caller
+ * of `setRpcReceipt`, which never passed a third argument) is byte-identical to this map's old
+ * always-empty `logs: []` reply, so this is additive, not a behavior change for anything that
+ * already scripted a receipt. */
+interface RpcLog {
+  address: string;
+  topics: readonly Hex[];
+  data: Hex;
+}
+const receipts = new Map<string, {status: "success" | "reverted"; logs: RpcLog[]}>();
 
 /** WP4.5 track 3 - the next `eth_estimateGas` response (a plain gas quantity, not scoped per
  * function/address - one scriptable value is enough for what this stub is used for: proving
@@ -247,6 +260,16 @@ let lastSendTransaction: Record<string, unknown> | null = null;
  * params alone (mint-issue-revert.spec.ts's gas-headroom check) without ever carrying the round
  * trip through to a mined receipt. */
 let lastSentTxHash: string | null = null;
+
+/** WP4.19 V1/V3 - native PLASMA balance per address (lowercase key), scripted via
+ * `setRpcBalance`/`/__control/balance`. Unscripted addresses answer `DEFAULT_BALANCE_WEI` (10
+ * PLASMA - comfortably above both `OPERATOR_LOW_PLASMA`'s 0.1 PLASMA default and every function's
+ * `gasFloor * gasPrice` in this stub's own fixed 1-wei `eth_gasPrice`), so every EXISTING e2e spec
+ * that never scripts a balance at all keeps seeing a wallet that is neither "low" nor blocked by
+ * the V3 preflight - this is additive test infrastructure, not a behavior change for anything that
+ * predates it. */
+const DEFAULT_BALANCE_WEI = 10_000_000_000_000_000_000n; // 10 PLASMA
+const balances = new Map<string, bigint>();
 
 function fakeTxHash(): Hex {
   return `0x${randomBytes(32).toString("hex")}`;
@@ -400,6 +423,16 @@ export function startRpcStub(): Server {
       lastSentTxHash = null;
       scriptedBlockTransactions.clear();
       scriptedErc20Logs.length = 0;
+      balances.clear();
+      sendJson(res, 200, {ok: true});
+      return;
+    }
+    // WP4.19 V1/V3 - scripts `eth_getBalance(address)`. `value` is the exact wei amount as a
+    // decimal string (mirrors every other control endpoint's own `bigint`-as-decimal-string wire
+    // convention, e.g. `/__control/gas-estimate`).
+    if (req.method === "POST" && req.url === "/__control/balance") {
+      const body = JSON.parse(bodyText) as {address: string; value: string};
+      balances.set(body.address.toLowerCase(), BigInt(body.value));
       sendJson(res, 200, {ok: true});
       return;
     }
@@ -433,8 +466,8 @@ export function startRpcStub(): Server {
       return;
     }
     if (req.method === "POST" && req.url === "/__control/receipt") {
-      const body = JSON.parse(bodyText) as {txHash: string; status: "success" | "reverted"};
-      receipts.set(body.txHash.toLowerCase(), body.status);
+      const body = JSON.parse(bodyText) as {txHash: string; status: "success" | "reverted"; logs?: RpcLog[]};
+      receipts.set(body.txHash.toLowerCase(), {status: body.status, logs: body.logs ?? []});
       sendJson(res, 200, {ok: true});
       return;
     }
@@ -483,12 +516,16 @@ export function startRpcStub(): Server {
     }
     if (rpcRequest.method === "eth_getTransactionReceipt") {
       const txHash = (rpcRequest.params?.[0] as string | undefined)?.toLowerCase();
-      const status = txHash ? receipts.get(txHash) : undefined;
-      if (!status) {
+      const scripted = txHash ? receipts.get(txHash) : undefined;
+      if (!scripted) {
         reply(null); // "not yet mined" - viem's own client turns this into TransactionReceiptNotFoundError
         return;
       }
-      // Minimal but well-formed receipt - every field viem's receipt formatter reads.
+      // Minimal but well-formed receipt - every field viem's receipt formatter reads. `logs`
+      // (WP4.19 V2) carries whatever `setRpcReceipt`'s own `logs` argument scripted, each stamped
+      // with this receipt's own transactionHash/blockNumber - `decodeRefundOutcome`'s caller reads
+      // `receipt.logs` straight off `useWaitForTransactionReceipt`'s own `data`, never a second RPC
+      // call, so this is the one place a scripted RefundSkipped log needs to actually appear.
       reply({
         transactionHash: txHash,
         transactionIndex: "0x0",
@@ -499,9 +536,19 @@ export function startRpcStub(): Server {
         cumulativeGasUsed: "0x1",
         gasUsed: "0x1",
         contractAddress: null,
-        logs: [],
+        logs: scripted.logs.map((log, logIndex) => ({
+          address: log.address,
+          topics: log.topics,
+          data: log.data,
+          blockNumber: `0x${blockNumber.toString(16)}`,
+          transactionHash: txHash,
+          transactionIndex: "0x0",
+          blockHash: `0x${"cc".repeat(32)}`,
+          logIndex: `0x${logIndex.toString(16)}`,
+          removed: false,
+        })),
         logsBloom: `0x${"0".repeat(512)}`,
-        status: status === "success" ? "0x1" : "0x0",
+        status: scripted.status === "success" ? "0x1" : "0x0",
         type: "0x0",
         effectiveGasPrice: "0x1",
       });
@@ -512,8 +559,8 @@ export function startRpcStub(): Server {
     // and the same minimal-but-well-formed shape once `setRpcReceipt` has scripted an answer.
     if (rpcRequest.method === "eth_getTransactionByHash") {
       const txHash = (rpcRequest.params?.[0] as string | undefined)?.toLowerCase();
-      const status = txHash ? receipts.get(txHash) : undefined;
-      if (!status) {
+      const scripted = txHash ? receipts.get(txHash) : undefined;
+      if (!scripted) {
         reply(null);
         return;
       }
@@ -539,6 +586,15 @@ export function startRpcStub(): Server {
     }
     if (rpcRequest.method === "eth_gasPrice") {
       reply("0x1");
+      return;
+    }
+    // WP4.19 V1/V3 - the connected operator wallet's native PLASMA balance (`getIssuanceWalletBalance`
+    // display, and the V3 pre-flight check ahead of issue/revoke/reactivate). See DEFAULT_BALANCE_WEI's
+    // own doc comment for why an unscripted address answers a comfortable default rather than 0.
+    if (rpcRequest.method === "eth_getBalance") {
+      const address = (rpcRequest.params?.[0] as string | undefined)?.toLowerCase();
+      const wei = (address ? balances.get(address) : undefined) ?? DEFAULT_BALANCE_WEI;
+      reply(`0x${wei.toString(16)}`);
       return;
     }
     // WP4.5 grade-fix MAJOR 2: none of these three carry test-visible behavior on their own - a
@@ -733,13 +789,49 @@ export async function setRpcScenario(functionName: string, address: string, args
 }
 
 /** Scripts `eth_getTransactionReceipt(txHash)` to answer as mined with the given status - WP4.5
- * track 3's reverted-`issueTag` scenarios. An unscripted txHash answers `null` ("not yet mined"). */
-export async function setRpcReceipt(txHash: string, status: "success" | "reverted"): Promise<void> {
+ * track 3's reverted-`issueTag` scenarios. An unscripted txHash answers `null` ("not yet mined").
+ * `logs` (WP4.19 V2, optional - every pre-existing caller omits it and gets the old always-`[]`
+ * behavior) rides along on the same receipt; `encodeRefundSkippedLog` below is the one helper this
+ * repo uses to build one. */
+export async function setRpcReceipt(
+  txHash: string,
+  status: "success" | "reverted",
+  logs?: {address: string; topics: readonly Hex[]; data: Hex}[],
+): Promise<void> {
   await fetch(`${RPC_STUB_URL}/__control/receipt`, {
     method: "POST",
     headers: {"content-type": "application/json"},
-    body: JSON.stringify({txHash, status}),
+    body: JSON.stringify({txHash, status, logs: logs ?? []}),
   });
+}
+
+/** WP4.19 V1/V3 - scripts `eth_getBalance(address)`. `weiAmount` is the exact wei amount as a
+ * decimal string (a plain `bigint` cannot cross a `JSON.stringify` boundary - the same convention
+ * `setRpcGasEstimate`/`setRpcNativeTransfer` already use for their own bigint amounts). */
+export async function setRpcBalance(address: string, weiAmount: bigint): Promise<void> {
+  await fetch(`${RPC_STUB_URL}/__control/balance`, {
+    method: "POST",
+    headers: {"content-type": "application/json"},
+    body: JSON.stringify({address, value: weiAmount.toString()}),
+  });
+}
+
+/** WP4.19 V2 - ABI-encodes one `VetIssuer.RefundSkipped(address indexed operator, uint256 wanted)`
+ * log exactly the way a real clone would (never hand-built hex - this file's own header doc
+ * comment's "decode/encode with the real ABI" principle), for `setRpcReceipt`'s own `logs`
+ * argument. `decodeRefundOutcome` (`src/lib/refundFeedback.ts`) is what a real app render actually
+ * decodes this back with. */
+export function encodeRefundSkippedLog(cloneAddress: string, operator: string, wanted: bigint): {address: string; topics: readonly Hex[]; data: Hex} {
+  // `encodeEventTopics`' general return type allows an OR-match array or `null` per slot (viem's
+  // wildcard-matching shape - see this file's own `encodeTransferLog` doc comment on the identical
+  // widening); a concrete `args.operator` here always produces concrete `Hex` topics at runtime.
+  const topics = encodeEventTopics({
+    abi: vetIssuerAbiJson as unknown as Abi,
+    eventName: "RefundSkipped",
+    args: {operator: operator as Address},
+  }) as readonly Hex[];
+  const data = encodeAbiParameters(parseAbiParameters("uint256"), [wanted]);
+  return {address: cloneAddress, topics, data};
 }
 
 /** Scripts the next `eth_estimateGas` response - WP4.5 track 3's gas-headroom assertion scripts a

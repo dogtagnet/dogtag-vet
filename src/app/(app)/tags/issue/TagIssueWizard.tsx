@@ -16,6 +16,7 @@ import {vetIssuerAbi} from "@/lib/abi";
 import {roax} from "@/lib/chains";
 import {legacyTxWithGas} from "@/lib/chainWrite";
 import {reasonCodeHash} from "@/lib/reasonCodes";
+import {decodeRefundOutcome, refundFeedbackMessage, type RefundOutcome} from "@/lib/refundFeedback";
 import {mintSessionStatusLabel, mintSessionStatusTone} from "@/lib/tagStatusTone";
 import type {ClientDoc} from "@/lib/models/Client";
 import type {PetDoc, PetSex, WeightEntry} from "@/lib/models/Pet";
@@ -102,6 +103,11 @@ export function TagIssueWizard() {
   const [session, setSession] = useState<SessionPoll | null>(null);
   const [issuing, setIssuing] = useState(false);
   const [pendingTxHash, setPendingTxHash] = useState<`0x${string}` | undefined>(undefined);
+  // WP4.19 V2 - the clone `issueTag` was actually sent to, captured at send time (never re-fetched
+  // from `/api/settings` a second time in the receipt effect below) so the refund-feedback decode
+  // checks logs against the SAME address the write targeted.
+  const issueCloneAddressRef = useRef<string | undefined>(undefined);
+  const [issueRefundOutcome, setIssueRefundOutcome] = useState<RefundOutcome | null>(null);
 
   // The replace wizard (wp4-vet.md: "replace ... start new mint session for the same pet, and
   // after the new tag binds, prompt revoke of the old tag with REASON_REPLACED"). `replacingPet`
@@ -111,6 +117,9 @@ export function TagIssueWizard() {
   const [revokingPrevious, setRevokingPrevious] = useState(false);
   const [revokePrevTxHash, setRevokePrevTxHash] = useState<`0x${string}` | undefined>(undefined);
   const [previousTagRevoked, setPreviousTagRevoked] = useState(false);
+  // WP4.19 V2 - refund feedback for the replace-flow revoke of the SUPERSEDED tag (see
+  // issueRefundOutcome's own comment above for the main issueTag write's identical purpose).
+  const [revokePrevRefundOutcome, setRevokePrevRefundOutcome] = useState<RefundOutcome | null>(null);
 
   const pollRef = useRef<ReturnType<typeof setInterval> | undefined>(undefined);
   const receipt = useWaitForTransactionReceipt({hash: pendingTxHash, chainId: roax.id});
@@ -237,6 +246,12 @@ export function TagIssueWizard() {
         .then(() => {
           snackbar.show("Previous tag revoked", "ok");
           setPreviousTagRevoked(true);
+          // WP4.19 V2 - only on an actually-successful receipt (never on isError - a reverted
+          // write refunds nothing and `revoke-superseded`'s own re-check above would already have
+          // rejected the promise chain before this line for that case anyway).
+          if (revokePrevReceipt.isSuccess && revokePrevReceipt.data && replacingPet.dogTag.cloneAddress) {
+            setRevokePrevRefundOutcome(decodeRefundOutcome(revokePrevReceipt.data.logs, replacingPet.dogTag.cloneAddress));
+          }
         })
         .catch(() => snackbar.show("Revoke transaction sent, but confirmation failed. Refresh and retry.", "danger"));
     }
@@ -329,6 +344,8 @@ export function TagIssueWizard() {
         snackbar.show("This clinic has not completed setup", "danger");
         return;
       }
+      issueCloneAddressRef.current = settings.cloneAddress;
+      setIssueRefundOutcome(null);
       const hash = await writeContractAsync(
         // Headroom over the bare estimate - the refund tail starved twice at the wallet's own
         // estimate (see legacyTxWithGas's doc comment for the incident txs).
@@ -367,6 +384,12 @@ export function TagIssueWizard() {
     // and is the sole source of truth either way ("a receipt is not proof") - calling it on
     // `isError` is exactly as safe as calling it on `isSuccess` already was.
     if ((receipt.isSuccess || receipt.isError) && session?.sessionId) {
+      // WP4.19 V2 - only from an actually-successful receipt: a reverted issueTag refunds nothing
+      // (the clone's own `refundsGas` modifier never even reaches its refund step when the wrapped
+      // call itself reverted), so there is nothing meaningful to decode on the isError path.
+      if (receipt.isSuccess && receipt.data && issueCloneAddressRef.current) {
+        setIssueRefundOutcome(decodeRefundOutcome(receipt.data.logs, issueCloneAddressRef.current));
+      }
       fetch(`/api/tags/issue/${session.sessionId}/confirm`, {method: "POST"})
         .then((r) => r.json())
         .then((body) => {
@@ -554,6 +577,9 @@ export function TagIssueWizard() {
           {session.status === "bound" && (
             <div className="mt-4 space-y-4">
               <p className="text-body text-ok">Tag bound successfully.</p>
+              {/* WP4.19 V2 - whether the clinic's clone refunded the gas this wallet fronted for
+                  issueTag, decoded from the mined receipt's own logs (never a guess). */}
+              {issueRefundOutcome && <p className="text-caption text-ink-muted">{refundFeedbackMessage(issueRefundOutcome)}</p>}
               {session.attestationSigned ? (
                 <StatusBadge label="Issuer attestation signed" tone="ok" />
               ) : (
@@ -574,7 +600,12 @@ export function TagIssueWizard() {
                   </Button>
                 </Banner>
               )}
-              {previousTagRevoked && <p className="text-body text-ok">Previous tag revoked.</p>}
+              {previousTagRevoked && (
+                <div className="space-y-1">
+                  <p className="text-body text-ok">Previous tag revoked.</p>
+                  {revokePrevRefundOutcome && <p className="text-caption text-ink-muted">{refundFeedbackMessage(revokePrevRefundOutcome)}</p>}
+                </div>
+              )}
             </div>
           )}
 
