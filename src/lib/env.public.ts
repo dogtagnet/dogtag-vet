@@ -63,6 +63,8 @@ interface InjectedPublicConfig {
   dogTagSbtAddress?: unknown;
   verificationRegistryAddress?: unknown;
   delegationRegistryAddress?: unknown;
+  operatorLowPlasma?: unknown;
+  adminPortalUrl?: unknown;
 }
 
 declare global {
@@ -90,6 +92,13 @@ function positiveIntOr(value: unknown, fallback: number): number {
   return typeof value === "number" && Number.isInteger(value) && value > 0 ? value : fallback;
 }
 
+/** A positive finite number, or `fallback` if `value` is not one - `operatorLowPlasma`'s validator
+ * (WP4.19). Unlike `positiveIntOr` above, this is a PLASMA amount, not a chain id - fractional
+ * (the default itself, 0.1, is fractional). */
+function positiveNumberOr(value: unknown, fallback: number): number {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : fallback;
+}
+
 /** `""` (the existing not-yet-configured sentinel every address field already uses) or a
  * well-formed `0x`-prefixed 40-hex-char address - anything else falls back. Every one of these
  * five addresses is public on-chain data, never a secret. */
@@ -112,6 +121,17 @@ function computePublicEnv(injected: InjectedPublicConfig) {
     dogTagSbtAddress: addressOr(injected.dogTagSbtAddress, process.env.NEXT_PUBLIC_DOGTAG_SBT_ADDRESS ?? ""),
     verificationRegistryAddress: addressOr(injected.verificationRegistryAddress, process.env.NEXT_PUBLIC_VERIFICATION_REGISTRY_ADDRESS ?? ""),
     delegationRegistryAddress: addressOr(injected.delegationRegistryAddress, process.env.NEXT_PUBLIC_DELEGATION_REGISTRY_ADDRESS ?? ""),
+
+    // WP4.19 - the same low-PLASMA-balance threshold the admin funds operators against
+    // (env.ts's OPERATOR_LOW_PLASMA doc comment). Default 0.1 mirrors that field's own schema
+    // default, so a unit test importing this module directly (no injected script) still sees the
+    // real default rather than 0.
+    operatorLowPlasma: positiveNumberOr(injected.operatorLowPlasma, Number(process.env.NEXT_PUBLIC_OPERATOR_LOW_PLASMA ?? "0.1")),
+    // WP4.19 - the admin portal's own base URL, for the "Request a top-up" deep link
+    // (env.ts's ADMIN_PORTAL_URL doc comment). "" (never configured) is a valid, common value -
+    // every caller treats a blank adminPortalUrl as "hide the deep link, show the manual
+    // instructions instead", never a fallback substitution the way the address fields above do.
+    adminPortalUrl: stringOr(injected.adminPortalUrl, process.env.NEXT_PUBLIC_ADMIN_PORTAL_URL ?? ""),
 
     // DEV/TEST ONLY (mirrors .env.example's DEV_LOGIN convention) - a wallet address here gates an
     // extra `mock` wagmi connector (src/lib/wagmi.ts) plus its matching auto-connect effect

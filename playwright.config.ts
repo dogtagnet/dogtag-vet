@@ -65,6 +65,13 @@ export default defineConfig({
       NEXT_PUBLIC_ENTITY_REGISTRY_ADDRESS: "0x9b15a2df4e38547cbbbd635a4cd4531355bb4247",
       NEXT_PUBLIC_DOGTAG_SBT_ADDRESS: "0x276101555b2cd92be0fb85ff908e02281d6a3cf9",
       NEXT_PUBLIC_VERIFICATION_REGISTRY_ADDRESS: "0x41e96ad9e93ecb722e69aec6c0d4b4f15040ddd0",
+      // WP4.19 - the low-PLASMA-balance threshold and the admin portal deep-link base URL (see
+      // .env.example's own comments on both). A plausible non-empty URL, like the four protocol
+      // addresses above, so seamless-gas.spec.ts's "Request a top-up" button test has something
+      // real to assert against - the button never actually navigates in this suite (it opens a new
+      // tab this suite never asserts on), it only needs a non-empty adminPortalUrl to render at all.
+      OPERATOR_LOW_PLASMA: "0.1",
+      ADMIN_PORTAL_URL: "https://admin.example-clinic.test",
       // WP4.5 grade-fix MAJOR 1 - DEV/TEST ONLY (src/lib/wagmi.ts's own doc comment on the gate).
       // A well-known test-only address (Hardhat/Anvil's default account #0), never a real wallet -
       // nothing in this suite ever needs its private key, only the address itself, since the mock

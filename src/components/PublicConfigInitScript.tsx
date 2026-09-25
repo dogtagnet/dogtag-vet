@@ -36,6 +36,10 @@ export function PublicConfigInitScript() {
     dogTagSbtAddress: env.DOGTAG_SBT_ADDRESS ?? "",
     verificationRegistryAddress: env.VERIFICATION_REGISTRY_ADDRESS ?? "",
     delegationRegistryAddress: env.DELEGATION_REGISTRY_ADDRESS ?? "",
+    // WP4.19 - see env.public.ts's own doc comment on operatorLowPlasma/adminPortalUrl for why
+    // these two are runtime, not build-time-inlined, values.
+    operatorLowPlasma: env.OPERATOR_LOW_PLASMA,
+    adminPortalUrl: env.ADMIN_PORTAL_URL ?? "",
   };
 
   return (

@@ -74,6 +74,31 @@ const envSchema = z.object({
   // `delegationLeaves`), so unlike the other four addresses above it has no `NEXT_PUBLIC_` twin.
   DELEGATION_REGISTRY_ADDRESS: z.string().optional(),
 
+  // WP4.19 (seamless gas) - the admin funds every whitelisted operator wallet with
+  // OPERATOR_BASE_PLASMA and tops it back up when it drops below OPERATOR_LOW_PLASMA (dogtag-admin's
+  // own env - not this repo's concern); THIS value is the vet-side twin: the same threshold, read
+  // here so the "My issuance wallet" card and the /tags + /tags/issue + /pets banner can show the
+  // identical low-balance warning the admin itself uses, never a value re-guessed locally. A
+  // RUNTIME value like the five protocol addresses above (one built image, many deployments, each
+  // potentially choosing its own threshold) - exposed to the browser via PublicConfigInitScript /
+  // src/lib/env.public.ts, never build-time-inlined alone. Default 0.1 PLASMA mirrors dogtag-admin's
+  // own OPERATOR_LOW_PLASMA default exactly, so a clinic that never touches either .env still gets
+  // two deployments that agree with each other.
+  OPERATOR_LOW_PLASMA: z.coerce.number().positive().default(0.1),
+
+  // WP4.19 V1 - the DogTag admin portal's own public base URL for this clinic's "Request a top-up"
+  // deep link (My issuance wallet card, and the /tags + /tags/issue + /pets wallet banner). Left
+  // unset until an operator configures it: this repo has no OTHER admin-discovery mechanism today
+  // (docs/DEPLOY.md's existing "Granting a vet the ability to issue tags" section already sends
+  // staff to the admin portal's own status page by hand - see that section's own WP4.19 addition),
+  // and the admin's own operator-request route (`POST /api/status/operator-request`) is gated by a
+  // NextAuth session scoped to the CLINIC's admin-portal account, which this server has no way to
+  // hold or proxy - so the button this env var drives is a deep link the vet's own browser opens
+  // (where the signed-in-vet-staff-member's own browser session, if any, already applies), never a
+  // server-to-server POST impersonating that account. A RUNTIME value, exposed to the browser the
+  // same way as OPERATOR_LOW_PLASMA above - the "Request a top-up" button is client-rendered.
+  ADMIN_PORTAL_URL: z.string().optional(),
+
   // Invoicing
   INVOICE_NUMBER_PREFIX: z.string().default("INV"),
 

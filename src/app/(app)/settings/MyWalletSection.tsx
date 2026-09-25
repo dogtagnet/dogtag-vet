@@ -7,6 +7,7 @@ import {Button, Input} from "@/components/ui/controls";
 import {FormField, FormSection} from "@/components/ui/FormSection";
 import {StatusBadge} from "@/components/ui/StatusBadge";
 import {useSnackbar} from "@/components/ui/Snackbar";
+import {IssuanceWalletBalanceLine} from "@/components/wallet/IssuanceWalletBalanceLine";
 import {operatorStatusBadge, operatorStatusExplanation, type OperatorStatus} from "@/lib/staffRoleTone";
 import type {StaffDoc} from "@/lib/models/Staff";
 
@@ -96,6 +97,12 @@ export function MyWalletSection({initial, status}: {initial: StaffDoc; status: O
         <StatusBadge tone={operatorStatusBadge[status].tone} label={operatorStatusBadge[status].label} />
       </div>
       <p className="text-body text-ink-muted">{operatorStatusExplanation(status)}</p>
+      {/* WP4.19 V1 - the CONNECTED wallet's live PLASMA balance and low-balance warning, not the
+          recorded `initial.walletAddress` below: the balance that matters is whichever wallet will
+          actually sign the next issuance transaction, exactly the same "connected, not recorded"
+          principle `decideVetWalletBanner`'s own doc comment states for the whitelist mismatch
+          check. Renders nothing until a wallet is connected. */}
+      <IssuanceWalletBalanceLine />
       <FormField
         label="Wallet address"
         htmlFor="my-wallet-address"

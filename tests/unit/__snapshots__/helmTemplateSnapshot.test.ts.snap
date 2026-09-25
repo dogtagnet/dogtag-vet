@@ -89,6 +89,8 @@ spec:
             - name: http
               containerPort: 3000
           env:
+            - name: ADMIN_PORTAL_URL
+              value: "https://admin.example-clinic.test"
             - name: AUTH_TRUST_HOST
               value: "1"
             - name: DELEGATION_REGISTRY_ADDRESS
@@ -101,6 +103,8 @@ spec:
               value: "mongodb://mongo:27017/dogtag-vet"
             - name: NODE_ENV
               value: "production"
+            - name: OPERATOR_LOW_PLASMA
+              value: "0.1"
             - name: PUBLIC_BASE_URL
               value: "https://vet.example-clinic.test"
             - name: ROAX_CHAIN_ID
@@ -186,6 +190,8 @@ spec:
               value: "8091"
             - name: WORKER_STALL_MINUTES
               value: "10"
+            - name: ADMIN_PORTAL_URL
+              value: "https://admin.example-clinic.test"
             - name: AUTH_TRUST_HOST
               value: "1"
             - name: DELEGATION_REGISTRY_ADDRESS
@@ -198,6 +204,8 @@ spec:
               value: "mongodb://mongo:27017/dogtag-vet"
             - name: NODE_ENV
               value: "production"
+            - name: OPERATOR_LOW_PLASMA
+              value: "0.1"
             - name: PUBLIC_BASE_URL
               value: "https://vet.example-clinic.test"
             - name: ROAX_CHAIN_ID

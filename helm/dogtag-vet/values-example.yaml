@@ -52,6 +52,9 @@ env:
   DOGTAG_SBT_ADDRESS: "0x3333333333333333333333333333333333333333"
   VERIFICATION_REGISTRY_ADDRESS: "0x4444444444444444444444444444444444444444"
   DELEGATION_REGISTRY_ADDRESS: "0x5555555555555555555555555555555555555555"
+  # WP4.19 - see .env.example's own comment on both of these.
+  OPERATOR_LOW_PLASMA: "0.1"
+  ADMIN_PORTAL_URL: https://admin.example-clinic.test
 
 # Throwaway-install convenience only (see the `helm install` command above) - a REAL deployment
 # uses existingSecret against a Secret you created yourself, never this. Every value below is a
