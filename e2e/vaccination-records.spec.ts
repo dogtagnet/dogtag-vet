@@ -245,6 +245,48 @@ test.describe("WP4.19 V5 - IssueRecordForm reacts to a reverted receipt (status 
   });
 });
 
+/**
+ * WP4.19 fix round 1 D2 - the grade's own recipe, followed verbatim
+ * (`plans/orchestration/wp4.19-grade.md` D2): "RecordsCard: issue and confirm a Rabies record,
+ * click Revoke, `setRpcReceipt(hash, "reverted")` with isValid left true, expect 'Transaction
+ * failed' with the hash within 60 s and the row still Active." RecordsCard.tsx's own isError
+ * handling already shipped in the V5 commit (3c4ca9c) - this is the missing e2e proof for it, one
+ * of the three sites grade round 1 D2 found with no coverage at all. `isValid` is deliberately
+ * LEFT scripted true (from `issueAndConfirmRabiesRecord`'s own setup) rather than flipped false:
+ * the record's root was never actually invalidated by a revoke that reverted, so `/lifecycle`'s
+ * own re-read correctly still agrees - the honest, decisive-re-read property the SUCCESS revoke
+ * test in "vaccination record lifecycle" below exercises the other way.
+ */
+test.describe("WP4.19 V5 - RecordsCard reacts to a reverted revokeRecord receipt", () => {
+  test("shows Transaction failed with the kept hash, and the row stays Active", async ({page}) => {
+    test.setTimeout(60_000);
+    const petId = await createPetWithDogTag(page, "Juniper", "80102");
+    await issueAndConfirmRabiesRecord(page, petId, "2099-01-01");
+    // The issuance above already sent its own tx, so `getLastSentTxHash()` is already non-null
+    // BEFORE the revoke click below - polling for merely "not null" would risk resolving on that
+    // stale issuance hash the instant the poll's first tick lands before the revoke's own async
+    // send has actually reached the stub. Polling for "no longer equal to the pre-revoke value"
+    // instead is race-free regardless of timing.
+    const issueHash = await getLastSentTxHash();
+
+    const row = page.locator("tr", {hasText: "Rabies"});
+    await row.getByRole("button", {name: "Revoke"}).click();
+    await expect.poll(async () => getLastSentTxHash(), {timeout: 15_000}).not.toBe(issueHash);
+    const revokeHash = (await getLastSentTxHash())!;
+    await setRpcReceipt(revokeHash, "reverted"); // status 0x0 - isValid stays true, see header comment
+
+    await expect(row.getByRole("status").filter({hasText: "Transaction failed"})).toBeVisible({timeout: 15_000});
+    // The dead tx kept for the record, not silently dropped - HashCell truncates to
+    // value.slice(0,6) (MonoValue.tsx's own default prefix).
+    await expect(page.getByText(revokeHash.slice(0, 6), {exact: false})).toBeVisible();
+
+    // The row itself never flipped: the revoke never actually landed.
+    await expect(row.getByText("Active", {exact: true})).toBeVisible();
+    // The retry path: Revoke is still there, ready to try again, no redraft needed.
+    await expect(row.getByRole("button", {name: "Revoke"})).toBeVisible();
+  });
+});
+
 test.describe("vaccination record lifecycle (plan section 11.2 V8)", () => {
   // Grade round 1 D3 (MINOR, e2e reliability): this ONE test used to also drive the export and
   // verify ceremony, serially cold-compiling FOUR route trees (/pets/:id's Records tab,

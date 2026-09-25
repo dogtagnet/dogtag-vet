@@ -557,6 +557,72 @@ test("Revoke a secondary owner: no QR, straight to the operator wallet write", a
   await expect(ownersCard(page).getByText("Revoked", {exact: true})).toBeVisible();
 });
 
+/**
+ * WP4.19 fix round 1 D2 - the grade's own recipe, followed verbatim
+ * (`plans/orchestration/wp4.19-grade.md` D2): "RevokeSecondaryOwnerAction: the existing 'no QR'
+ * test with the receipt reverted and isSecondary left true, expect 'Transaction failed', the hash,
+ * no 'Secondary owner revoked', Start over returns the Revoke button." `RevokeSecondaryOwnerAction
+ * .tsx`'s own isError handling already shipped in the V5 commit (3c4ca9c) - this is the missing
+ * e2e proof for it, one of the three sites grade round 1 D2 found with no coverage at all.
+ */
+test("Revoke a secondary owner: a REVERTED receipt shows Transaction failed with the kept hash, and Start over returns the Revoke button", async ({page}) => {
+  const {petId, dogTagIdField, clientId} = await seedPetAndSecondaryClient("Wren Delacroix");
+  const commitment = randomHex32();
+
+  // Seed the confirmed "add" this test revokes - mirrors the "no QR" test above exactly.
+  await mongoClient.db().collection("delegationsessions").insertOne({
+    token: randomUUID().replace(/-/g, "").slice(0, 32),
+    registrationId: randomUUID(),
+    kind: "add",
+    petId,
+    dogTagIdField,
+    clientId,
+    clinic: CLONE_ADDRESS.toLowerCase(),
+    chainId: 135,
+    clinicName: "Example Vet Clinic",
+    maskedTargetName: "W*** D********",
+    commitment: commitment.toLowerCase(),
+    wallet: "0x1111111111111111111111111111111111111111",
+    issuedAt: Math.floor(Date.now() / 1000) - 60,
+    blockNumber: 1,
+    deadline: Math.floor(Date.now() / 1000) + 600,
+    status: "confirmed",
+    consumed: true,
+    consumedAt: Math.floor(Date.now() / 1000) - 60,
+    createdAt: new Date(),
+  });
+  await setRpcScenario("isSecondary", DELEGATION_REGISTRY_ADDRESS, [dogTagIdField, commitment], true);
+  await setRpcScenario("delegationLeaves", DELEGATION_REGISTRY_ADDRESS, [dogTagIdField], sixteenSlotLeaves(commitment));
+
+  await page.goto(`/pets/${petId}`);
+  await expect(ownersCard(page).getByText("Wren Delacroix")).toBeVisible();
+  await expect(ownersCard(page).getByText("Active")).toBeVisible();
+
+  await ownersCard(page).getByRole("button", {name: "Revoke"}).click();
+  await ownersCard(page).getByRole("button", {name: /Confirm revoke/}).click();
+
+  await expect(page.getByText("Revoking...")).toBeVisible({timeout: 10_000});
+  await expect.poll(() => getLastSentTxHash(), {timeout: 10_000}).not.toBeNull();
+  const hash = await getLastSentTxHash();
+  expect(hash).not.toBeNull();
+
+  // `isSecondary` is deliberately LEFT TRUE (the grade's own D2 recipe) - the honest answer for a
+  // write that never actually landed, exactly matching what a real reverted `revokeSecondaryOwner`
+  // would leave on chain (see the ADD test's own identical comment on this pattern above).
+  await setRpcReceipt(hash!, "reverted"); // status 0x0
+
+  await expect(page.getByRole("status").filter({hasText: "Transaction failed"})).toBeVisible({timeout: 15_000});
+  await expect(page.getByText("Revoking...")).toHaveCount(0);
+  await expect(page.getByText(hash!.slice(0, 6), {exact: false})).toBeVisible();
+  await expect(page.getByText("Secondary owner revoked")).toHaveCount(0);
+
+  // The retry path: "Start over" clears the failed ceremony session and returns to the "Revoke"
+  // button - never a permanent dead end.
+  await page.getByRole("button", {name: "Start over"}).click();
+  await expect(ownersCard(page).getByRole("button", {name: "Revoke"})).toBeVisible();
+  await expect(page.getByText("Revoking...")).toHaveCount(0);
+});
+
 test("Revoke a secondary owner: a rejected wallet prompt returns the row to idle, not a permanent 'Revoking...' badge", async ({page}) => {
   // Grade round 1 D6: before this fix, `registrationId` being set immediately (well before
   // `writeContractAsync` even runs) meant a rejected wallet prompt left this component showing
