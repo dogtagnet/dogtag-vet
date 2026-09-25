@@ -68,6 +68,12 @@ There is no single stored "relayer wallet". Every on-chain write this app makes 
 Whichever wallet submits a write needs its own native PLASMA balance to pay gas for it; gas is fronted by that wallet and refunded by the clinic's clone on success.
 A failed attempt is not refunded - keep whichever wallets your staff actually use topped up rather than relying on refunds to cover the next attempt.
 
+**Gas floors (1.4.1, incident 2026-09-25):** the app computes a gas limit for every one of these writes itself (`src/lib/chainWrite.ts`'s `legacyTxWithGas`) rather than letting the connected wallet estimate on its own - every write here ends in a gas-refund transfer back to the operator, and `eth_estimateGas` systematically undercounts that refund tail (it estimates at gas price 0, where the refund comes out to zero and its transfer is skipped, while the real send pays a real gas price and the transfer actually runs).
+The app now enforces a hard per-function MINIMUM gas limit (a "floor") on top of its own estimate-based headroom, so a transaction can never go out under-provisioned even if the live estimate is wrong or unreachable: `issueTag`/`revokeTag`/`reactivateTag`/`issueRecord`/`revokeRecord` floor at 400,000 gas, `recordVerificationZK` at 350,000, `relayVerification` at 400,000, and the delegation writes `addSecondaryOwner`/`revokeSecondaryOwner` (which rebuild a 16-leaf Merkle tree through 15 linked `PoseidonT4` calls) at 1,600,000 and 1,500,000 respectively.
+This never fails silently: if the app cannot get a live estimate at all (no public client, or the estimate call itself throws), it falls back to the floor and logs a `console.warn` naming the function and the reason - open the browser console after any wallet-gated write to check for one if a transaction ever looks under-provisioned.
+
+If you are running an older image (built before this fix) against a workstation deployment, the equivalent manual workaround in MetaMask is: before confirming any DogTag write, click "Edit" on the gas fee screen and raise the gas LIMIT (not the gas price) to at least 500,000 for a tag/record write or 2,000,000 for an add/revoke-secondary-owner write, rather than accepting whatever MetaMask pre-fills - MetaMask's own pre-fill is exactly the bare, un-headroomed estimate this fix now overrides.
+
 ### Vet role, issuance operators, and per-practitioner scheduling
 
 This section covers two related, Settings-page-only features - neither needs an environment variable or a redeploy.

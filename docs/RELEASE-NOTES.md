@@ -1,5 +1,11 @@
 # Release notes
 
+## 1.4.1 release
+
+Fixes a live workstation incident: an `issueTag` transaction (0xfb3414bac482635a0aa9c4a57e430ddf8a7ce6fb5cd5994564a45b38c5bfea47 on ROAX) failed with an OutOfGas revert because the wallet-submitted gas limit was exactly the bare, no-headroom `eth_estimateGas` result - the app's own gas-headroom helper (`legacyTxWithGas`) had silently fallen back to the wallet's own estimate.
+Every ROAX write this app submits ends in a gas-refund transfer back to the operator, and `eth_estimateGas` systematically undercounts that transfer (it estimates at gas price 0, where the refund is zero and its transfer is skipped; the real send pays a real gas price and the transfer actually runs) - `legacyTxWithGas` now enforces a hard per-function gas floor underneath its existing estimate-based headroom, so a write can never go out under-provisioned again, whether or not a live estimate is available.
+See `docs/DEPLOY.md`'s "Wallet gas for on-chain writes" section for the floor values and the MetaMask manual-gas-limit workaround for older images.
+
 ## 1.3.0 release (WP4.17)
 
 This entry tracks the cross-repo 1.3.0 product release.
