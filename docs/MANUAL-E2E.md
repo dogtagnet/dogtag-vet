@@ -550,3 +550,36 @@ The clinic contract refunds the gas of every clinic write from its own pool; the
    Proof of success: the request is marked decided with the funding transaction hash, and the vet's warning disappears on reload.
 7. [Vet, negative] With the clinic contract's pool drained below the refund amount (admin: send the clone's PLASMA away, or use a fresh clone with no top-up), issue a tag.
    Proof of success: the write succeeds and the session card says the refund was skipped because the pool is low; the admin's clone balance banner shows the low pool.
+
+## Part 20 - [You + phone] Upload a document, DogTag reviews and issues, the phone receives (WP4.20)
+
+Runs on the workstation deployment after Part 17, once the DogTag entity is onboarded (docs/DEPLOY.md, "DogTag entity onboarding") and `DOGTAG_ENTITY_ACCOUNT` / `DOGTAG_ISSUER_DOMAIN` are set.
+You need the phone with the DogTag app, a PDF or photo of a real vaccination record, and the MetaMask wallet of a whitelisted DogTag operator.
+
+1. [Phone] Open a pet (or add a dog without a DogTag), choose **Add a vaccination record from a document**, pick the file, name the clinic, confirm and sign with the wallet.
+   Proof of success: the app shows the submission as **Sent to DogTag** with the file's SHA-256 and size.
+2. [Admin] Sign in with an admin account and open **Document reviews** (the sidebar badge counts open items).
+   Proof of success: the submission is listed with the pet name, a **No DogTag** chip for an untagged dog, the clinic and the owner wallet, status **In review**.
+3. [Admin] Open it.
+   Proof of success: the document renders on the left with the same SHA-256 and size the phone showed; pet facts on the right carry **From tag** (tagged dog) or **Owner-asserted** (untagged dog).
+4. [Admin] Phone or email the clinic named by the owner, then fill **Clinic confirmation** (who, when, method, contact) and the transcription, and press **Approve**.
+   Proof of success: the confirmation and transcription are shown read-only and the **Build and issue** stepper appears.
+5. [Admin] Connect the whitelisted operator wallet, press **Build the record root**, reload the page.
+   Proof of success: after the reload the stepper resumes at step 2 with the root shown; nothing is rebuilt.
+6. [Admin] Press **Send issueRecord transaction** and confirm in MetaMask.
+   Proof of success: steps 2 and 3 turn **Done** by themselves once the chain agrees.
+   Cross-check: `cast call <DogTag clone> "isValid(bytes32)(bool)" <root>` prints `true`.
+7. [Admin] Press **Sign issuer attestation** and sign in MetaMask.
+   Proof of success: step 5 reads **Issued** with a transaction link, and the record panel offers **Download attestation (JSON)**.
+8. [Phone] Pull to refresh the pet's records.
+   Proof of success: the submission turns **ready** and the record appears under the pet, issued by DogTag, with the description line naming the clinic and the date; an untagged dog's record shows the pet facts instead of a tag id.
+9. [Vet portal, optional] In a clinic's portal open **Verify**, records mode, and present the record from the phone.
+   Proof of success: it verifies, with DogTag's clone as the issuer.
+10. [Admin, negative] On the record page choose a reason code, add a note and press **Revoke record**; confirm in MetaMask.
+    Proof of success: the page shows **Revoked**; on the phone's next refresh the record is marked revoked but still listed.
+11. [Admin] Press **Reactivate record** and confirm.
+    Proof of success: the record is valid again on the phone after a refresh.
+12. [Admin, negative] Submit a second document from the phone and choose **Needs info** with a note, then another and choose **Reject**.
+    Proof of success: the phone shows each reason; a rejected submission cannot be reopened.
+
+A confirmation that stays pending: check the operator wallet really is whitelisted on DogTag's clone and that the transaction was sent to the clone, not the factory.
