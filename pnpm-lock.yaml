@@ -72,6 +72,9 @@ importers:
       '@playwright/test':
         specifier: 1.62.1
         version: 1.62.1
+      '@types/js-yaml':
+        specifier: ^4.0.9
+        version: 4.0.9
       '@types/node':
         specifier: 22.10.5
         version: 22.10.5
@@ -105,6 +108,9 @@ importers:
       eslint-config-next:
         specifier: 15.5.24
         version: 15.5.24(eslint@9.19.0(jiti@1.21.7))(typescript@5.7.3)
+      js-yaml:
+        specifier: 4.3.2
+        version: 4.3.2
       pdf-parse:
         specifier: ^2.4.5
         version: 2.4.5
@@ -1733,6 +1739,9 @@ packages:
 
   '@types/estree@1.0.9':
     resolution: {integrity: sha512-GhdPgy1el4/ImP05X05Uw4cw2/M93BCUmnEvWZNStlCzEKME4Fkk+YpoA5OiHNQmoS7Cafb8Xa3Pya8m1Qrzeg==}
+
+  '@types/js-yaml@4.0.9':
+    resolution: {integrity: sha512-k4MGaQl5TGo/iipqb2UDG2UwjXziSWkh0uysQelTlJpX1qGlpUZYm8PnO4DxG1qBomtJUdYJ6qR6xdIah10JLg==}
 
   '@types/json-schema@7.0.15':
     resolution: {integrity: sha512-5+fP8P8MFNC+AyZCDxrB2pkZFPGzqQWUzpSeuuVLvm8VMcorNYavBqoFcxK8bQz4Qsbn4oUEEem4wDLfcysGHA==}
@@ -6769,6 +6778,8 @@ snapshots:
       '@types/ms': 2.1.0
 
   '@types/estree@1.0.9': {}
+
+  '@types/js-yaml@4.0.9': {}
 
   '@types/json-schema@7.0.15': {}
 

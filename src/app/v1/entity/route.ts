@@ -2,6 +2,7 @@ import {connectToDatabase} from "@/lib/db";
 import {getClinicSettings} from "@/lib/models/ClinicSettings";
 import {Service} from "@/lib/models/Service";
 import {buildEntityCard} from "@/lib/entityCard";
+import {resolveEntityCardKinds} from "@/lib/entityCardKinds";
 import {enforceRateLimit, jsonWithHeaders} from "@/lib/publicApi";
 
 /**
@@ -19,6 +20,8 @@ export async function GET(request: Request) {
     Service.exists({active: true, bookableOnline: true}),
   ]);
 
-  const card = buildEntityCard(settings, Boolean(bookableService));
+  // Kinds are a record only: a registry problem of any kind degrades to ["VET"], never an error.
+  const kinds = await resolveEntityCardKinds(settings);
+  const card = buildEntityCard(settings, Boolean(bookableService), kinds);
   return jsonWithHeaders(card, {headers: rateLimit.headers});
 }
