@@ -294,6 +294,14 @@ https://<vet>/v/<32hex>
 The stored/returned result also carries `disclosedKeyPaths` (which fields the presented artifact actually disclosed, for display) and `hiddenCount` (how many it withheld, directly the artifact's own `obfuscatedLeafHashes.length` - never a diff against the record type's full schema field set, which would fabricate a number for fields the issuer simply never populated) but never the leaf VALUES themselves - this endpoint is unauthenticated, and the session it writes to is later polled by clinic staff over a separate, deployment-internal API out of scope for this spec.
 Both fields are set regardless of `stage` - even a `crypto_failed` or `not_anchored` presentment still structurally names how many leaves it disclosed and withheld.
 
+Since `vet-public-api.yaml` 2.1.0 (WP4.21) the result may also carry an `issuer` block, `{ account, kinds, registered }`, that names the registered entity behind the clone that issued the record.
+The clinic's own backend resolves it from the issuing clone's owner (`VetIssuer.vetOwner()`) and `EntityRegistry.kindsOf` (`specs/entity-kinds.md`).
+It is present once `rootIssuer` resolved to a clone and the clone's owner could be read: on every `"verified"` result, and on every `"not_anchored"` result except `"root_unset"`.
+`kinds` is the owner's kind ids in bit order, an empty array when the owner is not registered, and `null` when the chain read failed (unknown, never "not registered"; `registered` is then meaningless).
+The block is informational only.
+A kind grants no right, a failed registry read never fails the record check, and nothing in it changes `stage` or `validity`.
+A clinic's verify screen should show the issuer's kinds, and warn when the issuer is registered as neither a vet nor the DogTag verifier (`networkRole: verifier` in the admin directory), so a record from an unrelated business is not mistaken for a clinic record.
+
 ### Parsing rules
 
 1. The scheme MUST be `https`.

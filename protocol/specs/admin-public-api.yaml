@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: DogTag Admin Public API
-  version: "2.0.0"
+  version: "2.2.0"
   description: |-
     The admin directory surface mobile apps call after on-chain discovery.
     Discovery chain: apps bundle only the ROAX RPC endpoint and the `EntityRegistry` contract
@@ -11,16 +11,29 @@ info:
     `adminApiUrl` on `EntityRegistry` points at the base URL this spec's routes are served
     from; each directory row's `platformBaseUrl` then points at that entity's own deployment,
     whose standardized surface is `specs/vet-public-api.yaml`.
-    This is a READ-ONLY public surface: no route here accepts a mutation. Entity onboarding,
-    KYC review, and on-chain writes are staff-only admin-platform screens, out of scope for
-    this spec.
+    The directory and health routes are a READ-ONLY public surface. WP4.20 adds the
+    `mobile-documents` tag (`/api/mobile/v1/...`): wallet-signed submission of a document for
+    DogTag verification, which is the only mutating, non-public part of this spec. Entity
+    onboarding, KYC review, document review, and on-chain writes are staff-only admin-platform
+    screens, out of scope for this spec.
+
+    2.2.0 (WP4.21) is additive. An entity now holds a SET of kinds (`EntityRegistry` version 2,
+    `specs/entity-kinds.md`): `EntityKind` gains `BOARDING` and `DAYCARE`, `EntityRow` gains `kinds`
+    and `bookingEnabled`, and `kind` stays one string, now documented as the primary kind, so
+    clients built against 2.1.0 keep decoding. New `providers` routes search pet service
+    providers, registered or not. The `mobile-owner` tag carries the owner's appointment
+    requests, invites, push devices, notification settings and data erasure, behind the same
+    wallet-signed session as `mobile-documents`. The `business-public` routes are the pages a
+    business reaches from an email link. Kinds are a record only: they grant no right.
   license:
     name: Apache-2.0
     identifier: Apache-2.0
 # Every route is either fully public (the directory) or gated only by a resource-scoped opaque
 # token that OpenAPI's security-scheme vocabulary has no shape for (see the sibling
 # vet-public-api.yaml for the same reasoning) - not applicable here since every route below is
-# unconditionally public, but recorded for consistency across the two specs.
+# unconditionally public, but recorded for consistency across the two specs. The WP4.20
+# `mobile-documents` routes declare their own per-operation `security` (the `DocumentBearer`
+# scheme, or `[]` where the route authenticates by an EIP-712 signature in its body).
 security: []
 servers:
   - url: "https://{adminHost}"
@@ -31,6 +44,17 @@ servers:
 tags:
   - name: directory
     description: The public entity directory - every Active entity on chain, plus enough off-chain metadata to render a map/list.
+  - name: providers
+    description: WP4.21 - search over every pet service provider, registered entities and staff-managed listings together. Public and read-only.
+  - name: mobile-owner
+    description: |-
+      WP4.21 - the owner's side of the provider network: appointment requests, invites for listed businesses that have not joined, APNs push devices, notification settings and owner data erasure. Wallet-authenticated with the same `DocumentBearer` session as `mobile-documents` (`POST /api/mobile/v1/auth/challenge` then `.../auth/session`); no new typed-data struct.
+  - name: business-public
+    description: |-
+      WP4.21 - the pages a business reaches from a DogTag email: see and answer an appointment request, and stop all Dog Tag emails. Unauthenticated; the 32-byte random token in the URL is the credential and is stored only as a hash.
+  - name: mobile-documents
+    description: |-
+      WP4.20 - the DogTag mobile document flow: wallet-signed authentication, submitting a document for DogTag verification, uploading the file, tracking status and pulling the issued record. The ONLY non-public (signature- or bearer-authenticated) and mutating routes in this spec. Normative typed-data structs: `DocumentSubmissionBlock`, `DocumentAccessBlock`; vectors: `specs/mobile-document-vectors.json`.
   - name: health
     description: Liveness/readiness for k8s probes and uptime monitors.
 x-common-headers:
@@ -50,10 +74,18 @@ paths:
         the acceptance anchor "entity revoked in the registry ... is visibly revoked across
         admin, directory, and vet platform" (a caller that WANTS to show "this entity was
         revoked" passes `status=Revoked` or `status=All` deliberately).
+
+        2.2.0: rows carry `kinds` (all kinds, bit order) beside `kind` (the primary kind, the lowest
+        known set bit). An entity whose on-chain kinds contain no kind this API knows is left out of
+        the list, and the server logs it; the old fallback that reported such an entity as `VET` is
+        gone. For searching pet service providers use `GET /v1/providers`.
       parameters:
         - name: kind
           in: query
-          schema: {type: string, enum: [VET, GOVERNMENT, GROOMER]}
+          description: |-
+            Matches every entity that HOLDS this kind (any of its `kinds`), not only the primary
+            `kind`. Unchanged for entities with one kind.
+          schema: {$ref: '#/components/schemas/EntityKind'}
         - name: q
           in: query
           description: Free-text match against name and DBA.
@@ -148,6 +180,931 @@ paths:
         "5XX":
           $ref: '#/components/responses/ServerError'
 
+  /v1/providers:
+    get:
+      operationId: listProviders
+      tags: [providers]
+      summary: Search pet service providers (members and staff-managed listings together)
+      description: |-
+        WP4.21. One result set of the businesses a pet owner can use: Active registered entities
+        that hold at least one service kind (`VET`, `GROOMER`, `BOARDING`, `DAYCARE`), except the
+        operator's own entity, plus published staff-managed listings of businesses that have not
+        joined yet. `member` tells them apart. A listing's contact email is never returned.
+
+        Filters combine with AND. `kinds` is any-of. `near` with `radiusKm` is a radius filter;
+        `near` alone only enables `distanceKm` and the `distance` sort. `bbox` is a map-viewport
+        filter and cannot be combined with `radiusKm`.
+
+        Default `sort`: `relevance` when `q` is given, else `distance` when `near` is given, else
+        `name`. `sort=relevance` requires `q`; `sort=distance` requires `near`. Search is
+        accent-insensitive, prefix-tolerant and tolerant of small typos (for example `chelsae`
+        finds `Chelsea`); a `q` such as "vet" or "kennel" that names a kind also boosts that kind.
+
+        Pagination is cursor based and stable for one `sort`; a `cursor` is only valid with the
+        same query it came from.
+      parameters:
+        - name: q
+          in: query
+          description: Free-text match against the business name, DBA and area. Up to 80 characters.
+          schema: {type: string, maxLength: 80}
+          example: paws
+        - name: kinds
+          in: query
+          description: "Comma-separated list of service kinds, any-of. Unknown ids are rejected with `bad_kinds`."
+          schema: {type: string, pattern: '^(VET|GROOMER|BOARDING|DAYCARE)(,(VET|GROOMER|BOARDING|DAYCARE))*$'}
+          example: "GROOMER,BOARDING"
+        - name: member
+          in: query
+          description: "`true` for registered entities only, `false` for listings only. Absent for both."
+          schema: {type: string, enum: ["true", "false"]}
+        - name: near
+          in: query
+          description: "`lat,lng` center point."
+          schema: {type: string, pattern: '^-?\d{1,3}(\.\d+)?,-?\d{1,3}(\.\d+)?$'}
+          example: "1.3521,103.8198"
+        - name: radiusKm
+          in: query
+          description: Radius filter around `near`. Requires `near`.
+          schema: {type: number, minimum: 0.1, maximum: 20000}
+          example: 10
+        - name: bbox
+          in: query
+          description: "`minLng,minLat,maxLng,maxLat`. Not with `radiusKm`."
+          schema: {type: string, pattern: '^-?\d{1,3}(\.\d+)?(,-?\d{1,3}(\.\d+)?){3}$'}
+          example: "103.6,1.2,104.0,1.5"
+        - name: bookable
+          in: query
+          description: "`true` keeps only providers whose platform accepts bookings."
+          schema: {type: string, enum: ["true"]}
+        - name: sort
+          in: query
+          schema: {type: string, enum: [relevance, distance, name]}
+        - name: cursor
+          in: query
+          description: Opaque pagination cursor from a previous page's `nextCursor`. Absent on the first page.
+          schema: {type: string}
+        - name: limit
+          in: query
+          schema: {type: integer, minimum: 1, maximum: 100, default: 30}
+      responses:
+        "200":
+          description: A page of providers.
+          headers: *rateLimitHeaders
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ProviderPage'}
+        "400":
+          description: |-
+            `bad_query` - a malformed parameter. The `error.code` is one of `bad_kinds`, `bad_near`,
+            `bad_bbox`, `bad_radius`, `radius_needs_near`, `bbox_with_radius`, `sort_needs_q`,
+            `sort_needs_near`, `bad_sort`, `bad_member`, `bad_bookable`, `q_too_long`, `bad_limit`
+            or `bad_cursor`.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
+        "429":
+          $ref: '#/components/responses/RateLimited'
+        "5XX":
+          $ref: '#/components/responses/ServerError'
+
+  /v1/providers/{id}:
+    get:
+      operationId: getProvider
+      tags: [providers]
+      summary: One provider's detail
+      description: |-
+        WP4.21. `id` is the `ProviderRow.id` (`entity:<account>` or `listing:<uuid>`). A listing
+        that was archived, or linked to an entity that has since joined, answers 404 (the
+        `entity:` id then replaces it).
+      parameters:
+        - $ref: '#/components/parameters/ProviderId'
+      responses:
+        "200":
+          description: The provider.
+          headers: *rateLimitHeaders
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ProviderDetail'}
+        "404":
+          description: "`provider_not_found` - no such provider, or it is not listed, or `id` is malformed."
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
+        "429":
+          $ref: '#/components/responses/RateLimited'
+        "5XX":
+          $ref: '#/components/responses/ServerError'
+
+  /api/mobile/v1/auth/challenge:
+    post:
+      operationId: createMobileAuthChallenge
+      tags: [mobile-documents]
+      summary: Issue a single-use DocumentAccess nonce for a wallet
+      description: |-
+        WP4.20. Step 1 of authentication: the app asks for a server-issued nonce, then signs a
+        `DocumentAccess` EIP-712 message (`DocumentAccessBlock`) over it and exchanges that
+        signature for a bearer at `POST /api/mobile/v1/auth/session`. The nonce is stored
+        server-side, single use, and valid for 5 minutes.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/AuthChallengeRequest'}
+      responses:
+        "200":
+          description: A fresh nonce and its deadline.
+          headers: *rateLimitHeaders
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AuthChallengeResponse'}
+        "400":
+          description: Malformed `wallet`.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
+        "429":
+          $ref: '#/components/responses/RateLimited'
+        "503":
+          $ref: '#/components/responses/ConfigMissing'
+        "5XX":
+          $ref: '#/components/responses/ServerError'
+
+  /api/mobile/v1/auth/session:
+    post:
+      operationId: createMobileAuthSession
+      tags: [mobile-documents]
+      summary: Exchange a signed DocumentAccess message for a bearer token
+      description: |-
+        WP4.20. The server rebuilds the `DocumentAccess` typed data itself (domain from its own
+        DogTag clone address, `nonce` from its stored challenge) and requires the recovered signer
+        to equal `wallet`. On success the nonce is consumed (single use) and a bearer token valid
+        for 15 minutes, bound to `wallet`, is returned. Every document route below scopes every
+        query to that wallet; there is no email, password or account record - the wallet address
+        is the principal.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/AuthSessionRequest'}
+      responses:
+        "200":
+          description: A bearer token bound to the wallet.
+          headers: *rateLimitHeaders
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AuthSessionResponse'}
+        "400":
+          description: "`deadline_passed` (the signed deadline, or the challenge's own deadline, is in the past) or a malformed body."
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DocumentError'}
+        "401":
+          description: "`signature_invalid` - the signature does not recover to `wallet`, the nonce is unknown, expired or already used."
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DocumentError'}
+        "429":
+          $ref: '#/components/responses/RateLimited'
+        "503":
+          $ref: '#/components/responses/ConfigMissing'
+        "5XX":
+          $ref: '#/components/responses/ServerError'
+
+  /api/mobile/v1/documents/submissions:
+    post:
+      operationId: createDocumentSubmission
+      tags: [mobile-documents]
+      summary: Submit a document for DogTag verification (metadata and signature; the file follows)
+      description: |-
+        WP4.20. Authenticated by the `DocumentSubmission` EIP-712 signature in the body itself
+        (`DocumentSubmissionBlock`), not by a bearer, because the owner has not necessarily opened
+        a session yet. The server rebuilds the typed data (domain `verifyingContract` is its own
+        DogTag clone address) and fails closed, in this order:
+
+        1. `deadline` is in the future (`deadline_passed`) and the signature recovers to `wallet`
+           (`signature_invalid`).
+        2. Tagged (`tagged: true`): `profileRoot(dogTagIdField)` on the SBT equals
+           `tagArtifact.root`, `rootIssuer[root]` is a factory clone, and
+           `verifyRedactedArtifact(tagArtifact)` passes (`tag_mismatch`, `tag_artifact_invalid`).
+           Untagged (`tagged: false`): `dogTagIdField` must be a decimal string strictly below the
+           BN254 scalar field modulus (`dog_tag_id_invalid`), and `profileRoot(dogTagIdField)` must
+           be zero (`dog_tag_id_is_a_tag`; the phone draws a new random id and retries).
+        3. `uploadId` is unused for this wallet (`upload_id_reused`).
+
+        The two bodies are mutually exclusive: `tagged: true` requires `tagArtifact` and forbids
+        `petFacts`; `tagged: false` requires `petFacts` and forbids `tagArtifact`.
+
+        Untagged dogs (Kenneth's decision, 2026-11-06): a dog does not need a DogTag to receive a
+        verified record. The phone generates a random 128-bit id once per untagged local pet,
+        renders it as a decimal string, and sends it as `dogTagIdField`; the same value later
+        appears as the record's `credentialSubject.dogTagId` leaf. It is accepted only if it is a
+        decimal below the BN254 field modulus
+        (21888242871839275222246405745257275088548364400416034343698204186575808495617) and the
+        SBT holds a zero `profileRoot` for it.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CreateSubmissionRequest'}
+      responses:
+        "200":
+          description: Submission accepted; upload the file next.
+          headers: *rateLimitHeaders
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/CreateSubmissionResponse'}
+        "400":
+          description: "`deadline_passed`, `dog_tag_id_invalid`, or a malformed body."
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DocumentError'}
+        "401":
+          description: "`signature_invalid`."
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DocumentError'}
+        "409":
+          description: "`upload_id_reused` (this wallet already used this `uploadId`) or `dog_tag_id_is_a_tag` (an untagged submission named an id that has a `profileRoot`)."
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DocumentError'}
+        "415":
+          description: "`media_type_rejected` - `mediaType` is not on the upload allowlist."
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DocumentError'}
+        "422":
+          description: "`tag_mismatch` (on-chain `profileRoot` differs from `tagArtifact.root`, or its issuer is not a factory clone) or `tag_artifact_invalid` (`verifyRedactedArtifact` failed)."
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DocumentError'}
+        "429":
+          $ref: '#/components/responses/RateLimited'
+        "503":
+          $ref: '#/components/responses/ConfigMissing'
+        "5XX":
+          $ref: '#/components/responses/ServerError'
+    get:
+      operationId: listDocumentSubmissions
+      tags: [mobile-documents]
+      summary: List the authenticated wallet's submissions
+      description: |-
+        WP4.20. Scoped to the bearer's wallet. `wallet` is required and MUST equal the bearer's
+        wallet (otherwise 403); it is explicit so a stale client cannot silently read another
+        principal's rows. For `ready` and `revoked` submissions the row carries `recordRoot`; fetch
+        the full artifact from `.../{id}/record`.
+      security:
+        - DocumentBearer: []
+      parameters:
+        - name: wallet
+          in: query
+          required: true
+          schema: {$ref: '#/components/schemas/Address'}
+      responses:
+        "200":
+          description: The wallet's submissions, newest first.
+          headers: *rateLimitHeaders
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/SubmissionList'}
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          description: "`wallet` differs from the bearer's wallet."
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
+        "429":
+          $ref: '#/components/responses/RateLimited'
+        "503":
+          $ref: '#/components/responses/ConfigMissing'
+        "5XX":
+          $ref: '#/components/responses/ServerError'
+
+  /api/mobile/v1/documents/submissions/{id}/file:
+    put:
+      operationId: uploadDocumentFile
+      tags: [mobile-documents]
+      summary: Upload the exact bytes of a submitted document
+      description: |-
+        WP4.20. Raw bytes in the request body, `Content-Type` equal to the submission's
+        `mediaType`. The server streams into quarantine while hashing, rejects on byte count
+        (`size_mismatch`) or SHA-256 (`hash_mismatch`) disagreement with the submission, sniffs the
+        media type against the allowlist (`media_type_rejected`), then stores the file. Body size
+        is limited before buffering. Retrying with the same `uploadId` and identical bytes returns
+        the same receipt; different bytes are refused. The app MUST check the echoed `uploadId` and
+        `sha256` before attaching the receipt to its local entry.
+      security:
+        - DocumentBearer: []
+      parameters:
+        - $ref: '#/components/parameters/SubmissionId'
+      requestBody:
+        required: true
+        content:
+          application/pdf:
+            schema: {type: string, format: binary}
+          image/jpeg:
+            schema: {type: string, format: binary}
+          image/png:
+            schema: {type: string, format: binary}
+          image/webp:
+            schema: {type: string, format: binary}
+      responses:
+        "200":
+          description: The upload receipt; the submission is now `in_review`.
+          headers: *rateLimitHeaders
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/UploadReceipt'}
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "404":
+          $ref: '#/components/responses/SubmissionNotFound'
+        "413":
+          description: "`size_mismatch` - more bytes than the submission's `byteLength` (or than the global body limit)."
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DocumentError'}
+        "415":
+          description: "`media_type_rejected` - the declared or sniffed media type is not allowed."
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DocumentError'}
+        "422":
+          description: "`hash_mismatch` (SHA-256 of the received bytes differs from the submission) or `size_mismatch` (fewer bytes than declared)."
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DocumentError'}
+        "429":
+          $ref: '#/components/responses/RateLimited'
+        "503":
+          $ref: '#/components/responses/ConfigMissing'
+        "5XX":
+          $ref: '#/components/responses/ServerError'
+    get:
+      operationId: downloadDocumentFile
+      tags: [mobile-documents]
+      summary: Re-download the original uploaded bytes
+      description: For a device that lost its local copy. Scoped to the bearer's wallet.
+      security:
+        - DocumentBearer: []
+      parameters:
+        - $ref: '#/components/parameters/SubmissionId'
+      responses:
+        "200":
+          description: The original bytes, with the stored `Content-Type`.
+          headers: *rateLimitHeaders
+          content:
+            application/pdf:
+              schema: {type: string, format: binary}
+            image/jpeg:
+              schema: {type: string, format: binary}
+            image/png:
+              schema: {type: string, format: binary}
+            image/webp:
+              schema: {type: string, format: binary}
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "404":
+          $ref: '#/components/responses/SubmissionNotFound'
+        "429":
+          $ref: '#/components/responses/RateLimited'
+        "5XX":
+          $ref: '#/components/responses/ServerError'
+
+  /api/mobile/v1/documents/submissions/{id}/record:
+    get:
+      operationId: getDocumentSubmissionRecord
+      tags: [mobile-documents]
+      summary: Pull the issued record artifact
+      description: |-
+        WP4.20. The full record artifact, served only while the submission is `ready` or
+        `revoked` (a revoked record is still served so the phone can show history). The server
+        self-verifies with `verifyRecordArtifact` before serving. The app SHOULD independently
+        re-verify on device.
+      security:
+        - DocumentBearer: []
+      parameters:
+        - $ref: '#/components/parameters/SubmissionId'
+      responses:
+        "200":
+          description: The record artifact.
+          headers: *rateLimitHeaders
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DocumentRecordPayload'}
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "404":
+          $ref: '#/components/responses/SubmissionNotFound'
+        "409":
+          description: The submission has no issued record yet (status is not `ready` or `revoked`).
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
+        "429":
+          $ref: '#/components/responses/RateLimited'
+        "5XX":
+          $ref: '#/components/responses/ServerError'
+
+  /api/mobile/v1/requests:
+    post:
+      operationId: createProviderRequest
+      tags: [mobile-owner]
+      summary: Ask a provider for an appointment
+      description: |-
+        WP4.21. The owner asks one provider (`ProviderRow.id`) for a service on given days. DogTag
+        emails the business once with the owner's first name, the dog's name, the service, the days
+        and time of day, a reply link and a stop link (see the `business-public` routes); the owner's
+        email address and phone are never in that email. A provider with no contact email on file
+        gets `queued_for_staff` instead and the DogTag staff follow up.
+
+        Limits (all enforced server-side): 5 requests per wallet per 24 hours, 1 open request per
+        wallet and provider, 3 request emails per business per 24 hours. A provider whose
+        `acceptsRequests` is false is refused with `provider_not_accepting`.
+      security:
+        - DocumentBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CreateProviderRequest'}
+      responses:
+        "200":
+          description: The request was recorded.
+          headers: *rateLimitHeaders
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/CreateProviderRequestResponse'}
+        "400":
+          description: "`invalid_request` - malformed body or no days."
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/OwnerError'}
+        "404":
+          description: "`provider_not_found` - no such provider, or it is no longer listed."
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/OwnerError'}
+        "409":
+          description: "`open_request_exists` - this wallet already has an open request to this provider."
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/OwnerError'}
+        "422":
+          description: "`provider_not_accepting` - the business opted out of Dog Tag emails or the provider cannot take requests."
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/OwnerError'}
+        "429":
+          description: "`wallet_request_limit` - 5 requests per wallet per 24 hours reached, or generic `rate_limited` (per client)."
+          headers:
+            <<: *rateLimitHeaders
+            Retry-After: {schema: {type: integer, minimum: 0}}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/OwnerError'}
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "503":
+          $ref: '#/components/responses/ConfigMissing'
+        "5XX":
+          $ref: '#/components/responses/ServerError'
+    get:
+      operationId: listProviderRequests
+      tags: [mobile-owner]
+      summary: List the authenticated wallet's appointment requests
+      description: WP4.21. Scoped to the bearer's wallet, newest first.
+      security:
+        - DocumentBearer: []
+      responses:
+        "200":
+          description: The wallet's requests.
+          headers: *rateLimitHeaders
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ProviderRequestList'}
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "429":
+          $ref: '#/components/responses/RateLimited'
+        "503":
+          $ref: '#/components/responses/ConfigMissing'
+        "5XX":
+          $ref: '#/components/responses/ServerError'
+
+  /api/mobile/v1/requests/{id}/cancel:
+    post:
+      operationId: cancelProviderRequest
+      tags: [mobile-owner]
+      summary: Cancel one of the wallet's open requests
+      description: |-
+        WP4.21. Allowed while the status is `queued_for_staff` or `sent`. Cancelling an already
+        cancelled request answers 200 with the same row (idempotent).
+      security:
+        - DocumentBearer: []
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+      responses:
+        "200":
+          description: The request, now `cancelled`.
+          headers: *rateLimitHeaders
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ProviderRequestSummary'}
+        "404":
+          description: "`request_not_found` - no such request for the bearer's wallet (another wallet's request is indistinguishable from a missing one)."
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/OwnerError'}
+        "409":
+          description: "`request_not_cancellable` - the business already accepted, declined or replied, or the request expired."
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/OwnerError'}
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "429":
+          $ref: '#/components/responses/RateLimited'
+        "503":
+          $ref: '#/components/responses/ConfigMissing'
+        "5XX":
+          $ref: '#/components/responses/ServerError'
+
+  /api/mobile/v1/invites:
+    post:
+      operationId: createProviderInvite
+      tags: [mobile-owner]
+      summary: Ask DogTag to invite a listed business to join
+      description: |-
+        WP4.21. For listings only (`providerId` of the form `listing:<uuid>`). Idempotent per wallet
+        and listing: a repeat answers 200 with `created: false` and does not raise the listing's
+        demand count again. DogTag emails the business at most once per 14 days, and the email
+        carries the demand count, never who asked.
+      security:
+        - DocumentBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CreateProviderInviteRequest'}
+      responses:
+        "200":
+          description: The invite, new or existing.
+          headers: *rateLimitHeaders
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ProviderInvite'}
+        "400":
+          description: "`invalid_request` - malformed body, or `providerId` is not a `listing:` id."
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/OwnerError'}
+        "404":
+          description: "`provider_not_found` - no such listing, or it is not published."
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/OwnerError'}
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "429":
+          $ref: '#/components/responses/RateLimited'
+        "503":
+          $ref: '#/components/responses/ConfigMissing'
+        "5XX":
+          $ref: '#/components/responses/ServerError'
+    get:
+      operationId: listProviderInvites
+      tags: [mobile-owner]
+      summary: List the authenticated wallet's invites
+      description: WP4.21. Scoped to the bearer's wallet, newest first.
+      security:
+        - DocumentBearer: []
+      responses:
+        "200":
+          description: The wallet's invites.
+          headers: *rateLimitHeaders
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ProviderInviteList'}
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "429":
+          $ref: '#/components/responses/RateLimited'
+        "503":
+          $ref: '#/components/responses/ConfigMissing'
+        "5XX":
+          $ref: '#/components/responses/ServerError'
+
+  /api/mobile/v1/devices/{deviceId}:
+    put:
+      operationId: putOwnerDevice
+      tags: [mobile-owner]
+      summary: Register or refresh a push device
+      description: |-
+        WP4.21. `deviceId` is an id the app generates once per install (UUID). Idempotent: the same
+        `deviceId` replaces the stored token. Push text never carries personal data; the app
+        fetches detail after a push.
+      security:
+        - DocumentBearer: []
+      parameters:
+        - $ref: '#/components/parameters/DeviceId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/PutDeviceRequest'}
+      responses:
+        "200":
+          description: The stored device.
+          headers: *rateLimitHeaders
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/OwnerDevice'}
+        "400":
+          description: "`invalid_request` - malformed `apnsToken`, `environment` or `bundleId`."
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/OwnerError'}
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "429":
+          $ref: '#/components/responses/RateLimited'
+        "503":
+          $ref: '#/components/responses/ConfigMissing'
+        "5XX":
+          $ref: '#/components/responses/ServerError'
+    delete:
+      operationId: deleteOwnerDevice
+      tags: [mobile-owner]
+      summary: Remove a push device
+      description: WP4.21. Idempotent; an unknown `deviceId` also answers 204.
+      security:
+        - DocumentBearer: []
+      parameters:
+        - $ref: '#/components/parameters/DeviceId'
+      responses:
+        "204":
+          description: The device is removed.
+          headers: *rateLimitHeaders
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "429":
+          $ref: '#/components/responses/RateLimited'
+        "503":
+          $ref: '#/components/responses/ConfigMissing'
+        "5XX":
+          $ref: '#/components/responses/ServerError'
+
+  /api/mobile/v1/notification-settings:
+    get:
+      operationId: getOwnerNotificationSettings
+      tags: [mobile-owner]
+      summary: Read the wallet's notification settings
+      description: "WP4.21. A wallet with no stored settings reads `push: true`, `email: false`, `emailVerified: false`."
+      security:
+        - DocumentBearer: []
+      responses:
+        "200":
+          description: The settings.
+          headers: *rateLimitHeaders
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/NotificationSettings'}
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "429":
+          $ref: '#/components/responses/RateLimited'
+        "503":
+          $ref: '#/components/responses/ConfigMissing'
+        "5XX":
+          $ref: '#/components/responses/ServerError'
+    put:
+      operationId: putOwnerNotificationSettings
+      tags: [mobile-owner]
+      summary: Change the wallet's notification settings
+      description: |-
+        WP4.21. Setting a new `emailAddress` stores it unverified and emails a confirmation link;
+        no update is sent to it until the link is followed (`emailVerified` stays false meanwhile).
+        Updates go only to a confirmed address with `email: true`, and every email carries an
+        unsubscribe link.
+      security:
+        - DocumentBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/NotificationSettingsUpdate'}
+      responses:
+        "200":
+          description: The settings as stored.
+          headers: *rateLimitHeaders
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/NotificationSettings'}
+        "400":
+          description: "`invalid_request` - malformed body or `emailAddress`; `email_required` - `email: true` with no address on file."
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/OwnerError'}
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "429":
+          $ref: '#/components/responses/RateLimited'
+        "503":
+          $ref: '#/components/responses/ConfigMissing'
+        "5XX":
+          $ref: '#/components/responses/ServerError'
+
+  /api/mobile/v1/owner:
+    delete:
+      operationId: eraseOwner
+      tags: [mobile-owner]
+      summary: Erase the wallet's data held by DogTag
+      description: |-
+        WP4.21. Removes the wallet's devices, notification settings, queued notifications, sessions,
+        invites (the anonymous demand count stays) and appointment requests. For document
+        submissions it deletes the stored file and every personal field, and keeps only the id, the
+        status, the record root and the chain references so an issued record can still be revoked.
+        Issued records are NOT revoked by an erase. The bearer stops working once this returns.
+      security:
+        - DocumentBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/EraseOwnerRequest'}
+      responses:
+        "200":
+          description: The wallet's data was erased.
+          headers: *rateLimitHeaders
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/EraseOwnerResponse'}
+        "400":
+          description: "`confirmation_required` - `confirm` is not exactly `ERASE`."
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/OwnerError'}
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "429":
+          $ref: '#/components/responses/RateLimited'
+        "503":
+          $ref: '#/components/responses/ConfigMissing'
+        "5XX":
+          $ref: '#/components/responses/ServerError'
+
+  /r/{token}:
+    get:
+      operationId: getBusinessRequestPage
+      tags: [business-public]
+      summary: The business's page for one appointment request
+      description: |-
+        WP4.21. The link in the request email. An HTML page showing the owner's first name, the
+        dog's name, the service, days and time of day, with buttons to accept, decline or write back.
+        The token is 32 random bytes (base64url), stored only as a hash, so it is the credential; it
+        stops working when the request is cancelled or 14 days after it was sent. `Accept: application/json`
+        returns the same content as `BusinessRequestView`.
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/BusinessToken'
+      responses:
+        "200":
+          description: The request page.
+          headers: *rateLimitHeaders
+          content:
+            text/html:
+              schema: {type: string}
+            application/json:
+              schema: {$ref: '#/components/schemas/BusinessRequestView'}
+        "404":
+          description: "`token_not_found` - unknown token (an unknown and an expired token are indistinguishable)."
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
+        "410":
+          description: "`request_closed` - the request was cancelled or expired."
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
+        "429":
+          $ref: '#/components/responses/RateLimited'
+        "5XX":
+          $ref: '#/components/responses/ServerError'
+    post:
+      operationId: answerBusinessRequest
+      tags: [business-public]
+      summary: Accept, decline or write back
+      description: |-
+        WP4.21. `accept` and `decline` answer once (a second, different answer is `already_answered`);
+        `reply` carries a message to the owner and can be sent again. The owner is told through the
+        app (push or email according to their notification settings); the business never sees the
+        owner's contact details.
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/BusinessToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/BusinessRequestAnswer'}
+          application/x-www-form-urlencoded:
+            schema: {$ref: '#/components/schemas/BusinessRequestAnswer'}
+      responses:
+        "200":
+          description: The answer was recorded.
+          headers: *rateLimitHeaders
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/BusinessRequestAnswerResult'}
+            text/html:
+              schema: {type: string}
+        "400":
+          description: "`invalid_request` - unknown `action`, or `reply` without a `message`."
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
+        "404":
+          description: "`token_not_found`."
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
+        "409":
+          description: "`already_answered` - the request was already accepted or declined."
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
+        "410":
+          description: "`request_closed` - the request was cancelled or expired."
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
+        "429":
+          $ref: '#/components/responses/RateLimited'
+        "5XX":
+          $ref: '#/components/responses/ServerError'
+
+  /email-preferences/{token}:
+    get:
+      operationId: getBusinessEmailPreferencesPage
+      tags: [business-public]
+      summary: The stop-all-emails page for a business address
+      description: |-
+        WP4.21. The "stop" link in every email DogTag sends to a business. An HTML page that
+        explains and offers one button, "Stop all Dog Tag emails to this address". The token is
+        32 random bytes (base64url), stored only as a hash.
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/BusinessToken'
+      responses:
+        "200":
+          description: The preferences page.
+          headers: *rateLimitHeaders
+          content:
+            text/html:
+              schema: {type: string}
+        "404":
+          description: "`token_not_found`."
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
+        "429":
+          $ref: '#/components/responses/RateLimited'
+        "5XX":
+          $ref: '#/components/responses/ServerError'
+    post:
+      operationId: stopBusinessEmails
+      tags: [business-public]
+      summary: Stop all Dog Tag emails to this business address
+      description: |-
+        WP4.21. Adds the address to the suppression list (stored by hash). From then on DogTag sends
+        it nothing and every provider using that address reports `acceptsRequests: false`.
+        Idempotent.
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/BusinessToken'
+      responses:
+        "200":
+          description: The address is suppressed.
+          headers: *rateLimitHeaders
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/EmailPreferencesResult'}
+            text/html:
+              schema: {type: string}
+        "404":
+          description: "`token_not_found`."
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
+        "429":
+          $ref: '#/components/responses/RateLimited'
+        "5XX":
+          $ref: '#/components/responses/ServerError'
+
   /health:
     get:
       operationId: getHealth
@@ -173,6 +1130,16 @@ paths:
                 $ref: '#/components/schemas/HealthResponse'
 
 components:
+  securitySchemes:
+    DocumentBearer:
+      type: http
+      scheme: bearer
+      description: |-
+        WP4.20. The 15-minute opaque bearer returned by `POST /api/mobile/v1/auth/session`,
+        bound to one wallet. Every `mobile-documents` route except the two auth routes and
+        `POST /api/mobile/v1/documents/submissions` (which carries its own `DocumentSubmission`
+        signature) requires it. WP4.21: so does every `mobile-owner` route.
+
   parameters:
     EntityAccount:
       name: account
@@ -180,6 +1147,41 @@ components:
       required: true
       description: The entity's on-chain wallet address (its `EntityRegistry` key).
       schema: {$ref: '#/components/schemas/Address'}
+    SubmissionId:
+      name: id
+      in: path
+      required: true
+      description: The `submissionId` returned by `POST /api/mobile/v1/documents/submissions`.
+      schema: {type: string, minLength: 1, maxLength: 128}
+
+    ProviderId:
+      name: id
+      in: path
+      required: true
+      description: "A `ProviderRow.id`: `entity:<account>` for a registered entity or `listing:<uuid>` for a staff-managed listing."
+      schema: {$ref: '#/components/schemas/ProviderId'}
+      example: "entity:0xcbAaaB4f334AED79a1fB1CC4BfE96D7f04b060db"
+    RequestId:
+      name: id
+      in: path
+      required: true
+      description: The `requestId` returned by `POST /api/mobile/v1/requests`.
+      schema: {type: string, minLength: 1, maxLength: 128}
+      example: req_01JC8Z4M7Q
+    DeviceId:
+      name: deviceId
+      in: path
+      required: true
+      description: An id the app generates once per install (a UUID).
+      schema: {type: string, format: uuid}
+      example: 6f1c7d52-0c9e-4a53-9f5e-2a4b7d6f1c11
+    BusinessToken:
+      name: token
+      in: path
+      required: true
+      description: A 32-byte random token, base64url without padding (43 characters). Stored server-side only as a hash.
+      schema: {type: string, pattern: '^[A-Za-z0-9_-]{43}$'}
+      example: Zk3b0d9yQ1xWm8nT5vR2cL7hJ4aGpE6sUfXiOwNtBqM
 
   headers:
     RateLimitLimit:
@@ -193,6 +1195,21 @@ components:
       schema: {type: integer, minimum: 0}
 
   responses:
+    Unauthorized:
+      description: Missing, malformed or expired bearer token. Re-run the challenge/session exchange.
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Error'}
+    SubmissionNotFound:
+      description: No submission with this id for the bearer's wallet (a submission owned by another wallet is indistinguishable from a missing one).
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Error'}
+    ConfigMissing:
+      description: "`config_missing` - this deployment has no DogTag clone address / operator configuration yet, so it cannot build or check the typed data. Retry later."
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/DocumentError'}
     RateLimited:
       description: Rate limit exceeded for this route + client.
       headers:
@@ -211,6 +1228,7 @@ components:
     Address:
       type: string
       pattern: '^0x[0-9a-fA-F]{40}$'
+      examples: ["0xcbAaaB4f334AED79a1fB1CC4BfE96D7f04b060db"]
 
     Error:
       type: object
@@ -223,15 +1241,24 @@ components:
             code: {type: string, description: "A stable machine-readable code, e.g. `entity_not_found`, `bad_radius_filter`, `rate_limited`."}
             message: {type: string, description: "A short, human-safe sentence."}
             requestId: {type: string}
+      examples:
+        - error: {code: entity_not_found, message: "No entity at this account."}
 
     EntityKind:
       type: string
-      enum: [VET, GOVERNMENT, GROOMER]
+      description: |-
+        The kinds of business an entity can be, mirroring the on-chain kind bits
+        (`specs/entity-kinds.json`): bit 1 `VET`, 2 `GOVERNMENT`, 3 `GROOMER`, 4 `BOARDING`, 5
+        `DAYCARE`. A kind is a record only and grants no right. A client that meets a value it does
+        not know must not fail on it.
+      enum: [VET, GOVERNMENT, GROOMER, BOARDING, DAYCARE]
+      examples: [VET]
 
     EntityStatus:
       type: string
       description: Mirrors the on-chain `EntityRegistry.EntityStatus` enum (`None` never appears here - an unregistered account is a 404, not a status value).
       enum: [Active, Revoked]
+      examples: [Active]
 
     Coordinates:
       type: object
@@ -239,6 +1266,8 @@ components:
       properties:
         lat: {type: number, minimum: -90, maximum: 90}
         lng: {type: number, minimum: -180, maximum: 180}
+      examples:
+        - {lat: 1.3521, lng: 103.8198}
 
     PostalAddress:
       type: object
@@ -249,19 +1278,35 @@ components:
         region: {type: string}
         postalCode: {type: string}
         country: {type: string, description: ISO 3166-1 alpha-2.}
+      examples:
+        - {line1: "1 Example Road", city: Singapore, postalCode: "018956", country: SG}
 
     Contact:
       type: object
       properties:
         email: {type: string, format: email}
         phone: {type: string}
+      examples:
+        - {email: "frontdesk@vet01.example", phone: "+6561234567"}
 
     EntityRow:
       type: object
-      required: [account, kind, name, coordinates, address, contact, platformBaseUrl, cloneAddress, registeredAt, status]
+      required: [account, kind, kinds, name, coordinates, address, contact, platformBaseUrl, cloneAddress, registeredAt, status]
       properties:
         account: {$ref: '#/components/schemas/Address'}
-        kind: {$ref: '#/components/schemas/EntityKind'}
+        kind:
+          description: |-
+            The PRIMARY kind: the lowest set kind bit this API knows. Kept as one string so clients
+            built against 2.1.0 keep decoding; use `kinds` for the full set.
+          $ref: '#/components/schemas/EntityKind'
+        kinds:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          description: |-
+            WP4.21. Every kind the entity holds, in bit order, read from `EntityRegistry.kindsOf`.
+            Always contains `kind`. A kind is a record only and grants no right.
+          items: {$ref: '#/components/schemas/EntityKind'}
         name: {type: string}
         dba: {type: string, description: "\"Doing business as\" name, if different from `name`."}
         logoUrl: {type: string, description: "`GET /v1/entities/{account}/logo`, absolute."}
@@ -270,7 +1315,11 @@ components:
         contact: {$ref: '#/components/schemas/Contact'}
         platformBaseUrl:
           type: string
-          description: This entity's own platform base URL (a `dogtag-vet` deployment for `kind == VET`). Off-chain only, excluded from `docsHash`, so it can change without re-hashing the entity's KYC record.
+          description: |-
+            This entity's own platform base URL (a `dogtag-vet` deployment for an entity that holds
+            `VET`). Off-chain only, excluded from `docsHash`, so it can change without re-hashing the
+            entity's KYC record. Always a string: it is `""` (empty) when the entity has no platform,
+            because clients built against 2.1.0 decode it as required.
         cloneAddress:
           description: |-
             This entity's on-chain `VetIssuer` clone contract address (`chain.cloneAddress`) - the
@@ -283,6 +1332,29 @@ components:
             - type: "null"
         registeredAt: {type: string, format: date-time, description: When this entity was added to `EntityRegistry`.}
         status: {$ref: '#/components/schemas/EntityStatus'}
+        bookingEnabled:
+          type: boolean
+          description: "WP4.21 (also on `EntityDetail` since 2.1.0): whether this entity's platform exposes `specs/vet-public-api.yaml`'s booking routes."
+        networkRole:
+          type: string
+          enum: [verifier]
+          description: |-
+            WP4.20, optional. Present only on the DogTag network operator's own entity. Apps use it to
+            label records issued by that entity "Verified by Dog Tag". Absent on every other entity;
+            an app that does not know the field ignores it.
+      examples:
+        - account: "0xDB6868B1e39e32DB3727A9C9B3bA3264384fAEa4"
+          kind: VET
+          kinds: [VET, GROOMER]
+          name: The best vet
+          coordinates: {lat: 1.3521, lng: 103.8198}
+          address: {line1: "1 Example Road", city: Singapore, country: SG}
+          contact: {email: "frontdesk@thebestvet.example", phone: "+6561234567"}
+          platformBaseUrl: "https://thebestvet.example"
+          cloneAddress: "0x365E7ED4Dff941BD36620E6099Dc199DA9102299"
+          registeredAt: "2026-10-02T08:30:00Z"
+          status: Active
+          bookingEnabled: true
 
     EntityDetail:
       allOf:
@@ -295,7 +1367,23 @@ components:
               type: string
               pattern: '^0x[0-9a-fA-F]{64}$'
               description: sha256 over the canonical KYC document manifest, as anchored on chain.
-            bookingEnabled: {type: boolean, description: "Whether this entity's platform exposes `specs/vet-public-api.yaml`'s booking routes."}
+            networkRole:
+              $ref: '#/components/schemas/EntityRow/properties/networkRole'
+      examples:
+        - account: "0xDB6868B1e39e32DB3727A9C9B3bA3264384fAEa4"
+          kind: VET
+          kinds: [VET]
+          name: The best vet
+          coordinates: {lat: 1.3521, lng: 103.8198}
+          address: {line1: "1 Example Road", city: Singapore, country: SG}
+          contact: {email: "frontdesk@thebestvet.example"}
+          platformBaseUrl: "https://thebestvet.example"
+          cloneAddress: "0x365E7ED4Dff941BD36620E6099Dc199DA9102299"
+          registeredAt: "2026-10-02T08:30:00Z"
+          status: Active
+          bookingEnabled: true
+          registrationId: "REG-2"
+          docsHash: "0x1f3c0f2b9d8a47c6b5e4d3c2b1a09f8e7d6c5b4a39281706f5e4d3c2b1a09f8e"
 
     EntityPage:
       type: object
@@ -307,6 +1395,20 @@ components:
         nextCursor:
           type: string
           description: Pass as `cursor` to fetch the next page. Absent on the last page.
+      examples:
+        - entities:
+            - account: "0xDB6868B1e39e32DB3727A9C9B3bA3264384fAEa4"
+              kind: VET
+              kinds: [VET]
+              name: The best vet
+              coordinates: {lat: 1.3521, lng: 103.8198}
+              address: {city: Singapore, country: SG}
+              contact: {phone: "+6561234567"}
+              platformBaseUrl: ""
+              cloneAddress: null
+              registeredAt: "2026-10-02T08:30:00Z"
+              status: Active
+          nextCursor: eyJhIjoiMHhEQjY4In0
 
     HealthResponse:
       type: object
@@ -317,3 +1419,889 @@ components:
           type: object
           additionalProperties: {type: string, enum: [ok, fail]}
           description: "One entry per dependency, e.g. `{\"database\": \"ok\", \"roaxRpc\": \"fail\"}`."
+      examples:
+        - {status: ok, checks: {database: ok, roaxRpc: ok}}
+
+    # ------------------------------------------------------------------------------------------
+    # WP4.20 - mobile documents (DogTag-verified records). Additive; nothing above changes except
+    # the optional `networkRole` on EntityRow.
+    # ------------------------------------------------------------------------------------------
+
+    Hex32:
+      type: string
+      pattern: "^0x[0-9a-fA-F]{64}$"
+      description: A 0x-prefixed, 32-byte value (hash, nonce or id), lower or upper case hex.
+      examples: ["0xabababababababababababababababababababababababababababababababab"]
+
+    Signature65:
+      type: string
+      pattern: "^0x[0-9a-fA-F]{130}$"
+      description: 65-byte `r||s||v` ECDSA signature (`v` is 27 or 28).
+      examples: ["0xe86ec0f4a412cd1ed221adc9b0f4f64ee7b5e573f79139a4586dfb5b6363cca57a2928872f4ca5afcbc5ed4723baaa6bab44252b5c1c8b6680a14e5724c979e61c"]
+
+    DecimalString:
+      type: string
+      pattern: "^(0|[1-9][0-9]*)$"
+      description: A non-negative integer in base 10, no sign, no leading zeros, no hex.
+      examples: ["123456789012345678901234567890"]
+
+    DocumentError:
+      description: The `Error` envelope with `code` restricted to the mobile-documents codes below, in addition to the generic ones (`rate_limited`, ...).
+      allOf:
+        - $ref: '#/components/schemas/Error'
+        - type: object
+          properties:
+            error:
+              type: object
+              properties:
+                code:
+                  type: string
+                  description: |-
+                    One of `signature_invalid`, `deadline_passed`, `tag_mismatch`,
+                    `tag_artifact_invalid`, `dog_tag_id_invalid`, `dog_tag_id_is_a_tag`,
+                    `upload_id_reused`, `hash_mismatch`, `size_mismatch`, `media_type_rejected`,
+                    `config_missing` (HTTP 503), or a generic code. The HTTP status for each is
+                    documented on the route that can return it.
+                  examples: [signature_invalid]
+      examples:
+        - error: {code: signature_invalid, message: "The signature does not recover to the wallet."}
+
+    DocumentSubmissionBlock:
+      type: object
+      description: |-
+        WP4.20 (plans/wp4.20-dogtag-verified-records.md section 3.3) - the NORMATIVE definition of
+        the `DocumentSubmission` EIP-712 typed data the owner's wallet signs to submit a document.
+        This object is a documentation container (like `MobileBookingBlock`'s companion struct
+        definition): it is never sent as such. Its fields are the struct's `message`; `signature`
+        and `deadline` travel in `CreateSubmissionRequest`, and every other value is rebuilt or
+        checked server-side. Conformance vectors: `specs/mobile-document-vectors.json`,
+        reproduced independently by `packages/dogtag-standard-ts/test/mobile_document_vectors.test.ts`.
+
+        Primary type string (exact, no spaces after commas):
+        `DocumentSubmission(address wallet,uint256 dogTagIdField,bytes32 uploadId,bytes32 sha256,uint64 byteLength,uint64 deadline)`
+
+        EIP-712 domain: `{name: "DogTagDocumentSubmission", version: "1", chainId: 135,
+        verifyingContract: <the DogTag VetIssuer clone address>}`, with the standard
+        `EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)` type.
+        Binding the domain to the clone stops a signature made for one deployment being replayed
+        against another. `digest = keccak256(0x1901 || domainSeparator || hashStruct(message))`.
+        The signature is 65 bytes `r||s||v`; the recovered signer MUST equal `wallet`.
+      required: [wallet, dogTagIdField, uploadId, sha256, byteLength, deadline]
+      properties:
+        wallet:
+          $ref: '#/components/schemas/Address'
+        dogTagIdField:
+          $ref: '#/components/schemas/DecimalString'
+          description: "uint256, decimal. The tag the record is for; for an untagged dog, the phone's random id (decimal below the BN254 field modulus, `profileRoot` zero)."
+        uploadId:
+          $ref: '#/components/schemas/Hex32'
+          description: bytes32. Phone-generated random id for this upload; unique per wallet.
+        sha256:
+          $ref: '#/components/schemas/Hex32'
+          description: bytes32. SHA-256 of the exact uploaded bytes.
+        byteLength:
+          $ref: '#/components/schemas/DecimalString'
+          description: uint64, decimal. Exact byte length of the upload (maximum 18446744073709551615).
+        deadline:
+          $ref: '#/components/schemas/DecimalString'
+          description: uint64, unix seconds. Short-lived (the app uses 10 minutes); the server refuses a past deadline with `deadline_passed`.
+      examples:
+        - wallet: "0x1111111111111111111111111111111111111111"
+          dogTagIdField: "123456789012345678901234567890"
+          uploadId: "0xabababababababababababababababababababababababababababababababab"
+          sha256: "0xcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
+          byteLength: "482113"
+          deadline: "1793000000"
+
+    DocumentAccessBlock:
+      type: object
+      description: |-
+        WP4.20 (section 3.3) - the NORMATIVE definition of the `DocumentAccess` EIP-712 typed data
+        the owner's wallet signs to obtain a bearer. Documentation container as for
+        `DocumentSubmissionBlock`; the wire fields are `AuthSessionRequest`. Vectors:
+        `specs/mobile-document-vectors.json`.
+
+        Primary type string (exact):
+        `DocumentAccess(address wallet,bytes32 nonce,uint64 deadline)`
+
+        EIP-712 domain: `{name: "DogTagDocumentAccess", version: "1", chainId: 135,
+        verifyingContract: <the DogTag VetIssuer clone address>}`. The two structs use different
+        domain names, so a signature for one can never validate as the other.
+      required: [wallet, nonce, deadline]
+      properties:
+        wallet:
+          $ref: '#/components/schemas/Address'
+        nonce:
+          $ref: '#/components/schemas/Hex32'
+          description: bytes32. The server-issued challenge from `POST /api/mobile/v1/auth/challenge`.
+        deadline:
+          $ref: '#/components/schemas/DecimalString'
+          description: uint64, unix seconds. Must not be later than the challenge's own deadline.
+      examples:
+        - wallet: "0x1111111111111111111111111111111111111111"
+          nonce: "0x1212121212121212121212121212121212121212121212121212121212121212"
+          deadline: "1793000300"
+
+    AuthChallengeRequest:
+      type: object
+      required: [wallet]
+      properties:
+        wallet: {$ref: '#/components/schemas/Address'}
+      examples:
+        - wallet: "0x1111111111111111111111111111111111111111"
+
+    AuthChallengeResponse:
+      type: object
+      required: [nonce, deadline]
+      properties:
+        nonce:
+          $ref: '#/components/schemas/Hex32'
+        deadline:
+          type: integer
+          description: Unix seconds at which the nonce expires (5 minutes after issue).
+      examples:
+        - nonce: "0x1212121212121212121212121212121212121212121212121212121212121212"
+          deadline: 1793000300
+
+    AuthSessionRequest:
+      type: object
+      description: The `DocumentAccessBlock` message plus its signature.
+      required: [wallet, nonce, deadline, signature]
+      properties:
+        wallet: {$ref: '#/components/schemas/Address'}
+        nonce: {$ref: '#/components/schemas/Hex32'}
+        deadline:
+          type: integer
+          description: Unix seconds - the struct's `deadline` (sent as a JSON integer; signed as uint64).
+        signature: {$ref: '#/components/schemas/Signature65'}
+      examples:
+        - wallet: "0x1111111111111111111111111111111111111111"
+          nonce: "0x1212121212121212121212121212121212121212121212121212121212121212"
+          deadline: 1793000300
+          signature: "0x9e5bd409ee44453f6d2125c7b337540c133a50bd2c78e46e9e271d0d1e133d6035b31265db0200dd097f4b1f4be9349aa068586fec2d6428475781901a3af0881b"
+
+    AuthSessionResponse:
+      type: object
+      required: [token, expiresAt]
+      properties:
+        token:
+          type: string
+          description: "Opaque bearer, bound to the wallet. Send as `Authorization: Bearer <token>`."
+        expiresAt:
+          type: integer
+          description: Unix seconds (15 minutes after issue).
+      examples:
+        - token: "dgtg_sess_7Hq2mV9xW4kLz0pYb3nTf8RcJ6aUe1Os"
+          expiresAt: 1793000900
+
+    DocumentClinicRef:
+      description: |-
+        Which clinic the owner says issued the document, so the DogTag reviewer knows whom to call
+        for confirmation. Exactly one of the two shapes.
+      oneOf:
+        - type: object
+          required: [entityAccount]
+          additionalProperties: false
+          properties:
+            entityAccount:
+              $ref: '#/components/schemas/Address'
+              description: A directory entity (`GET /v1/entities`) chosen in the app.
+        - type: object
+          required: [freeText]
+          additionalProperties: false
+          properties:
+            freeText:
+              type: string
+              minLength: 1
+              maxLength: 500
+              description: Clinic name and any contact detail the owner typed.
+      examples:
+        - entityAccount: "0xcbAaaB4f334AED79a1fB1CC4BfE96D7f04b060db"
+        - freeText: "Happy Paws Vet, Orchard Road, +6561234567"
+
+    UntaggedPetFacts:
+      type: object
+      description: |-
+        Owner-typed facts for an UNTAGGED dog (`tagged: false`). The reviewer confirms them with
+        the clinic; they become disclosed leaves of the record (`credentialSubject.name`-class
+        leaves already in the dictionary). Nothing here is attested until DogTag issues the record.
+      required: [name, species]
+      properties:
+        name: {type: string, minLength: 1, maxLength: 200}
+        species: {type: string, minLength: 1, maxLength: 100}
+        breed: {type: string, maxLength: 200}
+        dateOfBirth: {type: string, format: date}
+        microchipNumber: {type: string, maxLength: 64}
+      examples:
+        - {name: Biscuit, species: Dog, breed: Beagle, dateOfBirth: "2021-03-14", microchipNumber: "985112345678903"}
+
+    CreateSubmissionRequest:
+      type: object
+      description: |-
+        Body of `POST /api/mobile/v1/documents/submissions`. `wallet`, `dogTagIdField`, `uploadId`,
+        `sha256`, `byteLength` and `deadline` are the `DocumentSubmissionBlock` message; `signature`
+        signs it. `mediaType`, `clinic`, `tagged` and the pet body are NOT part of the signed
+        struct but are bound to it by the checks on this route: `sha256` and `byteLength` are
+        re-verified against the bytes on upload, `mediaType` against the sniffed type.
+
+        MUTUALLY EXCLUSIVE BODIES. `tagged: true` requires `tagArtifact` and forbids `petFacts`.
+        `tagged: false` requires `petFacts` and forbids `tagArtifact`. For a tagged dog the
+        disclosed openings in `tagArtifact` (values and salts only the owner's phone and the issuing
+        clinic hold), together with the wallet signature, are the possession evidence for the tag.
+        For an untagged dog there is nothing to possess; the clinic confirmation during review is
+        the only identity check.
+
+        UNTAGGED dogTagIdField RULE. A decimal string below the BN254 scalar field modulus
+        (21888242871839275222246405745257275088548364400416034343698204186575808495617), the
+        phone's random 128-bit id for this local pet, reused for every record of that dog; the
+        server also requires `profileRoot(dogTagIdField)` on the SBT to be zero. Violations return
+        `dog_tag_id_invalid` / `dog_tag_id_is_a_tag`.
+      required: [wallet, dogTagIdField, tagged, uploadId, sha256, byteLength, mediaType, clinic, signature, deadline]
+      properties:
+        wallet: {$ref: '#/components/schemas/Address'}
+        dogTagIdField: {$ref: '#/components/schemas/DecimalString'}
+        tagged: {type: boolean}
+        uploadId: {$ref: '#/components/schemas/Hex32'}
+        sha256: {$ref: '#/components/schemas/Hex32'}
+        byteLength:
+          type: integer
+          minimum: 0
+          description: Exact byte length, as a JSON integer (signed as uint64).
+        mediaType:
+          type: string
+          enum: [application/pdf, image/jpeg, image/png, image/webp]
+          description: |-
+            The `Content-Type` the file will be uploaded with; exactly the admin upload allowlist.
+            HEIC is not accepted: the phone converts a HEIC capture to JPEG BEFORE hashing, so
+            `sha256` and `byteLength` cover the bytes actually uploaded.
+        clinic: {$ref: '#/components/schemas/DocumentClinicRef'}
+        signature: {$ref: '#/components/schemas/Signature65'}
+        deadline:
+          type: integer
+          description: Unix seconds - the struct's `deadline` (sent as a JSON integer; signed as uint64).
+        tagArtifact:
+          $ref: './schemas/dogtag.redacted-tag-artifact.v1.schema.json'
+          description: |-
+            Present iff `tagged: true`. A `RedactedTagArtifact` that discloses the pet's
+            `credentialSubject.*` leaves EXCEPT `ownerIdentity.*`, with the three reserved hashes.
+        petFacts:
+          $ref: '#/components/schemas/UntaggedPetFacts'
+      allOf:
+        - if:
+            required: [tagged]
+            properties: {tagged: {const: true}}
+          then:
+            required: [tagArtifact]
+            not: {required: [petFacts]}
+          else:
+            required: [petFacts]
+            not: {required: [tagArtifact]}
+      examples:
+        - wallet: "0x1111111111111111111111111111111111111111"
+          dogTagIdField: "123456789012345678901234567890"
+          tagged: true
+          uploadId: "0xabababababababababababababababababababababababababababababababab"
+          sha256: "0xcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
+          byteLength: 482113
+          mediaType: application/pdf
+          clinic: {entityAccount: "0xcbAaaB4f334AED79a1fB1CC4BfE96D7f04b060db"}
+          signature: "0xe86ec0f4a412cd1ed221adc9b0f4f64ee7b5e573f79139a4586dfb5b6363cca57a2928872f4ca5afcbc5ed4723baaa6bab44252b5c1c8b6680a14e5724c979e61c"
+          deadline: 1793000000
+          tagArtifact: {protocolVersion: "dogtag-v2/1", dogTagIdField: "123456789012345678901234567890", root: "0x3434343434343434343434343434343434343434343434343434343434343434", disclosed: [{keyPath: credentialSubject.name, saltHex: "0x00000000000000000000000000000000", tag: 2, value: Biscuit}], obfuscatedLeafHashes: [], reservedLeafHashes: ["0x0101010101010101010101010101010101010101010101010101010101010101", "0x0202020202020202020202020202020202020202020202020202020202020202", "0x0303030303030303030303030303030303030303030303030303030303030303"], issuerClone: "0x22AbED04f8Cc6A78Fc92708e0F23E41183FFDAE4"}
+        - wallet: "0x1111111111111111111111111111111111111111"
+          dogTagIdField: "98765432109876543210987654321"
+          tagged: false
+          uploadId: "0xabababababababababababababababababababababababababababababababab"
+          sha256: "0xcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
+          byteLength: 482113
+          mediaType: image/jpeg
+          clinic: {freeText: "Happy Paws Vet, Orchard Road"}
+          signature: "0xe86ec0f4a412cd1ed221adc9b0f4f64ee7b5e573f79139a4586dfb5b6363cca57a2928872f4ca5afcbc5ed4723baaa6bab44252b5c1c8b6680a14e5724c979e61c"
+          deadline: 1793000000
+          petFacts: {name: Biscuit, species: Dog, breed: Beagle}
+
+    CreateSubmissionResponse:
+      type: object
+      required: [submissionId, uploadUrl, status]
+      properties:
+        submissionId: {type: string}
+        uploadUrl:
+          type: string
+          description: Absolute URL of `PUT /api/mobile/v1/documents/submissions/{id}/file` for this submission.
+        status:
+          type: string
+          enum: [awaiting_file]
+      examples:
+        - submissionId: sub_01JC8Z4M7Q
+          uploadUrl: "https://admin.dogtag.example/api/mobile/v1/documents/submissions/sub_01JC8Z4M7Q/file"
+          status: awaiting_file
+
+    DocumentSubmissionStatus:
+      type: string
+      description: |-
+        Lifecycle of a submission. `awaiting_file` (metadata accepted, bytes not yet uploaded) ->
+        `in_review` (bytes received; waiting for or under DogTag review) -> `needs_info` (the
+        reviewer asked the owner for something, see `reason`) or `rejected` (terminal, see
+        `reason`) -> `issuing` (approved; the record root is being written on chain) -> `ready`
+        (the record is on chain and servable at `.../{id}/record`) -> `revoked` (the record was
+        revoked; still servable for history).
+      enum: [awaiting_file, in_review, needs_info, rejected, issuing, ready, revoked]
+      examples: [in_review]
+
+    SubmissionSummary:
+      type: object
+      required: [submissionId, uploadId, status, tagged, dogTagIdField, sha256, byteLength, mediaType, createdAt, updatedAt]
+      properties:
+        submissionId: {type: string}
+        uploadId: {$ref: '#/components/schemas/Hex32'}
+        status: {$ref: '#/components/schemas/DocumentSubmissionStatus'}
+        reason:
+          type: string
+          description: Human-readable reviewer note for `needs_info` and `rejected` (and `revoked`); absent otherwise.
+        tagged: {type: boolean}
+        dogTagIdField: {$ref: '#/components/schemas/DecimalString'}
+        sha256: {$ref: '#/components/schemas/Hex32'}
+        byteLength: {type: integer, minimum: 0}
+        mediaType: {type: string}
+        createdAt: {type: string, format: date-time}
+        updatedAt: {type: string, format: date-time}
+        recordRoot:
+          $ref: '#/components/schemas/Hex32'
+          description: Present for `ready` and `revoked`.
+      examples:
+        - submissionId: sub_01JC8Z4M7Q
+          uploadId: "0xabababababababababababababababababababababababababababababababab"
+          status: ready
+          tagged: false
+          dogTagIdField: "98765432109876543210987654321"
+          sha256: "0xcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
+          byteLength: 482113
+          mediaType: application/pdf
+          createdAt: "2026-11-30T02:10:00Z"
+          updatedAt: "2026-12-01T09:00:00Z"
+          recordRoot: "0x3434343434343434343434343434343434343434343434343434343434343434"
+
+    SubmissionList:
+      type: object
+      required: [submissions]
+      properties:
+        submissions:
+          type: array
+          items: {$ref: '#/components/schemas/SubmissionSummary'}
+      examples:
+        - submissions:
+            - submissionId: sub_01JC8Z4M7Q
+              uploadId: "0xabababababababababababababababababababababababababababababababab"
+              status: in_review
+              tagged: true
+              dogTagIdField: "123456789012345678901234567890"
+              sha256: "0xcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
+              byteLength: 482113
+              mediaType: application/pdf
+              createdAt: "2026-11-30T02:10:00Z"
+              updatedAt: "2026-11-30T02:12:00Z"
+
+    UploadReceipt:
+      type: object
+      required: [submissionId, uploadId, sha256, byteLength, status]
+      properties:
+        submissionId: {type: string}
+        uploadId: {$ref: '#/components/schemas/Hex32'}
+        sha256: {$ref: '#/components/schemas/Hex32'}
+        byteLength: {type: integer, minimum: 0}
+        status:
+          type: string
+          enum: [in_review]
+      examples:
+        - submissionId: sub_01JC8Z4M7Q
+          uploadId: "0xabababababababababababababababababababababababababababababababab"
+          sha256: "0xcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
+          byteLength: 482113
+          status: in_review
+
+    DocumentRecordPayload:
+      # A bare `$ref` with a sibling `description` is legal in OpenAPI 3.1 but breaks common
+      # resolvers (@readme/openapi-parser mis-resolves the target's internal refs against THIS
+      # file), so the reference is wrapped in a single-member allOf.
+      allOf:
+        - $ref: './vet-public-api.yaml#/components/schemas/ArtifactExportResponse'
+      description: |-
+        WP4.20. The vet public API's `ArtifactExportResponse`, referenced, not copied, pinned to
+        one case: `artifactType` is always `"record"`, `recordType` is `VACCINATION`, EVERY leaf is
+        disclosed (`obfuscatedLeafHashes` empty, `reservedLeafHashes` empty), `anchoring` is
+        filled, and `clinicName` is `"DogTag"`. The `description` leaf carries
+        `Transcribed by DogTag from an uploaded document; sha256 <hex>; confirmed with <clinic> on <date>`.
+        For an untagged dog the disclosed `credentialSubject.dogTagId` leaf is the phone's random
+        id and no `profileRoot` exists for it. The server self-verifies with `verifyRecordArtifact`
+        before serving.
+      examples:
+        - protocolVersion: "dogtag-v2/1"
+          artifactType: record
+          recordType: VACCINATION
+          root: "0x3434343434343434343434343434343434343434343434343434343434343434"
+          disclosed:
+            - keyPath: credentialSubject.dogTagId
+              saltHex: "0x00000000000000000000000000000000"
+              tag: 3
+              value: "98765432109876543210987654321"
+            - keyPath: recordType
+              saltHex: "0x11111111111111111111111111111111"
+              tag: 2
+              value: VACCINATION
+          obfuscatedLeafHashes: []
+          reservedLeafHashes: []
+          chainId: 135
+          petName: Biscuit
+          clinicName: DogTag
+          anchoring: {chainId: 135, contract: "0x39055a5638Cb3A5b024EeC4b74ACF839b094044D"}
+
+    # ------------------------------------------------------------------------------------------
+    # WP4.21 - provider network (kinds, directory search, owner requests, notifications). Additive:
+    # nothing above is renamed or removed; EntityRow gained `kinds` and `bookingEnabled`.
+    # ------------------------------------------------------------------------------------------
+
+    ServiceKind:
+      type: string
+      description: The `EntityKind` values that are pet services a pet owner can search for (everything except `GOVERNMENT`).
+      enum: [VET, GROOMER, BOARDING, DAYCARE]
+      examples: [GROOMER]
+
+    ProviderId:
+      type: string
+      description: "`entity:<account>` for a registered entity, `listing:<uuid>` for a staff-managed listing."
+      pattern: '^(entity:0x[0-9a-fA-F]{40}|listing:[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$'
+      examples: ["listing:3b0f6a52-8c1e-4f6d-9a0b-5f2d7c1e9a44"]
+
+    ProviderRow:
+      type: object
+      description: |-
+        WP4.21. One provider in `GET /v1/providers`: a registered entity (`member: true`) or a
+        staff-managed listing (`member: false`). A listing's contact email is never present.
+      required: [id, member, kinds, name, coordinates, address, bookable, acceptsRequests]
+      properties:
+        id: {$ref: '#/components/schemas/ProviderId'}
+        member:
+          type: boolean
+          description: True for a registered entity, false for a listing.
+        account:
+          description: The entity's on-chain account. Present when `member` is true.
+          $ref: '#/components/schemas/Address'
+        kinds:
+          type: array
+          minItems: 1
+          description: The provider's service kinds, in bit order. `GOVERNMENT` never appears here.
+          items: {$ref: '#/components/schemas/ServiceKind'}
+        name: {type: string}
+        dba: {type: string, description: "\"Doing business as\" name, if different from `name`."}
+        logoUrl: {type: string, description: "Absolute logo URL. Members only (`GET /v1/entities/{account}/logo`)."}
+        coordinates: {$ref: '#/components/schemas/Coordinates'}
+        address: {$ref: '#/components/schemas/PostalAddress'}
+        phone: {type: string}
+        website: {type: string, format: uri}
+        bookable:
+          type: boolean
+          description: Whether the provider's own platform takes bookings (`specs/vet-public-api.yaml` booking routes). Always false for a listing.
+        platformBaseUrl:
+          type: string
+          description: The provider's own platform base URL. Absent when it has none (every listing).
+        cloneAddress:
+          description: The entity's `VetIssuer` clone. Absent for a listing or an entity without a clone.
+          $ref: '#/components/schemas/Address'
+        acceptsRequests:
+          type: boolean
+          description: |-
+            True when DogTag holds a contact email for the business and the business has not opted
+            out of Dog Tag emails. When false, `POST /api/mobile/v1/requests` is refused with
+            `provider_not_accepting`, and for a listing the app offers only the invite.
+        distanceKm:
+          type: number
+          minimum: 0
+          description: Great-circle distance from `near`, in kilometres. Present only when `near` was given.
+      examples:
+        - id: "entity:0xcbAaaB4f334AED79a1fB1CC4BfE96D7f04b060db"
+          member: true
+          account: "0xcbAaaB4f334AED79a1fB1CC4BfE96D7f04b060db"
+          kinds: [VET, GROOMER]
+          name: Vet01
+          dba: Paws and Claws
+          logoUrl: "https://admin.dogtag.example/v1/entities/0xcbAaaB4f334AED79a1fB1CC4BfE96D7f04b060db/logo"
+          coordinates: {lat: 1.3521, lng: 103.8198}
+          address: {line1: "1 Example Road", city: Singapore, country: SG}
+          phone: "+6561234567"
+          website: "https://vet01.example"
+          bookable: true
+          platformBaseUrl: "https://vet01.example"
+          cloneAddress: "0x22AbED04f8Cc6A78Fc92708e0F23E41183FFDAE4"
+          acceptsRequests: true
+          distanceKm: 2.4
+        - id: "listing:3b0f6a52-8c1e-4f6d-9a0b-5f2d7c1e9a44"
+          member: false
+          kinds: [BOARDING, DAYCARE]
+          name: Happy Tails Kennel
+          coordinates: {lat: 1.3402, lng: 103.7061}
+          address: {line1: "8 Sample Lane", city: Singapore, country: SG}
+          phone: "+6567654321"
+          bookable: false
+          acceptsRequests: true
+
+    ProviderDetail:
+      description: |-
+        WP4.21. `ProviderRow` plus the public on-chain fields of a member. Clients ignore fields they
+        do not know.
+      allOf:
+        - $ref: '#/components/schemas/ProviderRow'
+        - type: object
+          properties:
+            registrationId: {type: string, description: The on-chain `registrationId` public field. Members only.}
+            registeredAt: {type: string, format: date-time, description: When the entity was added to `EntityRegistry`. Members only.}
+      examples:
+        - id: "entity:0xcbAaaB4f334AED79a1fB1CC4BfE96D7f04b060db"
+          member: true
+          account: "0xcbAaaB4f334AED79a1fB1CC4BfE96D7f04b060db"
+          kinds: [VET]
+          name: Vet01
+          coordinates: {lat: 1.3521, lng: 103.8198}
+          address: {line1: "1 Example Road", city: Singapore, country: SG}
+          bookable: true
+          platformBaseUrl: "https://vet01.example"
+          cloneAddress: "0x22AbED04f8Cc6A78Fc92708e0F23E41183FFDAE4"
+          acceptsRequests: true
+          registrationId: "REG-1"
+          registeredAt: "2026-10-02T08:30:00Z"
+
+    ProviderPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: {$ref: '#/components/schemas/ProviderRow'}
+        nextCursor:
+          type: string
+          description: Pass as `cursor`, with the same query, to fetch the next page. Absent on the last page.
+      examples:
+        - items:
+            - id: "listing:3b0f6a52-8c1e-4f6d-9a0b-5f2d7c1e9a44"
+              member: false
+              kinds: [BOARDING, DAYCARE]
+              name: Happy Tails Kennel
+              coordinates: {lat: 1.3402, lng: 103.7061}
+              address: {city: Singapore, country: SG}
+              bookable: false
+              acceptsRequests: true
+              distanceKm: 7.9
+          nextCursor: eyJkIjo3LjksImlkIjoibGlzdGluZzozYjBmNmE1MiJ9
+
+    OwnerError:
+      description: The `Error` envelope with the `mobile-owner` codes documented on each route, in addition to the generic ones (`rate_limited`, `config_missing`, ...).
+      allOf:
+        - $ref: '#/components/schemas/Error'
+        - type: object
+          properties:
+            error:
+              type: object
+              properties:
+                code:
+                  type: string
+                  description: |-
+                    One of `invalid_request`, `provider_not_found`, `open_request_exists`,
+                    `provider_not_accepting`, `wallet_request_limit`, `request_not_found`,
+                    `request_not_cancellable`, `email_required`, `confirmation_required`, or a
+                    generic code.
+      examples:
+        - error: {code: open_request_exists, message: "You already have an open request to this provider."}
+
+    ProviderRequestStatus:
+      type: string
+      description: |-
+        `queued_for_staff` (no contact email, or the send failed), `sent`, `accepted`, `declined`,
+        `replied` (the business wrote back), `expired` (14 days without an answer), `cancelled`.
+      enum: [queued_for_staff, sent, accepted, declined, replied, expired, cancelled]
+      examples: [sent]
+
+    Weekday:
+      type: string
+      enum: [mon, tue, wed, thu, fri, sat, sun]
+      description: A day of the week. Requests carry weekdays, not calendar dates.
+      examples: [tue]
+
+    TimeOfDay:
+      type: string
+      enum: [morning, afternoon, evening]
+      examples: [morning]
+
+    CreateProviderRequest:
+      type: object
+      required: [providerId, service, days, timeOfDay, dogName, owner]
+      properties:
+        providerId: {$ref: '#/components/schemas/ProviderId'}
+        service:
+          type: string
+          minLength: 1
+          maxLength: 80
+          description: A short label of the service asked for, such as `Grooming` or `Boarding`. Free text; it is only shown to the business.
+        days:
+          type: array
+          minItems: 1
+          maxItems: 7
+          uniqueItems: true
+          description: The weekdays that work for the owner.
+          items: {$ref: '#/components/schemas/Weekday'}
+        timeOfDay: {$ref: '#/components/schemas/TimeOfDay'}
+        dogName: {type: string, minLength: 1, maxLength: 60}
+        owner:
+          type: object
+          description: How DogTag may reach the owner. Never forwarded to the business.
+          required: [name, email]
+          properties:
+            name: {type: string, minLength: 1, maxLength: 80, description: "Full name; only the first name is shown to the business."}
+            email: {type: string, format: email}
+            phone: {type: string, maxLength: 32}
+        note: {type: string, maxLength: 500}
+      examples:
+        - providerId: "entity:0xcbAaaB4f334AED79a1fB1CC4BfE96D7f04b060db"
+          service: Grooming
+          days: [tue, thu, sat]
+          timeOfDay: morning
+          dogName: Biscuit
+          owner: {name: "Alex Tan", email: "alex@example.com"}
+          note: "Biscuit is nervous around dryers."
+
+    CreateProviderRequestResponse:
+      type: object
+      required: [requestId, status]
+      properties:
+        requestId: {type: string}
+        status: {$ref: '#/components/schemas/ProviderRequestStatus'}
+      examples:
+        - requestId: req_01JC8Z4M7Q
+          status: sent
+
+    ProviderRequestSummary:
+      type: object
+      required: [requestId, providerId, providerName, service, days, timeOfDay, dogName, status, createdAt, updatedAt]
+      properties:
+        requestId: {type: string}
+        providerId: {$ref: '#/components/schemas/ProviderId'}
+        providerName: {type: string}
+        service: {type: string}
+        days:
+          type: array
+          minItems: 1
+          maxItems: 7
+          uniqueItems: true
+          description: The weekdays that work for the owner.
+          items: {$ref: '#/components/schemas/Weekday'}
+        timeOfDay: {$ref: '#/components/schemas/TimeOfDay'}
+        dogName: {type: string}
+        status: {$ref: '#/components/schemas/ProviderRequestStatus'}
+        businessMessage:
+          type: string
+          description: The business's latest written reply. Present when `status` is `replied` (or after an accept or decline that carried a message).
+        createdAt: {type: string, format: date-time}
+        updatedAt: {type: string, format: date-time}
+        expiresAt: {type: string, format: date-time, description: When an unanswered request expires (14 days after it was sent). Present while `sent`.}
+      examples:
+        - requestId: req_01JC8Z4M7Q
+          providerId: "entity:0xcbAaaB4f334AED79a1fB1CC4BfE96D7f04b060db"
+          providerName: Vet01
+          service: Grooming
+          days: [tue, thu, sat]
+          timeOfDay: morning
+          dogName: Biscuit
+          status: replied
+          businessMessage: "We can take Biscuit on the 4th at 9:30."
+          createdAt: "2026-11-30T02:10:00Z"
+          updatedAt: "2026-11-30T05:42:00Z"
+
+    ProviderRequestList:
+      type: object
+      required: [requests]
+      properties:
+        requests:
+          type: array
+          items: {$ref: '#/components/schemas/ProviderRequestSummary'}
+      examples:
+        - requests:
+            - requestId: req_01JC8Z4M7Q
+              providerId: "entity:0xcbAaaB4f334AED79a1fB1CC4BfE96D7f04b060db"
+              providerName: Vet01
+              service: Grooming
+              days: [tue, thu, sat]
+              timeOfDay: afternoon
+              dogName: Biscuit
+              status: sent
+              createdAt: "2026-11-30T02:10:00Z"
+              updatedAt: "2026-11-30T02:10:00Z"
+              expiresAt: "2026-12-14T02:10:00Z"
+
+    CreateProviderInviteRequest:
+      type: object
+      required: [providerId]
+      properties:
+        providerId: {$ref: '#/components/schemas/ProviderId'}
+      examples:
+        - providerId: "listing:3b0f6a52-8c1e-4f6d-9a0b-5f2d7c1e9a44"
+
+    ProviderInvite:
+      type: object
+      required: [inviteId, providerId, created, createdAt]
+      properties:
+        inviteId: {type: string}
+        providerId: {$ref: '#/components/schemas/ProviderId'}
+        created:
+          type: boolean
+          description: False when this wallet had already invited this listing (idempotent repeat).
+        createdAt: {type: string, format: date-time}
+      examples:
+        - inviteId: inv_01JC90A2BX
+          providerId: "listing:3b0f6a52-8c1e-4f6d-9a0b-5f2d7c1e9a44"
+          created: true
+          createdAt: "2026-11-30T02:15:00Z"
+
+    ProviderInviteList:
+      type: object
+      required: [invites]
+      properties:
+        invites:
+          type: array
+          items: {$ref: '#/components/schemas/ProviderInvite'}
+      examples:
+        - invites:
+            - inviteId: inv_01JC90A2BX
+              providerId: "listing:3b0f6a52-8c1e-4f6d-9a0b-5f2d7c1e9a44"
+              created: true
+              createdAt: "2026-11-30T02:15:00Z"
+
+    PutDeviceRequest:
+      type: object
+      required: [apnsToken, environment, bundleId]
+      properties:
+        apnsToken: {type: string, pattern: '^[0-9a-fA-F]{64,200}$', description: The APNs device token as lower-case or upper-case hex.}
+        environment: {type: string, enum: [production, sandbox]}
+        bundleId: {type: string, maxLength: 155}
+        locale: {type: string, maxLength: 35, description: "BCP 47 tag, e.g. `en-SG`."}
+      examples:
+        - apnsToken: "a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90"
+          environment: sandbox
+          bundleId: net.roax.dogtag.v1
+          locale: en-SG
+
+    OwnerDevice:
+      type: object
+      required: [deviceId, environment, bundleId, updatedAt]
+      properties:
+        deviceId: {type: string, format: uuid}
+        environment: {type: string, enum: [production, sandbox]}
+        bundleId: {type: string}
+        locale: {type: string}
+        updatedAt: {type: string, format: date-time}
+      examples:
+        - deviceId: 6f1c7d52-0c9e-4a53-9f5e-2a4b7d6f1c11
+          environment: sandbox
+          bundleId: net.roax.dogtag.v1
+          locale: en-SG
+          updatedAt: "2026-11-30T02:20:00Z"
+
+    NotificationSettings:
+      type: object
+      required: [push, email, emailVerified]
+      properties:
+        push: {type: boolean}
+        email: {type: boolean}
+        emailAddress: {type: string, format: email}
+        emailVerified:
+          type: boolean
+          description: True once the confirmation link sent to `emailAddress` was followed. Updates go to the address only while this is true and `email` is true.
+      examples:
+        - {push: true, email: true, emailAddress: "alex@example.com", emailVerified: false}
+
+    NotificationSettingsUpdate:
+      type: object
+      required: [push, email]
+      properties:
+        push: {type: boolean}
+        email: {type: boolean}
+        emailAddress:
+          type: string
+          format: email
+          description: Omit to keep the current address. A new address is stored unverified and a confirmation link is emailed to it.
+      examples:
+        - {push: true, email: true, emailAddress: "alex@example.com"}
+
+    EraseOwnerRequest:
+      type: object
+      required: [confirm]
+      properties:
+        confirm: {type: string, const: ERASE, description: The literal string `ERASE`.}
+      examples:
+        - {confirm: ERASE}
+
+    EraseOwnerResponse:
+      type: object
+      required: [erased]
+      properties:
+        erased: {type: boolean, const: true}
+      examples:
+        - {erased: true}
+
+    BusinessRequestView:
+      type: object
+      description: What the business sees at `/r/{token}`. The owner's email and phone are never included.
+      required: [providerName, ownerFirstName, dogName, service, days, timeOfDay, status, expiresAt]
+      properties:
+        providerName: {type: string}
+        ownerFirstName: {type: string}
+        dogName: {type: string}
+        service: {type: string}
+        days:
+          type: array
+          minItems: 1
+          maxItems: 7
+          uniqueItems: true
+          description: The weekdays that work for the owner.
+          items: {$ref: '#/components/schemas/Weekday'}
+        timeOfDay: {$ref: '#/components/schemas/TimeOfDay'}
+        note: {type: string}
+        status: {$ref: '#/components/schemas/ProviderRequestStatus'}
+        expiresAt: {type: string, format: date-time}
+      examples:
+        - providerName: Vet01
+          ownerFirstName: Alex
+          dogName: Biscuit
+          service: Grooming
+          days: [tue, thu, sat]
+          timeOfDay: morning
+          note: "Biscuit is nervous around dryers."
+          status: sent
+          expiresAt: "2026-12-14T02:10:00Z"
+
+    BusinessRequestAnswer:
+      type: object
+      required: [action]
+      properties:
+        action: {type: string, enum: [accept, decline, reply]}
+        message: {type: string, maxLength: 1000, description: Required when `action` is `reply`; optional otherwise.}
+      if:
+        properties:
+          action: {const: reply}
+      then:
+        required: [message]
+      examples:
+        - {action: reply, message: "We can take Biscuit on the 4th at 9:30."}
+
+    BusinessRequestAnswerResult:
+      type: object
+      required: [status]
+      properties:
+        status: {$ref: '#/components/schemas/ProviderRequestStatus'}
+      examples:
+        - {status: replied}
+
+    EmailPreferencesResult:
+      type: object
+      required: [suppressed]
+      properties:
+        suppressed: {type: boolean, const: true}
+      examples:
+        - {suppressed: true}

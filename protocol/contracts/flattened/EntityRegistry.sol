@@ -1192,7 +1192,9 @@ contract EntityRegistry is Initializable, UUPSUpgradeable, Ownable2StepUpgradeab
         None,
         Vet,
         Government,
-        Groomer
+        Groomer,
+        Boarding,
+        Daycare
     }
 
     enum EntityStatus {
@@ -1233,6 +1235,10 @@ contract EntityRegistry is Initializable, UUPSUpgradeable, Ownable2StepUpgradeab
 
     uint256 private constant MAX_PAGE_SIZE = 500;
 
+    /// @dev Highest bit number that names a member of {EntityKind}. Bits above it are accepted in a kinds
+    /// mask and reserved for kinds the off-chain kind registry (specs/entity-kinds.json) names later.
+    uint8 private constant MAX_NAMED_KIND_BIT = 5;
+
     event EntityAdded(
         address indexed account, EntityKind kind, string name, string registrationId, bytes32 docsHash
     );
@@ -1244,6 +1250,11 @@ contract EntityRegistry is Initializable, UUPSUpgradeable, Ownable2StepUpgradeab
     event EntityReinstated(address indexed account, bytes32 reasonCode);
     event AdminApiUrlSet(string url);
     event VerifierCapabilitySet(bytes32 indexed purpose, address indexed relayer, bool allowed);
+    /// @notice An entity's kinds mask was written. `previousKinds` is the EFFECTIVE mask before the write
+    /// (0 when the entity is brand new, the `1 << kind` fallback for a legacy entity that never had a mask
+    /// written). Emitted by {addEntity} and {registerEntity} right after `EntityAdded`, and by
+    /// {setEntityKinds}. Kinds are a record only: nothing in any contract grants or denies a right by kind.
+    event EntityKindsSet(address indexed account, uint256 previousKinds, uint256 kinds);
 
     error ZeroAddress();
     error DuplicateEntity(address account);
@@ -1255,6 +1266,8 @@ contract EntityRegistry is Initializable, UUPSUpgradeable, Ownable2StepUpgradeab
     error NotRevoked(address account);
     error BadPage();
     error RenounceDisabled();
+    /// @notice A kinds mask was zero or had reserved bit 0 set. Bits above 5 are accepted.
+    error InvalidKinds(uint256 kinds);
 
     /// @dev The implementation is locked at construction; only the proxy initializes.
     constructor() {
@@ -1305,18 +1318,50 @@ contract EntityRegistry is Initializable, UUPSUpgradeable, Ownable2StepUpgradeab
         if (bytes(name).length == 0) revert EmptyName();
         if (bytes(registrationId).length == 0) revert EmptyRegistrationId();
 
-        entities[account] = Entity({
-            name: name,
-            registrationId: registrationId,
-            docsHash: docsHash,
-            account: account,
-            kind: kind,
-            status: EntityStatus.Active,
-            addedAt: uint64(block.timestamp),
-            updatedAt: uint64(block.timestamp)
-        });
-        _indexAccount(account);
-        emit EntityAdded(account, kind, name, registrationId, docsHash);
+        _store(account, kind, uint256(1) << uint8(kind), name, registrationId, docsHash);
+    }
+
+    /// @notice Register a new approved entity with a SET of kinds (one bit per kind, see {EntityKind}:
+    /// bit 0 reserved, Vet 1, Government 2, Groomer 3, Boarding 4, Daycare 5; bits above 5 are accepted).
+    /// Active from the moment it lands on chain.
+    /// @dev The same checks as {addEntity}, with the `kind != None` check replaced by the mask check:
+    /// `kinds` must be non-zero and must not have bit 0 set, else {InvalidKinds}. The legacy `kind` field
+    /// of the stored record receives the lowest set bit when that bit is a named {EntityKind} member and
+    /// `None` otherwise, and `EntityAdded` carries that legacy value. Emits `EntityAdded`, then
+    /// `EntityKindsSet(account, 0, kinds)`. Kinds are a record only: they grant no right, and no function
+    /// in any contract reads them to allow or deny anything. A stored mask of zero would mean "never
+    /// written, use the legacy kind"; this function never stores zero.
+    function registerEntity(
+        address account,
+        uint256 kinds,
+        string calldata name,
+        string calldata registrationId,
+        bytes32 docsHash
+    ) external onlyOwner {
+        if (account == address(0)) revert ZeroAddress();
+        if (entities[account].status != EntityStatus.None) revert DuplicateEntity(account);
+        if (kinds == 0 || kinds & 1 != 0) revert InvalidKinds(kinds);
+        if (bytes(name).length == 0) revert EmptyName();
+        if (bytes(registrationId).length == 0) revert EmptyRegistrationId();
+
+        _store(account, _legacyKindOf(kinds), kinds, name, registrationId, docsHash);
+    }
+
+    /// @notice Replace an entity's kinds mask. The entity must exist (Active or Revoked, like
+    /// {updateEntity}); `kinds` must be non-zero with bit 0 clear, else {InvalidKinds}. Stores the mask,
+    /// sets `updatedAt` and emits `EntityKindsSet(account, previousEffectiveKinds, kinds)`.
+    /// @dev The legacy `kind` field is NOT touched. Kinds are a record only: changing them grants or
+    /// removes no right (issuing contracts, SBT roles and verifier capabilities are separate access
+    /// lists). `previousEffectiveKinds` includes the zero-means-legacy fallback, see {kindsOf}.
+    function setEntityKinds(address account, uint256 kinds) external onlyOwner {
+        Entity storage e = entities[account];
+        if (e.status == EntityStatus.None) revert UnknownEntity(account);
+        if (kinds == 0 || kinds & 1 != 0) revert InvalidKinds(kinds);
+
+        uint256 previous = _effectiveKinds(e);
+        _kindsOf[account] = kinds;
+        e.updatedAt = uint64(block.timestamp);
+        emit EntityKindsSet(account, previous, kinds);
     }
 
     /// @notice Update an entity's profile fields. Callable regardless of Active/Revoked status - a
@@ -1358,6 +1403,11 @@ contract EntityRegistry is Initializable, UUPSUpgradeable, Ownable2StepUpgradeab
         moved.account = newAccount;
         delete entities[oldAccount];
         entities[newAccount] = moved;
+
+        // The kinds mask follows the entity. A zero (never written, legacy) mask moves as zero, so the
+        // entity keeps answering its legacy kind under the new key; the old key is cleared either way.
+        _kindsOf[newAccount] = _kindsOf[oldAccount];
+        delete _kindsOf[oldAccount];
 
         uint256 idx = _accountIndex[oldAccount];
         _accountList[idx - 1] = newAccount;
@@ -1418,6 +1468,34 @@ contract EntityRegistry is Initializable, UUPSUpgradeable, Ownable2StepUpgradeab
     // Views
     // ---------------------------------------------------------------------------------------------
 
+    /// @notice Contract version. 1 was the contract before WP4.21 (it had no `version()` at all); 2 adds
+    /// multi-kind masks.
+    function version() external pure returns (uint256) {
+        return 2;
+    }
+
+    /// @notice The kinds mask of `account`: one bit per kind (see {EntityKind}; bit 0 is never set).
+    /// Reverts {UnknownEntity} for an unknown account.
+    /// @dev Zero-means-legacy: when no mask was ever stored (every entity added before version 2, which is
+    /// why the live upgrade needs no migration call) the answer is `1 << uint8(kind)` from the legacy
+    /// `kind` field. Kinds are a record only: they grant no right and no contract branches on them.
+    function kindsOf(address account) public view returns (uint256) {
+        Entity storage e = entities[account];
+        if (e.status == EntityStatus.None) revert UnknownEntity(account);
+        return _effectiveKinds(e);
+    }
+
+    /// @notice Whether `account` holds kind `kindBit` (a bit NUMBER, not a mask). False for an unknown
+    /// account (never reverts) and for bit 0, which is reserved and never set.
+    /// @dev Reads {kindsOf}, so it honours the zero-means-legacy fallback. A record only: the answer
+    /// grants no right and no contract branches on it.
+    function hasKind(address account, uint8 kindBit) external view returns (bool) {
+        if (kindBit == 0) return false;
+        Entity storage e = entities[account];
+        if (e.status == EntityStatus.None) return false;
+        return (_effectiveKinds(e) >> kindBit) & 1 == 1;
+    }
+
     /// @notice The full record for `account`. Fails closed on an unknown account (reverts) so a consumer
     /// never mistakes a zeroed struct for a real entity.
     function getEntity(address account) external view returns (Entity memory) {
@@ -1460,6 +1538,46 @@ contract EntityRegistry is Initializable, UUPSUpgradeable, Ownable2StepUpgradeab
         nextCursor = end;
     }
 
+    /// @dev Effective kinds of an existing entity: the stored mask, or the single legacy kind as a mask
+    /// when the stored mask is zero.
+    function _effectiveKinds(Entity storage e) private view returns (uint256) {
+        uint256 mask = _kindsOf[e.account];
+        return mask == 0 ? uint256(1) << uint8(e.kind) : mask;
+    }
+
+    /// @dev Legacy `kind` for a mask: the lowest set bit when it is a named {EntityKind} member, else None.
+    function _legacyKindOf(uint256 kinds) private pure returns (EntityKind) {
+        for (uint8 bit = 1; bit <= MAX_NAMED_KIND_BIT; bit++) {
+            if ((kinds >> bit) & 1 == 1) return EntityKind(bit);
+        }
+        return EntityKind.None;
+    }
+
+    /// @dev Write a new Active entity with its mask and emit `EntityAdded` then `EntityKindsSet`.
+    function _store(
+        address account,
+        EntityKind kind,
+        uint256 mask,
+        string calldata name,
+        string calldata registrationId,
+        bytes32 docsHash
+    ) private {
+        entities[account] = Entity({
+            name: name,
+            registrationId: registrationId,
+            docsHash: docsHash,
+            account: account,
+            kind: kind,
+            status: EntityStatus.Active,
+            addedAt: uint64(block.timestamp),
+            updatedAt: uint64(block.timestamp)
+        });
+        _kindsOf[account] = mask;
+        _indexAccount(account);
+        emit EntityAdded(account, kind, name, registrationId, docsHash);
+        emit EntityKindsSet(account, 0, mask);
+    }
+
     function _indexAccount(address account) internal {
         _accountList.push(account);
         _accountIndex[account] = _accountList.length;
@@ -1471,7 +1589,13 @@ contract EntityRegistry is Initializable, UUPSUpgradeable, Ownable2StepUpgradeab
 
     function _authorizeUpgrade(address) internal override onlyOwner {}
 
+    /// @dev account -> kinds mask (version 2). Zero means "never written": the entity's kinds are then the
+    /// single legacy kind, see {kindsOf}. Declared immediately before `__gap`, which shrank from 45 to 44.
+    /// A record only: nothing reads it to allow or deny a right.
+    mapping(address => uint256) private _kindsOf;
+
     /// @dev Reserved storage so a future version can add fields without shifting the layout of anything
-    /// declared after this contract in an upgrade.
-    uint256[45] private __gap;
+    /// declared after this contract in an upgrade. 45 in version 1, 44 since `_kindsOf` took one slot.
+    // forge-lint: disable-next-line(mixed-case-variable)
+    uint256[44] private __gap;
 }

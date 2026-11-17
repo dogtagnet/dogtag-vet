@@ -109,6 +109,12 @@
   },
   {
     "contract": "EntityRegistry",
+    "event": "EntityKindsSet",
+    "signature": "EntityKindsSet(address,uint256,uint256)",
+    "topic0": "0x5875ed6913468cd3832f8f099e5360b5ef1ae04521912927e16e614c6973cc72"
+  },
+  {
+    "contract": "EntityRegistry",
     "event": "EntityReinstated",
     "signature": "EntityReinstated(address,bytes32)",
     "topic0": "0x67946b2f9cb1af55248f3ede9dc9eefc9bc7844bd2677da85ef1249138e5113c"

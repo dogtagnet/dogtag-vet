@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "reservedBits": [0],
+  "kinds": [
+    { "bit": 1, "id": "VET", "label": "Vet" },
+    { "bit": 2, "id": "GOVERNMENT", "label": "Government" },
+    { "bit": 3, "id": "GROOMER", "label": "Groomer" },
+    { "bit": 4, "id": "BOARDING", "label": "Boarding" },
+    { "bit": 5, "id": "DAYCARE", "label": "Daycare" }
+  ]
+}

@@ -25,7 +25,9 @@
     "test": "vitest run",
     "gen-vectors": "tsx scripts/gen-testvectors.ts",
     "gen-consent-vectors": "tsx scripts/gen-consent-vectors.ts",
-    "promote-spec-vectors": "tsx scripts/promote-spec-vectors.ts"
+    "promote-spec-vectors": "tsx scripts/promote-spec-vectors.ts",
+    "gen-mobile-document-vectors": "tsx scripts/gen-mobile-document-vectors.ts",
+    "gen-entity-kinds-vectors": "tsx scripts/gen-entity-kinds-vectors.ts"
   },
   "dependencies": {
     "@noble/hashes": "1.5.0",
@@ -36,6 +38,7 @@
     "ajv": "^8.20.0",
     "tsx": "4.19.2",
     "typescript": "5.6.3",
+    "viem": "2.21.55",
     "vitest": "2.1.8"
   }
 }

@@ -15,14 +15,27 @@ A clone is not known ahead of time, so the indexer subscribes to new clones as `
 The single on-chain register of approved business entities.
 
 - `EntityAdded(address indexed account, EntityRegistry.EntityKind kind, string name, string registrationId, bytes32 docsHash)`.
-  Fired by `addEntity`.
+  Fired by `addEntity` and, since EntityRegistry version 2, by `registerEntity`.
   Marks the moment an applicant becomes a known entity; the indexer creates its directory row here.
+  The signature and topic0 are unchanged from version 1.
+  `kind` is the legacy single kind: for `registerEntity` it is the lowest set bit of the mask when that bit names an enum member, and `None` otherwise.
+  The enum is now `None (0), Vet (1), Government (2), Groomer (3), Boarding (4), Daycare (5)`; the ordinals 0 to 3 keep their version 1 meaning, and `Boarding` and `Daycare` are appended.
+  Since version 2 this event is always followed, in the same transaction, by `EntityKindsSet`.
+- `EntityKindsSet(address indexed account, uint256 previousKinds, uint256 kinds)`.
+  New in EntityRegistry version 2.
+  Fired by `addEntity` and `registerEntity` right after `EntityAdded` (with `previousKinds` 0), and by `setEntityKinds` (with `previousKinds` the effective mask before the write).
+  `kinds` is a bit mask, one bit per kind: bit 0 reserved and never set, Vet 1, Government 2, Groomer 3, Boarding 4, Daycare 5; bits above 5 are accepted and reserved for kinds named later in `specs/entity-kinds.json`.
+  `previousKinds` includes the zero-means-legacy fallback: an entity added before version 2 never had a mask written, and reads `1 << legacyKind` until one is.
+  Kinds are a record only: they grant no right, and no contract branches on them.
+  Entities added before the upgrade emit no `EntityKindsSet`, so an indexer must derive their kinds from `EntityAdded.kind` (`1 << kind`) until a first `EntityKindsSet` arrives, or read `kindsOf(account)`.
+  An indexer that does not know this topic0 drops the log and keeps going.
 - `EntityUpdated(address indexed account, string name, string registrationId, bytes32 oldDocsHash, bytes32 newDocsHash)`.
   Fired by `updateEntity`.
   Carries the full new `name` and `registrationId` alongside both the old and new `docsHash`, so a profile edit and a re-hash are both visible without a second read.
   The indexer keeps every historical `docsHash` for audit history, never only the latest.
 - `EntityAccountUpdated(address indexed oldAccount, address indexed newAccount)`.
   Fired by `updateEntityAccount`.
+  The kinds mask moves with the entity to the new account (no `EntityKindsSet` is emitted for the move).
   The entity's on-chain wallet changed; the indexer must re-key the entity row and the corresponding `VetIssuerFactory.cloneOf` lookup together, or the two stores disagree about which clone belongs to this entity.
 - `EntityRevoked(address indexed account, bytes32 reasonCode)`.
   Fired by `revokeEntity`.
