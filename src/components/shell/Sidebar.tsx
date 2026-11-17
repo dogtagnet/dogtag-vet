@@ -40,13 +40,29 @@ function findActiveHref(pathname: string | null): string | undefined {
   return best;
 }
 
-export function Sidebar({role}: {role?: StaffRole}) {
+export interface SidebarProps {
+  role?: StaffRole;
+  /** Below the `md` breakpoint the sidebar is an off-canvas drawer; this opens it. Ignored at `md`+. */
+  open?: boolean;
+  /** Called when a nav link is followed or the backdrop is pressed, so the drawer can close. */
+  onClose?: () => void;
+}
+
+export function Sidebar({role, open = false, onClose}: SidebarProps) {
   const pathname = usePathname();
   const activeHref = findActiveHref(pathname);
   const groups = visibleGroups(role);
 
   return (
-    <nav className="flex h-full w-60 shrink-0 flex-col gap-6 overflow-y-auto border-r border-border bg-surface px-3 py-5">
+    <>
+      {open && <div className="fixed inset-0 z-30 bg-black/40 md:hidden" aria-hidden onClick={onClose} data-testid="sidebar-backdrop" />}
+    <nav
+      id="app-sidebar"
+      aria-label="Main"
+      className={`fixed inset-y-0 left-0 z-40 flex h-full w-60 shrink-0 flex-col gap-6 overflow-y-auto border-r border-border bg-surface px-3 py-5 transition-transform md:static md:z-auto md:translate-x-0 ${
+        open ? "translate-x-0" : "-translate-x-full"
+      }`}
+    >
       <Link href="/dashboard" className="px-2 text-emphasized font-semibold text-ink">
         dogtag<span className="text-brand">-vet</span>
       </Link>
@@ -62,6 +78,7 @@ export function Sidebar({role}: {role?: StaffRole}) {
                 <li key={item.href}>
                   <Link
                     href={item.href}
+                    onClick={onClose}
                     className={`block rounded-control px-2 py-1.5 text-body transition-colors ${
                       active
                         ? "bg-brand-soft font-medium text-brand"
@@ -77,5 +94,6 @@ export function Sidebar({role}: {role?: StaffRole}) {
         </div>
       ))}
     </nav>
+    </>
   );
 }
