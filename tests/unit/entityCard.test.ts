@@ -1,6 +1,6 @@
-import {describe, expect, it} from "vitest";
+import {beforeEach, describe, expect, it} from "vitest";
 import {buildEntityCard} from "@/lib/entityCard";
-import {resolveEntityCardKinds} from "@/lib/entityCardKinds";
+import {clearEntityCardKindsCache, resolveEntityCardKinds} from "@/lib/entityCardKinds";
 import type {EntityKindsRead} from "@/lib/chainRead";
 import {validateAgainstVetSpec} from "./helpers/vetSpec";
 import type {ClinicSettingsDoc} from "@/lib/models/ClinicSettings";
@@ -97,6 +97,7 @@ describe("resolveEntityCardKinds (route-side registry read)", () => {
     if (answer instanceof Error) throw answer;
     return answer;
   };
+  beforeEach(() => clearEntityCardKindsCache());
 
   it("version 2 path: a multi-kind mask becomes kinds in bit order, and the card keeps kind VET", async () => {
     const kinds = await resolveEntityCardKinds({entityAccount: ACCOUNT}, {registryAddress: REGISTRY, read: reader({status: "registered", mask: 10n})});
@@ -135,5 +136,124 @@ describe("resolveEntityCardKinds (route-side registry read)", () => {
 
   it("a mask with only bits this build does not know: [VET]", async () => {
     expect(await resolveEntityCardKinds({entityAccount: ACCOUNT}, {registryAddress: REGISTRY, read: reader({status: "registered", mask: 1n << 100n})})).toEqual(["VET"]);
+  });
+
+  describe("deadline and cache", () => {
+    /** A manual clock plus a manual timer: `advance` moves time and fires due timers. */
+    function fakeTime() {
+      let t = 1_000_000;
+      let nextId = 1;
+      const timers = new Map<number, {at: number; fn: () => void}>();
+      return {
+        now: () => t,
+        setTimer: (fn: () => void, ms: number) => {
+          const id = nextId++;
+          timers.set(id, {at: t + ms, fn});
+          return id;
+        },
+        clearTimer: (h: unknown) => void timers.delete(h as number),
+        advance(ms: number) {
+          t += ms;
+          for (const [id, timer] of [...timers]) {
+            if (timer.at <= t) {
+              timers.delete(id);
+              timer.fn();
+            }
+          }
+        },
+        pending: () => timers.size,
+      };
+    }
+    const countingReader = (answers: Array<EntityKindsRead | "hang">) => {
+      let calls = 0;
+      const read = (async () => {
+        const answer = answers[Math.min(calls, answers.length - 1)];
+        calls++;
+        if (answer === "hang") return new Promise<EntityKindsRead>(() => undefined);
+        return answer;
+      }) as unknown as typeof import("@/lib/chainRead").readEntityKinds;
+      return {read, calls: () => calls};
+    };
+    const settings = {entityAccount: ACCOUNT};
+
+    it("a second call inside the TTL does not read; a call after expiry reads again", async () => {
+      const time = fakeTime();
+      const {read, calls} = countingReader([{status: "registered", mask: 8n}, {status: "registered", mask: 4n}]);
+      const deps = {registryAddress: REGISTRY, read, now: time.now, setTimer: time.setTimer, clearTimer: time.clearTimer};
+      expect(await resolveEntityCardKinds(settings, deps)).toEqual(["GROOMER"]);
+      time.advance(59_999);
+      expect(await resolveEntityCardKinds(settings, deps)).toEqual(["GROOMER"]);
+      expect(calls()).toBe(1);
+      time.advance(1);
+      expect(await resolveEntityCardKinds(settings, deps)).toEqual(["GOVERNMENT"]);
+      expect(calls()).toBe(2);
+    });
+
+    it("a not_registered answer is cached for the long TTL", async () => {
+      const time = fakeTime();
+      const {read, calls} = countingReader([{status: "not_registered"}]);
+      const deps = {registryAddress: REGISTRY, read, now: time.now, setTimer: time.setTimer, clearTimer: time.clearTimer};
+      await resolveEntityCardKinds(settings, deps);
+      time.advance(59_000);
+      await resolveEntityCardKinds(settings, deps);
+      expect(calls()).toBe(1);
+    });
+
+    it("a read that never resolves returns [VET] at the deadline and is cached for the short TTL", async () => {
+      const time = fakeTime();
+      const {read, calls} = countingReader(["hang"]);
+      const deps = {registryAddress: REGISTRY, read, now: time.now, setTimer: time.setTimer, clearTimer: time.clearTimer};
+      const first = resolveEntityCardKinds(settings, deps);
+      await Promise.resolve();
+      let settled = false;
+      void first.then(() => (settled = true));
+      await new Promise((r) => setTimeout(r, 0));
+      expect(settled).toBe(false);
+      time.advance(2499);
+      await new Promise((r) => setTimeout(r, 0));
+      expect(settled).toBe(false);
+      time.advance(1);
+      expect(await first).toEqual(["VET"]);
+      expect(calls()).toBe(1);
+      time.advance(29_999);
+      expect(await resolveEntityCardKinds(settings, deps)).toEqual(["VET"]);
+      expect(calls()).toBe(1);
+      time.advance(1);
+      void resolveEntityCardKinds(settings, deps);
+      await new Promise((r) => setTimeout(r, 0));
+      expect(calls()).toBe(2);
+    });
+
+    it("a successful read after a cached failure replaces it once the short TTL passes", async () => {
+      const time = fakeTime();
+      const {read, calls} = countingReader([{status: "unreadable"}, {status: "registered", mask: 4n}]);
+      const deps = {registryAddress: REGISTRY, read, now: time.now, setTimer: time.setTimer, clearTimer: time.clearTimer};
+      expect(await resolveEntityCardKinds(settings, deps)).toEqual(["VET"]);
+      time.advance(29_999);
+      expect(await resolveEntityCardKinds(settings, deps)).toEqual(["VET"]);
+      expect(calls()).toBe(1);
+      time.advance(1);
+      expect(await resolveEntityCardKinds(settings, deps)).toEqual(["GOVERNMENT"]);
+      time.advance(31_000);
+      expect(await resolveEntityCardKinds(settings, deps)).toEqual(["GOVERNMENT"]);
+      expect(calls()).toBe(2);
+    });
+
+    it("two concurrent calls share one read, and the deadline timer is cleared after a fast read", async () => {
+      const time = fakeTime();
+      let release!: (v: EntityKindsRead) => void;
+      let calls = 0;
+      const read = (() => {
+        calls++;
+        return new Promise<EntityKindsRead>((resolve) => (release = resolve));
+      }) as unknown as typeof import("@/lib/chainRead").readEntityKinds;
+      const deps = {registryAddress: REGISTRY, read, now: time.now, setTimer: time.setTimer, clearTimer: time.clearTimer};
+      const a = resolveEntityCardKinds(settings, deps);
+      const b = resolveEntityCardKinds(settings, deps);
+      release({status: "registered", mask: 10n});
+      expect(await Promise.all([a, b])).toEqual([["VET", "GROOMER"], ["VET", "GROOMER"]]);
+      expect(calls).toBe(1);
+      expect(time.pending()).toBe(0);
+    });
   });
 });
