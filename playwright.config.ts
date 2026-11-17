@@ -8,6 +8,11 @@ import {RPC_STUB_URL} from "./e2e/rpcStub";
 // `pnpm test:e2e` run.
 const PORT = Number(process.env.E2E_WEB_PORT ?? 4210);
 
+// Production build by default (no per-page compile step, so a slow machine cannot fail a test by
+// compiling a route late). E2E_DEV=1 runs `next dev` instead, for quick local iteration; only then
+// does global-setup.ts warm the pages. See scripts/e2e-web-server.mjs.
+const DEV = process.env.E2E_DEV === "1";
+
 export default defineConfig({
   testDir: "./e2e",
   testMatch: /.*\.spec\.ts/,
@@ -31,11 +36,21 @@ export default defineConfig({
     },
   ],
   webServer: {
-    command: `pnpm dev -p ${PORT}`,
+    command: "node scripts/e2e-web-server.mjs",
     url: `http://localhost:${PORT}`,
     reuseExistingServer: false,
-    timeout: 120_000,
+    // Sized for a cold production build (about 75 s unloaded, several minutes on a busy machine)
+    // followed by the server start. The dev mode only starts a server.
+    timeout: DEV ? 120_000 : 900_000,
+    stdout: "pipe",
+    stderr: "pipe",
     env: {
+      // Its own build directory: a suite run can never clobber the `.next` of a dev server running
+      // from this checkout (next.config.ts reads this). The dev mode gets a separate one again so a
+      // dev run never leaves dev output inside the production build directory.
+      NEXT_DIST_DIR: DEV ? ".next-e2e-dev" : ".next-e2e",
+      E2E_WEB_PORT: String(PORT),
+      ...(DEV ? {E2E_DEV: "1", E2E_KEEP_DEV_PAGES: "1"} : {}),
       DEV_LOGIN: "1",
       MONGODB_URI: E2E_MONGO_URI,
       PUBLIC_BASE_URL: `http://localhost:${PORT}`,

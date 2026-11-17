@@ -3,6 +3,10 @@ import path from "node:path";
 
 const nextConfig: NextConfig = {
   output: "standalone",
+  // The Playwright suite builds into its own directory (playwright.config.ts sets NEXT_DIST_DIR), so
+  // a run can never clobber the `.next` of a dev server running from the same checkout. Every other
+  // build and every dev server keeps Next's default.
+  distDir: process.env.NEXT_DIST_DIR ?? ".next",
   reactStrictMode: true,
   // The vendored protocol/packages/dogtag-standard-ts workspace package ships its own
   // pnpm-lock.yaml, which would otherwise make Next.js guess at the monorepo root. Pin it
@@ -48,6 +52,10 @@ const nextConfig: NextConfig = {
   outputFileTracingIncludes: {
     "/**": ["./node_modules/pdfkit/**/*"],
   },
+  // The Playwright suite's dev mode (E2E_DEV=1) warms every page once in e2e/global-setup.ts. Next
+  // disposes of a dev page left idle for a minute, so a late spec paid a cold compile again. Only
+  // that mode sets this variable; a normal `next dev` and every production build keep Next's defaults.
+  ...(process.env.E2E_KEEP_DEV_PAGES === "1" ? {onDemandEntries: {maxInactiveAge: 60 * 60 * 1000, pagesBufferLength: 200}} : {}),
   eslint: {
     ignoreDuringBuilds: false,
   },

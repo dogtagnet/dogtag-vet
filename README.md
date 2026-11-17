@@ -33,9 +33,20 @@ pnpm build        # production build
 pnpm lint         # eslint
 pnpm typecheck    # tsc --noEmit
 pnpm test         # vitest unit suite
-pnpm test:e2e     # Playwright smoke (needs a running docker mongo)
+pnpm test:e2e     # Playwright suite against a production build (needs docker for its own mongo)
+E2E_DEV=1 pnpm test:e2e   # the same suite against `next dev`, for quick local iteration
 pnpm worker       # the background worker process
 ```
+
+### How the Playwright suite runs
+
+By default the suite builds the app into its own directory (`.next-e2e`, set through `NEXT_DIST_DIR`) and serves that build with `next start`.
+A production server has no per-page compile step, so a slow machine cannot fail a test by compiling a route late.
+The build directory is separate, so a run never clobbers the `.next` of a dev server in the same checkout.
+The build is repeated only when its inputs changed: the HEAD commit, the tracked diff, untracked files, the lockfile and the `NEXT_`/`E2E_` environment are hashed into `.next-e2e/e2e-build-stamp`.
+`E2E_DEV=1` runs `next dev` instead (build directory `.next-e2e-dev`), keeps warmed pages alive for an hour and warms every route in `e2e/global-setup.ts`.
+Ports are overridable with `E2E_WEB_PORT`, `E2E_MONGO_PORT` and `E2E_RPC_STUB_PORT`.
+Every spec imports `test` and `expect` from `e2e/fixtures.ts`, which aborts any request to a host other than localhost and 127.0.0.1 and fails the test that made it.
 
 ## Deployment
 

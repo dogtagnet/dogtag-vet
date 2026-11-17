@@ -217,6 +217,8 @@ export default async function globalSetup(config: FullConfig) {
   startRpcStub();
 
   // Read from the resolved config (not a literal) so a scratchpad copy on other ports warms the right server.
+  // The warm-up is only for `next dev` (E2E_DEV=1): the default production build has no compile step.
+  if (process.env.E2E_DEV !== "1") return;
   const baseURL = config.projects[0]?.use.baseURL;
   if (!baseURL) throw new Error("global-setup: no projects[0].use.baseURL configured - cannot warm up routes.");
 

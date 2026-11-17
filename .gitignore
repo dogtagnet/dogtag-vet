@@ -5,6 +5,9 @@ protocol/**/node_modules/
 
 # next.js
 .next/
+# the Playwright suite's own build directories (NEXT_DIST_DIR, see playwright.config.ts)
+.next-e2e/
+.next-e2e-dev/
 out/
 next-env.d.ts
 
