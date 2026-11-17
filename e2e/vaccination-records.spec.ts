@@ -435,9 +435,14 @@ test.describe("vaccination record lifecycle (plan section 11.2 V8)", () => {
     // Revoke via the real UI, then re-script `isValid` to false for the SAME root - the write and
     // the read are scripted separately (the stub is stateless), exactly like
     // practitioner-mode.spec.ts's own operator add/remove pattern.
+    // The issuance above already sent its own tx, so "not null" would resolve on that stale hash
+    // whenever the revoke's own send has not reached the stub yet (the production build made that
+    // the common case), and the receipt below would then be scripted for the wrong tx. Wait for a
+    // hash that differs from the pre-revoke one, as the revert test above does.
+    const issueHash = await getLastSentTxHash();
     const row = page.locator("tr", {hasText: "Rabies"});
     await row.getByRole("button", {name: "Revoke"}).click();
-    await expect.poll(async () => getLastSentTxHash(), {timeout: 15_000}).not.toBeNull();
+    await expect.poll(async () => getLastSentTxHash(), {timeout: 15_000}).not.toBe(issueHash);
     const revokeHash = await getLastSentTxHash();
     await setRpcReceipt(revokeHash!, "success");
     await setRpcScenario("isValid", CLONE_ADDRESS, [root], false);
