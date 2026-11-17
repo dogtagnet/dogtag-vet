@@ -1,6 +1,6 @@
 import {randomUUID} from "node:crypto";
 import {MongoClient} from "mongodb";
-import {expect, test, type Page} from "@playwright/test";
+import {expect, test, type Page} from "./fixtures";
 import {addCalendarDays, todayInTimeZone} from "../src/lib/booking/dst";
 import {E2E_MONGO_URI} from "./mongo-fixture";
 

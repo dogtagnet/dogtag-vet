@@ -22,6 +22,13 @@ const eslintConfig = [
       "next-env.d.ts",
     ],
   },
+  {
+    // WP4.21V E2: every spec gets the external-host guard from e2e/fixtures.ts.
+    files: ["e2e/**/*.spec.ts"],
+    rules: {
+      "no-restricted-imports": ["error", {paths: [{name: "@playwright/test", message: "Import test and expect from ./fixtures: it carries the external-host guard."}]}],
+    },
+  },
 ];
 
 export default eslintConfig;

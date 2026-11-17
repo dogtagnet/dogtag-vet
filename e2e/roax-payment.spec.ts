@@ -1,4 +1,4 @@
-import {expect, test, type Page} from "@playwright/test";
+import {expect, test, type Page} from "./fixtures";
 import {execFile} from "node:child_process";
 import {promisify} from "node:util";
 import {fileURLToPath} from "node:url";

@@ -27,7 +27,10 @@ const mockWalletAccounts: readonly [`0x${string}`, ...`0x${string}`[]] | undefin
 export const wagmiConfig = createConfig({
   chains: [roax],
   connectors: [
-    metaMask(),
+    // enableAnalytics defaults to true in @metamask/sdk, which posts an event to MetaMask's servers
+    // on every page load, before any wallet action. A clinic's staff and visitors never agreed to
+    // that (WP4.21V grade E2); e2e/fixtures.ts fails any spec whose page contacts a foreign host.
+    metaMask({enableAnalytics: false}),
     ...(mockWalletAccounts ? [mock({accounts: mockWalletAccounts})] : []),
   ],
   transports: {

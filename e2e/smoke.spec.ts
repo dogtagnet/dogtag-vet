@@ -1,4 +1,4 @@
-import {expect, test} from "@playwright/test";
+import {expect, test} from "./fixtures";
 
 /**
  * Definition-of-done smoke suite (wp4-vet.md): sign-in renders, the public booking API answers

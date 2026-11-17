@@ -1,5 +1,5 @@
 import {MongoClient} from "mongodb";
-import {expect, test, type Page} from "@playwright/test";
+import {expect, test, type Page} from "./fixtures";
 import {E2E_MONGO_URI} from "./mongo-fixture";
 import {setRpcScenario} from "./rpcStub";
 // Relative, not the "@/..." alias - the established pattern for an e2e file reaching into src/

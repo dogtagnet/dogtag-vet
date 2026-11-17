@@ -1,4 +1,4 @@
-import {expect, test, type Page} from "@playwright/test";
+import {expect, test, type Page} from "./fixtures";
 import {dogTagIdField, recordTypeKey, verifyRecordArtifact, type RecordArtifact as RecordArtifactWire} from "@dogtag/standard";
 import {getAddress} from "viem";
 import {getLastSentTxHash, resetRpcStub, setRpcReceipt, setRpcScenario} from "./rpcStub";

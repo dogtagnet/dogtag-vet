@@ -1,4 +1,4 @@
-import {expect, test, type Page} from "@playwright/test";
+import {expect, test, type Page} from "./fixtures";
 import {execFile} from "node:child_process";
 import {promisify} from "node:util";
 import {fileURLToPath} from "node:url";
@@ -68,14 +68,14 @@ const REPO_ROOT = fileURLToPath(new URL("..", import.meta.url));
 const CLONE_ADDRESS = "0x7b9bf16f0e39AdF8c38d8491F4C7E9C17E85D703";
 const DOGTAG_SBT_ADDRESS = "0x276101555b2cd92be0fb85ff908e02281d6a3cf9";
 
-async function signInAsStaff(page: import("@playwright/test").Page) {
+async function signInAsStaff(page: import("./fixtures").Page) {
   await page.goto("/sign-in");
   await page.getByLabel("Email").fill("owner@example.com");
   await page.getByRole("button", {name: "Dev sign in (test only)"}).click();
   await expect(page).toHaveURL(/\/dashboard$/, {timeout: 15_000});
 }
 
-async function configureClinic(page: import("@playwright/test").Page) {
+async function configureClinic(page: import("./fixtures").Page) {
   const res = await page.request.patch("/api/settings", {
     data: {cloneAddress: CLONE_ADDRESS, businessProfile: {name: "Example Vet Clinic"}},
   });

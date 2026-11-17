@@ -1,4 +1,4 @@
-import {expect, test, type Page} from "@playwright/test";
+import {expect, test, type Page} from "./fixtures";
 import {randomUUID} from "node:crypto";
 import {MongoClient} from "mongodb";
 import {E2E_MONGO_URI} from "./mongo-fixture";

@@ -1,4 +1,4 @@
-import {expect, test, type Page} from "@playwright/test";
+import {expect, test, type Page} from "./fixtures";
 
 /**
  * End-to-end coverage for plans/wp4.5-track12-plan.md issue 1: the calendar's service dropdown

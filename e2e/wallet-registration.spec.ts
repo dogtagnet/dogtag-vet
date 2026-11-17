@@ -1,4 +1,4 @@
-import {expect, test, type Locator, type Page} from "@playwright/test";
+import {expect, test, type Locator, type Page} from "./fixtures";
 import {MongoClient} from "mongodb";
 import {privateKeyToAccount, generatePrivateKey} from "viem/accounts";
 import {E2E_MONGO_URI} from "./mongo-fixture";

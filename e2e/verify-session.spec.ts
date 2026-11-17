@@ -1,4 +1,4 @@
-import {expect, test, type Page} from "@playwright/test";
+import {expect, test, type Page} from "./fixtures";
 import {keccak256, toBytes} from "viem";
 import {MongoClient} from "mongodb";
 import {E2E_MONGO_URI} from "./mongo-fixture";
