@@ -1,5 +1,16 @@
 import "server-only";
-import {createPublicClient, http, keccak256, toBytes, TransactionReceiptNotFoundError, type Address, type Hex} from "viem";
+import {
+  BaseError,
+  ContractFunctionRevertedError,
+  ContractFunctionZeroDataError,
+  createPublicClient,
+  http,
+  keccak256,
+  toBytes,
+  TransactionReceiptNotFoundError,
+  type Address,
+  type Hex,
+} from "viem";
 import {roax} from "@/lib/chains";
 import {getServerEnv} from "@/lib/env";
 import {vetIssuerAbi, vetIssuerFactoryAbi, entityRegistryAbi, dogTagSBTConsentAbi, verificationRegistryConsentAbi, delegationRegistryAbi} from "@/lib/abi";
@@ -115,6 +126,88 @@ export async function readEntityActive(entityRegistryAddress: Address, account: 
     functionName: "isActive",
     args: [account],
   })) as boolean;
+}
+
+/** `VetIssuer.vetOwner()` - the account that owns this clone: the registered entity behind it
+ * (WP4.21 V3's record-check `issuer` block). Fail-closed like every reader above: a revert or an RPC
+ * failure throws; the caller decides what an unreadable owner means. */
+export async function readCloneOwner(cloneAddress: Address): Promise<Address> {
+  return (await roaxPublicClient().readContract({
+    address: cloneAddress,
+    abi: vetIssuerAbi,
+    functionName: "vetOwner",
+  })) as Address;
+}
+
+/** True when `err` is a contract revert (including the empty-data revert a missing selector gives),
+ * as opposed to a transport failure (timeout, HTTP error, DNS), which is never a revert. */
+function isContractRevert(err: unknown): boolean {
+  if (!(err instanceof BaseError)) return false;
+  return (
+    err.walk((e) => e instanceof ContractFunctionRevertedError || e instanceof ContractFunctionZeroDataError) !== null
+  );
+}
+
+function isUnknownEntityRevert(err: unknown): boolean {
+  if (!(err instanceof BaseError)) return false;
+  const revert = err.walk((e) => e instanceof ContractFunctionRevertedError);
+  return revert instanceof ContractFunctionRevertedError && revert.data?.errorName === "UnknownEntity";
+}
+
+/** `EntityRegistry.version()` (WP4.21: 2 once the kinds upgrade is live). A registry that predates
+ * the function reverts, which means version 1. Only a revert maps to 1: a transport failure
+ * propagates, so an unreachable chain is never mistaken for an old registry. */
+export async function readRegistryVersion(entityRegistryAddress: Address): Promise<number> {
+  try {
+    const v = (await roaxPublicClient().readContract({
+      address: entityRegistryAddress,
+      abi: entityRegistryAbi,
+      functionName: "version",
+    })) as bigint;
+    return Number(v);
+  } catch (err) {
+    if (isContractRevert(err)) return 1;
+    throw err;
+  }
+}
+
+/** The three distinct answers of {@link readEntityKinds}. `unreadable` means UNKNOWN (the chain
+ * could not be read) and must never be treated as `not_registered`. `mask` is the raw kinds
+ * bit-mask (`specs/entity-kinds.md`); decode it with `entityKindsFromMask`. */
+export type EntityKindsRead =
+  | {status: "registered"; mask: bigint}
+  | {status: "not_registered"}
+  | {status: "unreadable"};
+
+/**
+ * The kinds mask of `account` in the registry. Version 2: `kindsOf(account)`. Version 1: the single
+ * legacy `getEntity(account).kind`, as `1 << kind`. An `UnknownEntity` revert is `not_registered`;
+ * every other failure is `unreadable`. Unlike the readers above this never throws: kinds are a
+ * record only, and every caller treats a failed read as "unknown" without failing its own work.
+ */
+export async function readEntityKinds(entityRegistryAddress: Address, account: Address): Promise<EntityKindsRead> {
+  try {
+    const version = await readRegistryVersion(entityRegistryAddress);
+    if (version >= 2) {
+      const mask = (await roaxPublicClient().readContract({
+        address: entityRegistryAddress,
+        abi: entityRegistryAbi,
+        functionName: "kindsOf",
+        args: [account],
+      })) as bigint;
+      return {status: "registered", mask};
+    }
+    const entity = (await roaxPublicClient().readContract({
+      address: entityRegistryAddress,
+      abi: entityRegistryAbi,
+      functionName: "getEntity",
+      args: [account],
+    })) as {kind: number | bigint};
+    return {status: "registered", mask: 1n << BigInt(entity.kind)};
+  } catch (err) {
+    if (isUnknownEntityRevert(err)) return {status: "not_registered"};
+    return {status: "unreadable"};
+  }
 }
 
 /** `EntityRegistry.canVerify(purpose, relayer)` - `purpose` is hashed the same way `purposeToBytes32`
