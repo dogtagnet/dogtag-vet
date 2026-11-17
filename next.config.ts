@@ -75,7 +75,28 @@ const nextConfig: NextConfig = {
       "@x402/evm/exact/client": false,
       "@x402/svm/exact/client": false,
       "@x402/evm": false,
+      // @metamask/sdk's browser build imports React Native's async-storage for its native-app
+      // path. A browser build never takes that path (it falls back to localStorage), so resolve
+      // the optional import to nothing instead of printing a warning on every compile.
+      "@react-native-async-storage/async-storage": false,
     };
+    // Warnings from third-party packages that are known, harmless and not ours to fix. Each entry
+    // is narrow (one module plus the exact message) so a NEW warning from anywhere else still shows.
+    config.ignoreWarnings = [
+      ...(config.ignoreWarnings ?? []),
+      // pino (via WalletConnect's logger) optionally requires `pino-pretty`, which is never
+      // installed; pino falls back to plain JSON output. Same ignore the admin repo carries.
+      {module: /node_modules\/pino\/lib\/tools\.js/, message: /Can't resolve 'pino-pretty'/},
+      // web-worker (via ffjavascript, from circomlibjs) picks its Node or browser worker
+      // implementation with a computed require, which webpack reports as a critical dependency.
+      {module: /node_modules\/web-worker\/cjs\/node\.js/, message: /Critical dependency: the request of a dependency is an expression/},
+      // ox's Tempo helper (viem chains, pulled in by the Coinbase connector in the wagmi barrel)
+      // builds an import specifier at runtime; the Tempo chain is never used here.
+      {module: /node_modules\/ox\/_esm\/tempo\/internal\/virtualMasterPool\.js/, message: /Critical dependency: the request of a dependency is an expression/},
+      // jose's JWE deflate helper uses CompressionStream, which the Edge runtime lacks. The
+      // middleware only verifies JWS session tokens (no JWE, no compression), so it never runs.
+      {module: /node_modules\/jose\/dist\/webapi\/lib\/deflate\.js/, message: /not supported in the Edge Runtime/},
+    ];
     return config;
   },
 };
