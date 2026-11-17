@@ -1,6 +1,6 @@
 import {createServer, type IncomingMessage, type Server, type ServerResponse} from "node:http";
 import {randomBytes} from "node:crypto";
-import {decodeFunctionData, encodeAbiParameters, encodeEventTopics, encodeFunctionResult, parseAbiParameters} from "viem";
+import {decodeFunctionData, encodeAbiParameters, encodeErrorResult, encodeEventTopics, encodeFunctionResult, parseAbiParameters} from "viem";
 import type {Abi, Address, Hex} from "viem";
 import {recordTypeKey} from "@dogtag/standard";
 
@@ -330,6 +330,9 @@ function defaultResultFor(functionName: string): ScenarioResult {
   // read explicitly. The zero ADDRESS is still the correct "never written" default, matching a root
   // that was never anchored on this clone.
   if (functionName === "issuedBy") return "0x0000000000000000000000000000000000000000";
+  // WP4.21V - `VetIssuer.vetOwner()` returns an `address`; the zero address is the natural default
+  // for a clone nobody scripted an owner for.
+  if (functionName === "vetOwner") return "0x0000000000000000000000000000000000000000";
   // WP4.14 - `RECORD_TYPE_VACCINATION()` is a CONSTANT getter (no args), not a per-root mapping
   // lookup - a real clone never returns zero for it, unlike `recordTypeOf`/`profileRoot` below,
   // where zero genuinely is the correct "never written" default. `recordTypeKey` (the identical
@@ -504,6 +507,10 @@ export function startRpcStub(): Server {
 
     const reply = (result: unknown) => sendJson(res, 200, {jsonrpc: "2.0", id: rpcRequest.id, result});
     const replyError = (message: string) => sendJson(res, 200, {jsonrpc: "2.0", id: rpcRequest.id, error: {code: -32000, message}});
+    // WP4.21V - a real contract revert: JSON-RPC code 3 with the revert data, exactly what a geth-style
+    // node answers, so viem's real client turns it into a `ContractFunctionRevertedError`.
+    const replyRevert = (data: Hex) =>
+      sendJson(res, 200, {jsonrpc: "2.0", id: rpcRequest.id, error: {code: 3, message: "execution reverted", data}});
 
     if (rpcRequest.method === "eth_blockNumber") {
       blockNumber += 1n;
@@ -731,6 +738,53 @@ export function startRpcStub(): Server {
         return;
       }
       const scripted = scenarios.get(scenarioKey(decoded.functionName, callParams.to, decoded.args));
+      // WP4.21V - the EntityRegistry kinds reads (an unscripted address behaves like the real chain):
+      // `version()` reverts on a registry that predates it (VetIssuer's own `version()` is a string
+      // with the SAME selector, so a scripted `"uint:N"` is what selects the registry's uint256 form);
+      // `kindsOf`/`getEntity` revert `UnknownEntity(account)` for an unscripted account; a scripted
+      // `getEntity` value is the legacy kind number as a decimal string.
+      if (decoded.functionName === "version" && typeof scripted === "string" && scripted.startsWith("uint:")) {
+        reply(
+          encodeFunctionResult({
+            abi: entityRegistryAbiJson as unknown as Abi,
+            functionName: "version",
+            result: BigInt(scripted.slice(5)),
+          }),
+        );
+        return;
+      }
+      if (decoded.functionName === "version" && scripted === undefined) {
+        replyRevert("0x");
+        return;
+      }
+      if (decoded.functionName === "kindsOf" || decoded.functionName === "getEntity") {
+        if (scripted === undefined) {
+          replyRevert(
+            encodeErrorResult({abi: entityRegistryAbiJson as unknown as Abi, errorName: "UnknownEntity", args: [decoded.args[0] as Address]}),
+          );
+          return;
+        }
+        reply(
+          encodeFunctionResult({
+            abi: entityRegistryAbiJson as unknown as Abi,
+            functionName: decoded.functionName,
+            result:
+              decoded.functionName === "kindsOf"
+                ? BigInt(scripted as string)
+                : {
+                    name: "",
+                    registrationId: "",
+                    docsHash: ZERO_HEX32 as Hex,
+                    account: decoded.args[0] as Address,
+                    kind: Number(scripted),
+                    status: 1,
+                    addedAt: 0n,
+                    updatedAt: 0n,
+                  },
+          } as Parameters<typeof encodeFunctionResult>[0]),
+        );
+        return;
+      }
       const value = scripted ?? defaultResultFor(decoded.functionName);
       const encoded = encodeResult(decoded.functionName, value);
       if (!encoded) {

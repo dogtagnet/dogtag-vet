@@ -1,5 +1,12 @@
 import {zeroAddress} from "viem";
-import {recordTypeKey, verifyRecordArtifact, type RecordArtifact as RecordArtifactWire} from "@dogtag/standard";
+import {
+  entityKindsFromMask,
+  recordTypeKey,
+  verifyRecordArtifact,
+  type EntityKindId,
+  type RecordArtifact as RecordArtifactWire,
+} from "@dogtag/standard";
+import type {EntityKindsRead} from "@/lib/chainRead";
 import {computeRecordValidity, type RecordValidity} from "@/lib/records/validity";
 import type {RecordArtifactStatus} from "@/lib/models/RecordArtifact";
 
@@ -32,6 +39,23 @@ export interface RecordChainDeps {
   readIsValidRoot(cloneAddress: string, root: string): Promise<boolean>;
   /** `VetIssuer.issuedBy(root)` on the resolved clone. */
   readIssuedBy(cloneAddress: string, root: string): Promise<string>;
+  /** `VetIssuer.vetOwner()` on the resolved clone (WP4.21): the account that owns it. Used only for
+   * the informational `issuer` block - a throw omits the block and changes nothing else. */
+  readCloneOwner(cloneAddress: string): Promise<string>;
+  /** The registry's answer for the clone owner (`readEntityKinds`). Informational only: never
+   * throws by contract, and a throw here is treated as `unreadable` anyway. */
+  readOwnerKinds(owner: string): Promise<EntityKindsRead>;
+}
+
+/** WP4.21 (`vet-public-api.yaml` `RecordIssuer`): who owns the clone that issued the record, and the
+ * kinds the registry holds for them. INFORMATIONAL - a kind grants nothing, so this block never
+ * changes `stage` or `validity`. `kinds` is `[]` for an owner that is not registered and `null`
+ * when the registry read failed (UNKNOWN, never "not registered"; `registered` is then `false` and
+ * carries no meaning). */
+export interface RecordIssuer {
+  account: string;
+  kinds: EntityKindId[] | null;
+  registered: boolean;
 }
 
 export type RecordVerifyStage =
@@ -39,6 +63,8 @@ export type RecordVerifyStage =
   | {stage: "chain_unreadable"}
   | {
       stage: "not_anchored";
+      /** Present on every reason except `root_unset` (no clone resolved), when the clone's owner was readable. */
+      issuer?: RecordIssuer;
       /** `root_unset`: the factory never indexed this root at all - never issued (or the artifact
        * names a root that does not exist on this chain). `issuer_mismatch`: the factory resolves
        * this root to a DIFFERENT clone than the artifact's own disclosed `issuer.contract` leaf
@@ -55,6 +81,8 @@ export type RecordVerifyStage =
   | {stage: "wrong_chain"}
   | {
       stage: "verified";
+      /** Present when the resolved clone's owner was readable. */
+      issuer?: RecordIssuer;
       issuerClone: string;
       recordType: string;
       /** `isValid(root) === false` at this point can only mean genuinely revoked (never "never
@@ -76,6 +104,34 @@ const REQUIRED_LEAF_KEY_PATHS = ["issuer.contract", "issuer.operator", "issuer.c
 
 function leafValue(artifact: RecordArtifactWire, keyPath: string): string | undefined {
   return artifact.disclosed.find((l) => l.keyPath === keyPath)?.value;
+}
+
+/**
+ * Resolves the informational `issuer` block for a resolved clone. Never throws and never fails the
+ * check: an unreadable owner omits the block (`undefined`); an unreadable registry reports
+ * `kinds: null`.
+ */
+async function resolveIssuer(cloneAddress: string, deps: RecordChainDeps): Promise<RecordIssuer | undefined> {
+  let account: string;
+  try {
+    account = await deps.readCloneOwner(cloneAddress);
+  } catch {
+    return undefined;
+  }
+  let read: EntityKindsRead;
+  try {
+    read = await deps.readOwnerKinds(account);
+  } catch {
+    read = {status: "unreadable"};
+  }
+  switch (read.status) {
+    case "registered":
+      return {account, kinds: entityKindsFromMask(read.mask), registered: true};
+    case "not_registered":
+      return {account, kinds: [], registered: false};
+    case "unreadable":
+      return {account, kinds: null, registered: false};
+  }
 }
 
 /**
@@ -116,8 +172,15 @@ export async function verifyPresentedRecordArtifact(
   if (resolvedClone.toLowerCase() === zeroAddress) {
     return {stage: "not_anchored", reason: "root_unset"};
   }
+  // The issuer block is about the clone the FACTORY resolved (never the artifact's claim), so it is
+  // read for every outcome below that has a resolved clone. The promise never rejects.
+  const issuerPromise = resolveIssuer(resolvedClone, deps);
+  const withIssuer = async (result: Extract<RecordVerifyStage, {stage: "not_anchored" | "verified"}>): Promise<RecordVerifyStage> => {
+    const issuer = await issuerPromise;
+    return issuer ? {...result, issuer} : result;
+  };
   if (resolvedClone.toLowerCase() !== claimedContract.toLowerCase()) {
-    return {stage: "not_anchored", reason: "issuer_mismatch"};
+    return withIssuer({stage: "not_anchored", reason: "issuer_mismatch"});
   }
 
   let chainRecordType: string;
@@ -134,10 +197,10 @@ export async function verifyPresentedRecordArtifact(
   }
 
   if (chainRecordType.toLowerCase() !== recordTypeKey(claimedRecordType).toLowerCase()) {
-    return {stage: "not_anchored", reason: "record_type_mismatch"};
+    return withIssuer({stage: "not_anchored", reason: "record_type_mismatch"});
   }
   if (issuedByAddr.toLowerCase() !== claimedOperator.toLowerCase()) {
-    return {stage: "not_anchored", reason: "operator_mismatch"};
+    return withIssuer({stage: "not_anchored", reason: "operator_mismatch"});
   }
 
   // "active"/"revoked" only - never draft/issuing/error, which have no meaning for a presented
@@ -147,7 +210,7 @@ export async function verifyPresentedRecordArtifact(
   const validity = assertNotPending(
     computeRecordValidity(derivedStatus, leafValue(artifact, "validFrom"), leafValue(artifact, "validUntil")),
   );
-  return {stage: "verified", issuerClone: resolvedClone.toLowerCase(), recordType: claimedRecordType, validity};
+  return withIssuer({stage: "verified", issuerClone: resolvedClone.toLowerCase(), recordType: claimedRecordType, validity});
 }
 
 /** `computeRecordValidity` is a general six-way function; this call site can only ever produce

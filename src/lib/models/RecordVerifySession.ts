@@ -35,6 +35,11 @@ export interface RecordVerifyStoredResult {
    * validFrom was disclosed and is still in the future, never collapsed into `expired`. See
    * `lib/records/validity.ts`'s `computeRecordValidity`, the single shared decision procedure. */
   validity?: "valid" | "expired" | "revoked" | "hidden" | "not_yet_valid";
+  /** WP4.21: informational block naming the registered entity behind the issuing clone (`vet-public-api.yaml`
+   * `RecordIssuer`). Additive and optional - every session stored before this field existed has none. A
+   * kind grants nothing, so this never affects `stage` or `validity`. `kinds` is `[]` for an unregistered
+   * owner and `null` when the registry read failed (UNKNOWN, never "not registered"). */
+  issuer?: {account: string; kinds: string[] | null; registered: boolean};
   disclosedKeyPaths?: string[];
   /** Plan section 11.2 V6's own explicit ask: "disclosed fields, hidden count". Set unconditionally
    * alongside `disclosedKeyPaths` regardless of `stage` (same reasoning: even a `crypto_failed` or
@@ -61,6 +66,17 @@ export interface RecordVerifySessionDoc {
   createdAt: Date;
 }
 
+// `kinds` is Mixed on purpose: a Mongoose array path cannot hold the explicit `null` ("registry read
+// failed") apart from "absent"/[] without defaults rewriting it.
+const recordIssuerSchema = new Schema(
+  {
+    account: {type: String, required: true},
+    kinds: {type: Schema.Types.Mixed, default: null},
+    registered: {type: Boolean, required: true},
+  },
+  {_id: false},
+);
+
 const recordVerifyStoredResultSchema = new Schema<RecordVerifyStoredResult>(
   {
     stage: {type: String, required: true, enum: ["crypto_failed", "chain_unreadable", "not_anchored", "wrong_chain", "verified"]},
@@ -68,6 +84,7 @@ const recordVerifyStoredResultSchema = new Schema<RecordVerifyStoredResult>(
     issuerClone: String,
     recordType: String,
     validity: {type: String, enum: ["valid", "expired", "revoked", "hidden", "not_yet_valid"]},
+    issuer: {type: recordIssuerSchema, default: undefined},
     disclosedKeyPaths: [String],
     hiddenCount: Number,
   },

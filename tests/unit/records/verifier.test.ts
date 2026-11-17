@@ -2,11 +2,15 @@ import {describe, expect, it} from "vitest";
 import {recordTypeKey} from "@dogtag/standard";
 import {buildVaccinationRecord, recomputeRecordLeafHash} from "@/lib/records/build";
 import {verifyPresentedRecordArtifact, type RecordChainDeps} from "@/lib/records/verifier";
+import type {EntityKindsRead} from "@/lib/chainRead";
+import {validateAgainstVetSpec} from "../helpers/vetSpec";
 
 const CHAIN_ID = 1337;
 const CLONE = "0x0000000000000000000000000000000000c10be5";
 const OPERATOR = "0x0000000000000000000000000000000000000ff1";
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
+const OWNER = "0x00000000000000000000000000000000000000a1";
+const VET_ISSUER = {account: OWNER, kinds: ["VET"], registered: true};
 
 function buildArtifact(overrides: {validFrom?: string; validUntil?: string; chainId?: number; mask?: string[]} = {}) {
   const {leaves, root} = buildVaccinationRecord(
@@ -42,6 +46,8 @@ function agreeingDeps(): RecordChainDeps {
     readRecordTypeOf: async () => recordTypeKey("VACCINATION"),
     readIsValidRoot: async () => true,
     readIssuedBy: async () => OPERATOR,
+    readCloneOwner: async () => OWNER,
+    readOwnerKinds: async () => ({status: "registered", mask: 2n}),
   };
 }
 
@@ -86,7 +92,7 @@ describe("verifyPresentedRecordArtifact", () => {
     const artifact = buildArtifact();
     const deps: RecordChainDeps = {...agreeingDeps(), readRootIssuer: async () => "0x00000000000000000000000000000000000ff1ce"};
     const result = await verifyPresentedRecordArtifact(artifact, deps, CHAIN_ID);
-    expect(result).toEqual({stage: "not_anchored", reason: "issuer_mismatch"});
+    expect(result).toEqual({stage: "not_anchored", reason: "issuer_mismatch", issuer: VET_ISSUER});
   });
 
   it("chain_unreadable: the parallel recordTypeOf/isValid/issuedBy read throws after rootIssuer resolves", async () => {
@@ -100,21 +106,21 @@ describe("verifyPresentedRecordArtifact", () => {
     const artifact = buildArtifact();
     const deps: RecordChainDeps = {...agreeingDeps(), readRecordTypeOf: async () => `0x${"9".repeat(64)}`};
     const result = await verifyPresentedRecordArtifact(artifact, deps, CHAIN_ID);
-    expect(result).toEqual({stage: "not_anchored", reason: "record_type_mismatch"});
+    expect(result).toEqual({stage: "not_anchored", reason: "record_type_mismatch", issuer: VET_ISSUER});
   });
 
   it("not_anchored/operator_mismatch: issuedBy disagrees with the artifact's own claimed issuer.operator", async () => {
     const artifact = buildArtifact();
     const deps: RecordChainDeps = {...agreeingDeps(), readIssuedBy: async () => "0x0000000000000000000000000000000000000bad"};
     const result = await verifyPresentedRecordArtifact(artifact, deps, CHAIN_ID);
-    expect(result).toEqual({stage: "not_anchored", reason: "operator_mismatch"});
+    expect(result).toEqual({stage: "not_anchored", reason: "operator_mismatch", issuer: VET_ISSUER});
   });
 
   it("verified/revoked: isValid is false once every other check agrees", async () => {
     const artifact = buildArtifact();
     const deps: RecordChainDeps = {...agreeingDeps(), readIsValidRoot: async () => false};
     const result = await verifyPresentedRecordArtifact(artifact, deps, CHAIN_ID);
-    expect(result).toEqual({stage: "verified", issuerClone: CLONE, recordType: "VACCINATION", validity: "revoked"});
+    expect(result).toEqual({stage: "verified", issuerClone: CLONE, recordType: "VACCINATION", validity: "revoked", issuer: VET_ISSUER});
   });
 
   // Grade round 2 (coordinator addendum, pinning leaf-commitment.md section 16's ordered
@@ -131,19 +137,19 @@ describe("verifyPresentedRecordArtifact", () => {
     const artifact = buildArtifact({validFrom: "1999-01-01", validUntil: "2000-01-01"});
     const deps: RecordChainDeps = {...agreeingDeps(), readIsValidRoot: async () => false};
     const result = await verifyPresentedRecordArtifact(artifact, deps, CHAIN_ID);
-    expect(result).toEqual({stage: "verified", issuerClone: CLONE, recordType: "VACCINATION", validity: "revoked"});
+    expect(result).toEqual({stage: "verified", issuerClone: CLONE, recordType: "VACCINATION", validity: "revoked", issuer: VET_ISSUER});
   });
 
   it("verified/valid: every check agrees, isValid true, validUntil in the future", async () => {
     const artifact = buildArtifact({validUntil: "2099-01-01"});
     const result = await verifyPresentedRecordArtifact(artifact, agreeingDeps(), CHAIN_ID);
-    expect(result).toEqual({stage: "verified", issuerClone: CLONE, recordType: "VACCINATION", validity: "valid"});
+    expect(result).toEqual({stage: "verified", issuerClone: CLONE, recordType: "VACCINATION", validity: "valid", issuer: VET_ISSUER});
   });
 
   it("verified/expired: every check agrees, isValid true, validUntil in the past", async () => {
     const artifact = buildArtifact({validUntil: "2000-01-01"});
     const result = await verifyPresentedRecordArtifact(artifact, agreeingDeps(), CHAIN_ID);
-    expect(result).toEqual({stage: "verified", issuerClone: CLONE, recordType: "VACCINATION", validity: "expired"});
+    expect(result).toEqual({stage: "verified", issuerClone: CLONE, recordType: "VACCINATION", validity: "expired", issuer: VET_ISSUER});
   });
 
   // Grade round 1 D1 (MAJOR): validUntil is an ordinary maskable leaf - masking it through the REAL
@@ -156,13 +162,13 @@ describe("verifyPresentedRecordArtifact", () => {
   it("verified/hidden: validUntil is masked (moved to obfuscatedLeafHashes) - reports 'hidden', never a guessed 'valid'", async () => {
     const artifact = buildArtifact({validUntil: "2000-01-01", mask: ["validUntil"]}); // 2000-01-01 would read 'expired' if disclosed - proves this isn't a lucky future date
     const result = await verifyPresentedRecordArtifact(artifact, agreeingDeps(), CHAIN_ID);
-    expect(result).toEqual({stage: "verified", issuerClone: CLONE, recordType: "VACCINATION", validity: "hidden"});
+    expect(result).toEqual({stage: "verified", issuerClone: CLONE, recordType: "VACCINATION", validity: "hidden", issuer: VET_ISSUER});
   });
 
   it("verified/hidden: validFrom is masked - reports 'hidden' even though validUntil alone is disclosed and in the future", async () => {
     const artifact = buildArtifact({validUntil: "2099-01-01", mask: ["validFrom"]});
     const result = await verifyPresentedRecordArtifact(artifact, agreeingDeps(), CHAIN_ID);
-    expect(result).toEqual({stage: "verified", issuerClone: CLONE, recordType: "VACCINATION", validity: "hidden"});
+    expect(result).toEqual({stage: "verified", issuerClone: CLONE, recordType: "VACCINATION", validity: "hidden", issuer: VET_ISSUER});
   });
 
   // Grade round 1 D1's second (folded-in) case: validFrom was never consulted at all before this
@@ -172,7 +178,7 @@ describe("verifyPresentedRecordArtifact", () => {
   it("verified/not_yet_valid: validFrom is disclosed and still in the future - never collapsed into 'expired' or 'valid'", async () => {
     const artifact = buildArtifact({validFrom: "2099-01-01", validUntil: "2099-12-31"});
     const result = await verifyPresentedRecordArtifact(artifact, agreeingDeps(), CHAIN_ID);
-    expect(result).toEqual({stage: "verified", issuerClone: CLONE, recordType: "VACCINATION", validity: "not_yet_valid"});
+    expect(result).toEqual({stage: "verified", issuerClone: CLONE, recordType: "VACCINATION", validity: "not_yet_valid", issuer: VET_ISSUER});
   });
 
   it("case-insensitive address comparisons: an all-uppercase rootIssuer response still agrees with a lowercase claim", async () => {
@@ -182,3 +188,90 @@ describe("verifyPresentedRecordArtifact", () => {
     expect(result.stage).toBe("verified");
   });
 });
+
+describe("verifyPresentedRecordArtifact - issuer block (WP4.21)", () => {
+  const withKinds = (read: EntityKindsRead | Error): RecordChainDeps => ({
+    ...agreeingDeps(),
+    readOwnerKinds: async () => {
+      if (read instanceof Error) throw read;
+      return read;
+    },
+  });
+  const specValid = (result: object) => {
+    const {valid, errors} = validateAgainstVetSpec("RecordVerifyResult", result);
+    expect(errors).toBe("");
+    expect(valid).toBe(true);
+  };
+
+  it("vet issuer: kinds [VET], registered", async () => {
+    const result = await verifyPresentedRecordArtifact(buildArtifact(), withKinds({status: "registered", mask: 2n}), CHAIN_ID);
+    expect(result).toMatchObject({stage: "verified", validity: "valid", issuer: {account: OWNER, kinds: ["VET"], registered: true}});
+    specValid(result);
+  });
+
+  it("government issuer: kinds [GOVERNMENT], and the record still verifies (a kind grants nothing)", async () => {
+    const result = await verifyPresentedRecordArtifact(buildArtifact(), withKinds({status: "registered", mask: 4n}), CHAIN_ID);
+    expect(result).toMatchObject({stage: "verified", validity: "valid", issuer: {account: OWNER, kinds: ["GOVERNMENT"], registered: true}});
+    specValid(result);
+  });
+
+  it("non-vet issuer (groomer + daycare): kinds in bit order, and the stage and validity are unchanged", async () => {
+    const result = await verifyPresentedRecordArtifact(buildArtifact(), withKinds({status: "registered", mask: 8n | 32n}), CHAIN_ID);
+    expect(result).toMatchObject({stage: "verified", validity: "valid", issuer: {kinds: ["GROOMER", "DAYCARE"], registered: true}});
+    specValid(result);
+  });
+
+  it("unregistered owner: kinds [], registered false, and the record still verifies", async () => {
+    const result = await verifyPresentedRecordArtifact(buildArtifact(), withKinds({status: "not_registered"}), CHAIN_ID);
+    expect(result).toMatchObject({stage: "verified", validity: "valid", issuer: {account: OWNER, kinds: [], registered: false}});
+    specValid(result);
+  });
+
+  it("registry unreadable: kinds null (never []), and stage and validity are exactly what a readable registry gives", async () => {
+    const readable = await verifyPresentedRecordArtifact(buildArtifact(), withKinds({status: "registered", mask: 2n}), CHAIN_ID);
+    for (const unreadable of [{status: "unreadable"} as const, new Error("RPC timeout")]) {
+      const result = await verifyPresentedRecordArtifact(buildArtifact(), withKinds(unreadable), CHAIN_ID);
+      expect(result).toMatchObject({stage: "verified", validity: "valid", issuer: {account: OWNER, kinds: null, registered: false}});
+      expect((result as {stage: string}).stage).toBe((readable as {stage: string}).stage);
+      specValid(result);
+    }
+  });
+
+  it("the clone owner unreadable: no issuer block at all, and the check itself is unaffected", async () => {
+    const deps: RecordChainDeps = {...agreeingDeps(), readCloneOwner: async () => Promise.reject(new Error("RPC timeout"))};
+    const result = await verifyPresentedRecordArtifact(buildArtifact(), deps, CHAIN_ID);
+    expect(result).toEqual({stage: "verified", issuerClone: CLONE, recordType: "VACCINATION", validity: "valid"});
+    specValid(result);
+  });
+
+  it("presence rule: absent on root_unset and chain_unreadable, present on every other not_anchored reason", async () => {
+    const unset = await verifyPresentedRecordArtifact(buildArtifact(), {...agreeingDeps(), readRootIssuer: async () => ZERO_ADDRESS}, CHAIN_ID);
+    expect(unset).toEqual({stage: "not_anchored", reason: "root_unset"});
+    const unreadable = await verifyPresentedRecordArtifact(
+      buildArtifact(),
+      {...agreeingDeps(), readIsValidRoot: async () => Promise.reject(new Error("RPC timeout"))},
+      CHAIN_ID,
+    );
+    expect(unreadable).toEqual({stage: "chain_unreadable"});
+    const mismatch = await verifyPresentedRecordArtifact(
+      buildArtifact(),
+      {...agreeingDeps(), readIssuedBy: async () => "0x0000000000000000000000000000000000000bad"},
+      CHAIN_ID,
+    );
+    expect(mismatch).toMatchObject({stage: "not_anchored", reason: "operator_mismatch", issuer: VET_ISSUER});
+    specValid(mismatch);
+  });
+
+  it("the issuer is the owner of the clone the FACTORY resolved, never the artifact's claimed clone", async () => {
+    const asked: string[] = [];
+    const deps: RecordChainDeps = {
+      ...agreeingDeps(),
+      readRootIssuer: async () => "0x00000000000000000000000000000000000ff1ce",
+      readCloneOwner: async (clone) => (asked.push(clone), OWNER),
+    };
+    const result = await verifyPresentedRecordArtifact(buildArtifact(), deps, CHAIN_ID);
+    expect(result).toMatchObject({stage: "not_anchored", reason: "issuer_mismatch", issuer: {account: OWNER}});
+    expect(asked).toEqual(["0x00000000000000000000000000000000000ff1ce"]);
+  });
+});
+

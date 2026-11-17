@@ -2,8 +2,8 @@ import {connectToDatabase} from "@/lib/db";
 import {RecordVerifySession, type RecordVerifySessionDoc, type RecordVerifyStoredResult} from "@/lib/models/RecordVerifySession";
 import {recordArtifactWireSchema} from "@/lib/schemas/recordArtifactWire";
 import {verifyPresentedRecordArtifact, type RecordVerifyStage} from "@/lib/records/verifier";
-import {readIsValidRoot, readIssuedBy, readRecordTypeOf, readRootIssuer} from "@/lib/chainRead";
-import {requireEnv} from "@/lib/env";
+import {readCloneOwner, readEntityKindsIfConfigured, readIsValidRoot, readIssuedBy, readRecordTypeOf, readRootIssuer} from "@/lib/chainRead";
+import {getServerEnv, requireEnv} from "@/lib/env";
 import {roax} from "@/lib/chains";
 import {hexToken32} from "@/lib/schemas/common";
 import {enforceRateLimit, errorBody, jsonWithHeaders} from "@/lib/publicApi";
@@ -15,9 +15,15 @@ function toStoredResult(stage: RecordVerifyStage): RecordVerifyStoredResult {
     case "wrong_chain":
       return {stage: stage.stage};
     case "not_anchored":
-      return {stage: "not_anchored", reason: stage.reason};
+      return {stage: "not_anchored", reason: stage.reason, ...(stage.issuer ? {issuer: stage.issuer} : {})};
     case "verified":
-      return {stage: "verified", issuerClone: stage.issuerClone, recordType: stage.recordType, validity: stage.validity};
+      return {
+        stage: "verified",
+        issuerClone: stage.issuerClone,
+        recordType: stage.recordType,
+        validity: stage.validity,
+        ...(stage.issuer ? {issuer: stage.issuer} : {}),
+      };
   }
 }
 
@@ -114,6 +120,9 @@ export async function POST(request: Request, {params}: {params: Promise<{token: 
       readRecordTypeOf: (cloneAddress, root) => readRecordTypeOf(cloneAddress as `0x${string}`, root as `0x${string}`),
       readIsValidRoot: (cloneAddress, root) => readIsValidRoot(cloneAddress as `0x${string}`, root as `0x${string}`),
       readIssuedBy: (cloneAddress, root) => readIssuedBy(cloneAddress as `0x${string}`, root as `0x${string}`),
+      readCloneOwner: (cloneAddress) => readCloneOwner(cloneAddress as `0x${string}`),
+      // WP4.21: informational only. No registry configured reads as "could not be read" (kinds null).
+      readOwnerKinds: (owner) => readEntityKindsIfConfigured(getServerEnv().ENTITY_REGISTRY_ADDRESS, owner as `0x${string}`),
     },
     roax.id,
   );

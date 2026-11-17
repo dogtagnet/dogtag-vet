@@ -34,7 +34,7 @@ vi.mock("viem", async (importOriginal) => {
   };
 });
 
-import {readCloneOwner, readEntityKinds, readRegistryVersion} from "@/lib/chainRead";
+import {readCloneOwner, readEntityKinds, readEntityKindsIfConfigured, readRegistryVersion} from "@/lib/chainRead";
 
 const REGISTRY = "0x00000000000000000000000000000000000e9157" as Address;
 const ACCOUNT = "0x0000000000000000000000000000000000000acc" as Address;
@@ -129,5 +129,19 @@ describe("readCloneOwner", () => {
   it("fails closed: an unreadable chain throws", async () => {
     chain.answers.vetOwner = {error: transportFailure()};
     await expect(readCloneOwner(CLONE)).rejects.toThrow();
+  });
+});
+
+describe("readEntityKindsIfConfigured", () => {
+  it("no registry address (or a malformed one) is unreadable and reads nothing", async () => {
+    expect(await readEntityKindsIfConfigured(undefined, ACCOUNT)).toEqual({status: "unreadable"});
+    expect(await readEntityKindsIfConfigured("", ACCOUNT)).toEqual({status: "unreadable"});
+    expect(await readEntityKindsIfConfigured("not-an-address", ACCOUNT)).toEqual({status: "unreadable"});
+    expect(chain.calls).toEqual([]);
+  });
+  it("a configured registry is read", async () => {
+    chain.answers.version = {value: 2n};
+    chain.answers.kindsOf = {value: 2n};
+    expect(await readEntityKindsIfConfigured(REGISTRY, ACCOUNT)).toEqual({status: "registered", mask: 2n});
   });
 });

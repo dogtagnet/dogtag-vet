@@ -1,5 +1,6 @@
 import {expect, test, type Page} from "@playwright/test";
 import {dogTagIdField, recordTypeKey, verifyRecordArtifact, type RecordArtifact as RecordArtifactWire} from "@dogtag/standard";
+import {getAddress} from "viem";
 import {getLastSentTxHash, resetRpcStub, setRpcReceipt, setRpcScenario} from "./rpcStub";
 
 /**
@@ -35,6 +36,8 @@ const CLONE_ADDRESS = "0x7b9bf16f0e39AdF8c38d8491F4C7E9C17E85D703"; // same lite
 const FACTORY_ADDRESS = "0x1bd279d3c9fc85eb3e4d304ee890435b6a5ca4cc"; // playwright.config.ts's own VET_ISSUER_FACTORY_ADDRESS
 const MOCK_WALLET_ADDRESS = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"; // playwright.config.ts's own NEXT_PUBLIC_E2E_MOCK_WALLET_ADDRESS default
 const ENTITY_REGISTRY_ADDRESS = "0x9b15a2df4e38547cbbbd635a4cd4531355bb4247"; // playwright.config.ts's own ENTITY_REGISTRY_ADDRESS
+const ISSUER_OWNER = "0x00000000000000000000000000000000000000a1"; // scripted lowercase; the chain read (like a real node) hands back the EIP-55 form, so expectations use ISSUER_OWNER_CHECKSUM.
+const ISSUER_OWNER_CHECKSUM = getAddress(ISSUER_OWNER); // WP4.21V: the clone's owner (`vetOwner()`) the issuer block names
 const ENTITY_ACCOUNT = "0x0000000000000000000000000000000000e47171"; // this clinic's own entity account in EntityRegistry - opaque lookup key, any well-formed address works against the stub. Python-verified 40 hex chars: len(addr)==42 including 0x.
 
 async function signInAsStaff(page: Page) {
@@ -177,6 +180,31 @@ async function exportRecord(page: Page, diseaseRowText: string): Promise<RecordA
   expect(artifact.artifactType).toBe("record");
   expect(verifyRecordArtifact(artifact)).toBe(true); // genuine before this test ever trusts it further
   return artifact;
+}
+
+/** WP4.21V - scripts the issuer reads the verify result's `issuer` block makes: the clone's owner,
+ * a version 2 registry, and (when `mask` is given) the owner's kinds mask. No `mask` leaves the
+ * owner unregistered (the stub reverts `UnknownEntity`, like a real chain). */
+async function scriptIssuer(mask?: string) {
+  await setRpcScenario("vetOwner", CLONE_ADDRESS, [], ISSUER_OWNER);
+  await setRpcScenario("version", ENTITY_REGISTRY_ADDRESS, [], "uint:2");
+  if (mask) await setRpcScenario("kindsOf", ENTITY_REGISTRY_ADDRESS, [ISSUER_OWNER], mask);
+}
+
+/** Starts a records-verify session from `/verify/records`, injects the phone's presentment of
+ * `artifact`, and returns the complete response body. */
+async function presentToVerifyPanel(page: Page, artifact: RecordArtifactWire): Promise<{result: Record<string, unknown>}> {
+  const startButton = page.getByRole("button", {name: "Start records verification"});
+  await expect(startButton).toBeEnabled({timeout: 15_000});
+  const [startRes] = await Promise.all([
+    page.waitForResponse((res) => res.url().includes("/api/verify/records/start") && res.request().method() === "POST"),
+    startButton.click(),
+  ]);
+  const {token} = (await startRes.json()) as {token: string};
+  await expect(page.getByText("Scan with the owner's DogTag app")).toBeVisible({timeout: 15_000});
+  const completeRes = await page.request.post(`/v/${token}/complete`, {data: {artifact}});
+  expect(completeRes.status()).toBe(200);
+  return completeRes.json();
 }
 
 test.beforeEach(async ({page}) => {
@@ -328,6 +356,7 @@ test.describe("vaccination record lifecycle (plan section 11.2 V8)", () => {
     const artifact = await exportRecord(page, "Rabies");
     expect(artifact.root).toBe(root);
 
+    await scriptIssuer("2"); // WP4.21V: the clone's owner is registered as a vet
     // Verify session result: the staff half driven for real (start a session, see the QR-bearing
     // panel render); the phone's own presentment is injected directly against the real running
     // route - see this file's header comment for why that boundary is honest, not a shortcut.
@@ -353,6 +382,48 @@ test.describe("vaccination record lifecycle (plan section 11.2 V8)", () => {
     // this just never checked. Bite: deleting the hiddenCount paragraph from
     // VerifyRecordsPanel.tsx turns exactly this assertion red.
     await expect(page.getByText(/0 fields hidden/)).toBeVisible();
+
+    // WP4.21V: the issuer block - who issued it and as what - and no warning for a registered vet.
+    expect(completeBody.result.issuer).toEqual({account: ISSUER_OWNER_CHECKSUM, kinds: ["VET"], registered: true});
+    const issuer = page.getByTestId("record-issuer");
+    await expect(issuer.getByText("Issued by")).toBeVisible();
+    await expect(issuer.locator(`[title="${ISSUER_OWNER_CHECKSUM}"]`).first()).toBeVisible(); // MonoValue truncates the text; the full address is its title
+    await expect(issuer.getByText("Vet", {exact: true})).toBeVisible();
+    await expect(page.getByText("Check who issued this record")).toHaveCount(0);
+  });
+
+  test("a record from a clone whose owner is NOT a vet still verifies Valid, with a warning about the issuer (kinds are a record only)", async ({page}) => {
+    test.setTimeout(150_000);
+    const petId = await createPetWithDogTag(page, "Pepper", "80004");
+    await issueAndConfirmRabiesRecord(page, petId, "2099-01-01");
+    const artifact = await exportRecord(page, "Rabies");
+
+    // Groomer + Daycare (8 + 32): registered, but neither a vet nor the DogTag verifier.
+    await scriptIssuer("40");
+    await page.goto("/verify/records");
+    const groomer = await presentToVerifyPanel(page, artifact);
+    expect(groomer.result).toMatchObject({stage: "verified", validity: "valid", issuer: {account: ISSUER_OWNER_CHECKSUM, kinds: ["GROOMER", "DAYCARE"], registered: true}});
+    await expect(page.getByText("Valid", {exact: true})).toBeVisible({timeout: 15_000});
+    const issuer = page.getByTestId("record-issuer");
+    await expect(issuer.getByText("Groomer", {exact: true})).toBeVisible();
+    await expect(issuer.getByText("Daycare", {exact: true})).toBeVisible();
+    await expect(issuer.getByText("Check who issued this record")).toBeVisible();
+    await expect(issuer.getByText(/registered, but not as a vet or as the DogTag verifier/)).toBeVisible();
+
+    // An owner nobody registered: still Valid, shown as "Not registered", with the warning.
+    await resetRpcStub();
+    await setRpcScenario("isActive", ENTITY_REGISTRY_ADDRESS, [ENTITY_ACCOUNT], true);
+    await setRpcScenario("operators", CLONE_ADDRESS, [MOCK_WALLET_ADDRESS], true);
+    await setRpcScenario("rootIssuer", FACTORY_ADDRESS, [artifact.root], CLONE_ADDRESS);
+    await setRpcScenario("recordTypeOf", CLONE_ADDRESS, [artifact.root], recordTypeKey("VACCINATION"));
+    await setRpcScenario("isValid", CLONE_ADDRESS, [artifact.root], true);
+    await setRpcScenario("issuedBy", CLONE_ADDRESS, [artifact.root], MOCK_WALLET_ADDRESS);
+    await scriptIssuer();
+    await page.getByRole("button", {name: "Verify another"}).click();
+    const unregistered = await presentToVerifyPanel(page, artifact);
+    expect(unregistered.result).toMatchObject({stage: "verified", validity: "valid", issuer: {kinds: [], registered: false}});
+    await expect(issuer.getByText("Not registered", {exact: true})).toBeVisible({timeout: 15_000});
+    await expect(issuer.getByText(/not registered as a vet or as the DogTag verifier/)).toBeVisible();
   });
 
   test("a record revoked after export still verifies against the LIVE chain, not the stale export: staff sees Revoked, not Valid", async ({page}) => {

@@ -17,7 +17,7 @@ import {roax} from "@/lib/chains";
 vi.mock("@/auth", () => ({auth: vi.fn()}));
 vi.mock("@/lib/chainRead", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/chainRead")>();
-  return {...actual, readRootIssuer: vi.fn(), readRecordTypeOf: vi.fn(), readIsValidRoot: vi.fn(), readIssuedBy: vi.fn()};
+  return {...actual, readRootIssuer: vi.fn(), readRecordTypeOf: vi.fn(), readIsValidRoot: vi.fn(), readIssuedBy: vi.fn(), readCloneOwner: vi.fn(), readEntityKindsIfConfigured: vi.fn()};
 });
 
 import {auth} from "@/auth";
@@ -31,6 +31,8 @@ import {POST as completePOST} from "@/app/v/[token]/complete/route";
 import {GET as pollGET} from "@/app/api/verify/records/[sessionId]/route";
 
 process.env.VET_ISSUER_FACTORY_ADDRESS = "0x0000000000000000000000000000000000fac10e";
+process.env.ENTITY_REGISTRY_ADDRESS = "0x00000000000000000000000000000000000e9157";
+const OWNER = "0x00000000000000000000000000000000000000a1";
 const CLONE = "0x0000000000000000000000000000000000c10be5";
 const OPERATOR = "0x0000000000000000000000000000000000000ff1";
 
@@ -56,7 +58,15 @@ afterEach(async () => {
   vi.mocked(chainRead.readRecordTypeOf).mockReset();
   vi.mocked(chainRead.readIsValidRoot).mockReset();
   vi.mocked(chainRead.readIssuedBy).mockReset();
+  vi.mocked(chainRead.readCloneOwner).mockReset();
+  vi.mocked(chainRead.readEntityKindsIfConfigured).mockReset();
 });
+
+/** The WP4.21 issuer reads: the clone owner, and what the registry says about them. */
+function mockIssuer(kinds: Awaited<ReturnType<typeof chainRead.readEntityKindsIfConfigured>> = {status: "registered", mask: 2n}): void {
+  vi.mocked(chainRead.readCloneOwner).mockResolvedValue(OWNER);
+  vi.mocked(chainRead.readEntityKindsIfConfigured).mockResolvedValue(kinds);
+}
 
 async function withStaffSession(): Promise<void> {
   const staff = await Staff.create({email: `staff-${randomUUID()}@example.com`, role: "staff", firstName: "Jane", lastName: "Tan"});
@@ -115,6 +125,7 @@ describe("records verify mode (plan section 11.2 V6)", () => {
     vi.mocked(chainRead.readRecordTypeOf).mockResolvedValue(recordTypeKey("VACCINATION"));
     vi.mocked(chainRead.readIsValidRoot).mockResolvedValue(true);
     vi.mocked(chainRead.readIssuedBy).mockResolvedValue(OPERATOR);
+    mockIssuer();
 
     const completeRes = await completePOST(
       new Request(`https://vet.example.com/v/${token}/complete`, {
@@ -136,6 +147,7 @@ describe("records verify mode (plan section 11.2 V6)", () => {
     expect(pollBody.result.stage).toBe("verified");
     expect(pollBody.result.validity).toBe("valid");
     expect(pollBody.result.disclosedKeyPaths).toContain("targetDisease");
+    expect(pollBody.result.issuer).toEqual({account: OWNER, kinds: ["VET"], registered: true});
 
     // One-shot: a repeat complete is refused.
     const completeAgain = await completePOST(
@@ -158,6 +170,7 @@ describe("records verify mode (plan section 11.2 V6)", () => {
     vi.mocked(chainRead.readRecordTypeOf).mockResolvedValue(recordTypeKey("VACCINATION"));
     vi.mocked(chainRead.readIsValidRoot).mockResolvedValue(false);
     vi.mocked(chainRead.readIssuedBy).mockResolvedValue(OPERATOR);
+    mockIssuer();
 
     const completeRes = await completePOST(
       new Request(`https://vet.example.com/v/${token}/complete`, {
@@ -173,6 +186,7 @@ describe("records verify mode (plan section 11.2 V6)", () => {
       issuerClone: CLONE,
       recordType: "VACCINATION",
       validity: "revoked",
+      issuer: {account: OWNER, kinds: ["VET"], registered: true},
       disclosedKeyPaths: expect.any(Array),
       hiddenCount: 0,
     });
@@ -187,6 +201,7 @@ describe("records verify mode (plan section 11.2 V6)", () => {
     vi.mocked(chainRead.readRecordTypeOf).mockResolvedValue(recordTypeKey("VACCINATION"));
     vi.mocked(chainRead.readIsValidRoot).mockResolvedValue(true);
     vi.mocked(chainRead.readIssuedBy).mockResolvedValue(OPERATOR);
+    mockIssuer();
 
     // Same fixture as buildPresentableArtifact, but MASK two genuinely-maskable leaves
     // (vaccineManufacturer, batchLotNumber - neither is one of the seven non-maskable keyPaths) by
@@ -247,5 +262,74 @@ describe("records verify mode (plan section 11.2 V6)", () => {
       tokenParams(unknown),
     );
     expect(completeRes.status).toBe(404);
+  });
+
+  describe("issuer block (WP4.21) through the route and the session store", () => {
+    async function presentAndPoll(): Promise<{complete: {result: Record<string, unknown>}; poll: {result: Record<string, unknown>}}> {
+      await withStaffSession();
+      const startRes = await startPOST(new Request("https://vet.example.com/api/verify/records/start", {method: "POST"}));
+      const {sessionId, token} = (await startRes.json()) as {sessionId: string; token: string};
+      vi.mocked(chainRead.readRootIssuer).mockResolvedValue(CLONE);
+      vi.mocked(chainRead.readRecordTypeOf).mockResolvedValue(recordTypeKey("VACCINATION"));
+      vi.mocked(chainRead.readIsValidRoot).mockResolvedValue(true);
+      vi.mocked(chainRead.readIssuedBy).mockResolvedValue(OPERATOR);
+      const completeRes = await completePOST(
+        new Request(`https://vet.example.com/v/${token}/complete`, {
+          method: "POST",
+          headers: {"content-type": "application/json"},
+          body: JSON.stringify({artifact: buildPresentableArtifact()}),
+        }),
+        tokenParams(token),
+      );
+      const complete = await completeRes.json();
+      const pollRes = await pollGET(new Request(`https://vet.example.com/api/verify/records/${sessionId}`), sessionParams(sessionId));
+      return {complete, poll: await pollRes.json()};
+    }
+
+    it("a government owner persists and is served as kinds [GOVERNMENT]; the result is still Valid", async () => {
+      vi.mocked(chainRead.readCloneOwner).mockResolvedValue(OWNER);
+      vi.mocked(chainRead.readEntityKindsIfConfigured).mockResolvedValue({status: "registered", mask: 4n});
+      const {complete, poll} = await presentAndPoll();
+      expect(complete.result).toMatchObject({stage: "verified", validity: "valid", issuer: {account: OWNER, kinds: ["GOVERNMENT"], registered: true}});
+      expect(poll.result.issuer).toEqual({account: OWNER, kinds: ["GOVERNMENT"], registered: true});
+    });
+
+    it("an unregistered owner persists as kinds [] (not null)", async () => {
+      vi.mocked(chainRead.readCloneOwner).mockResolvedValue(OWNER);
+      vi.mocked(chainRead.readEntityKindsIfConfigured).mockResolvedValue({status: "not_registered"});
+      const {poll} = await presentAndPoll();
+      expect(poll.result.issuer).toEqual({account: OWNER, kinds: [], registered: false});
+    });
+
+    it("an unreadable registry persists as kinds null (never []), and the record is still Valid", async () => {
+      vi.mocked(chainRead.readCloneOwner).mockResolvedValue(OWNER);
+      vi.mocked(chainRead.readEntityKindsIfConfigured).mockResolvedValue({status: "unreadable"});
+      const {complete, poll} = await presentAndPoll();
+      expect(complete.result).toMatchObject({stage: "verified", validity: "valid", issuer: {account: OWNER, kinds: null, registered: false}});
+      expect(poll.result.issuer).toEqual({account: OWNER, kinds: null, registered: false});
+      expect(poll.result.validity).toBe("valid");
+    });
+
+    it("an unreadable clone owner omits the issuer block and leaves the result Valid", async () => {
+      vi.mocked(chainRead.readCloneOwner).mockRejectedValue(new Error("RPC timeout"));
+      const {complete, poll} = await presentAndPoll();
+      expect(complete.result).toMatchObject({stage: "verified", validity: "valid"});
+      expect(complete.result).not.toHaveProperty("issuer");
+      expect(poll.result).not.toHaveProperty("issuer");
+    });
+
+    it("a session stored before WP4.21 (no issuer field) still polls fine", async () => {
+      await withStaffSession();
+      const created = await RecordVerifySession.create({
+        token: "b".repeat(32),
+        exp: Math.floor(Date.now() / 1000) + 600,
+        status: "presented",
+        result: {stage: "verified", issuerClone: CLONE, recordType: "VACCINATION", validity: "valid", disclosedKeyPaths: [], hiddenCount: 0},
+      });
+      const res = await pollGET(new Request("https://vet.example.com/x"), sessionParams(created.sessionId));
+      const body = await res.json();
+      expect(body.result.stage).toBe("verified");
+      expect(body.result).not.toHaveProperty("issuer");
+    });
   });
 });

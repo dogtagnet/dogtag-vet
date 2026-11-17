@@ -210,6 +210,16 @@ export async function readEntityKinds(entityRegistryAddress: Address, account: A
   }
 }
 
+/** {@link readEntityKinds} for a registry that may not be configured: no (or malformed) address
+ * is `unreadable` - the kinds are unknown, which every caller already treats as "no information". */
+export async function readEntityKindsIfConfigured(
+  entityRegistryAddress: string | undefined,
+  account: Address,
+): Promise<EntityKindsRead> {
+  if (!entityRegistryAddress || !/^0x[0-9a-fA-F]{40}$/.test(entityRegistryAddress)) return {status: "unreadable"};
+  return readEntityKinds(entityRegistryAddress as Address, account);
+}
+
 /** `EntityRegistry.canVerify(purpose, relayer)` - `purpose` is hashed the same way `purposeToBytes32`
  * hashes it everywhere else in this repo (never re-derived ad hoc at a call site). */
 export async function readCanVerify(

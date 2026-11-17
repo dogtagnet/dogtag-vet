@@ -1,6 +1,7 @@
 "use client";
 
 import {useEffect, useRef, useState} from "react";
+import {AddressChip} from "@/components/ui/AddressChip";
 import {Banner} from "@/components/ui/Banner";
 import {Button} from "@/components/ui/controls";
 import {FormSection} from "@/components/ui/FormSection";
@@ -23,6 +24,37 @@ interface SessionPoll {
   status: RecordVerifySessionStatus;
   result?: RecordVerifyStoredResult;
   exp: number;
+}
+
+const KIND_LABELS: Record<string, string> = {
+  VET: "Vet",
+  GOVERNMENT: "Government",
+  GROOMER: "Groomer",
+  BOARDING: "Boarding",
+  DAYCARE: "Daycare",
+};
+
+/** WP4.21: what the issuer block says, as display data. Kinds are a record only - this never
+ * changes the verdict above it; `warn` is purely "worth a second look", never "invalid". An id this
+ * build does not know is shown as-is (a client ignores nothing it can still print). */
+function issuerDisplay(issuer: NonNullable<RecordVerifyStoredResult["issuer"]>): {
+  kindLabels: string[] | null;
+  warning: string | null;
+  note: string | null;
+} {
+  if (issuer.kinds === null) {
+    return {kindLabels: null, warning: null, note: "The issuer's registry kinds could not be read right now. This does not affect the result above."};
+  }
+  const kindLabels = issuer.kinds.map((k) => KIND_LABELS[k] ?? k);
+  const trusted = issuer.kinds.includes("VET") || issuer.kinds.includes("GOVERNMENT");
+  if (trusted) return {kindLabels, warning: null, note: null};
+  return {
+    kindLabels,
+    warning: issuer.registered
+      ? "The issuer of this record is registered, but not as a vet or as the DogTag verifier. The record itself checked out - this is about who issued it."
+      : "The issuer of this record is not registered as a vet or as the DogTag verifier. The record itself checked out - this is about who issued it.",
+    note: null,
+  };
 }
 
 /** Never a bare true/false - mirrors `VerifyRedactedPanel.tsx`'s own `stageDisplay` precedent
@@ -88,6 +120,32 @@ function stageDisplay(result: RecordVerifyStoredResult): {tone: StatusTone; labe
       return {tone: "ok", label: "Valid", explanation: "This record is genuine, currently valid, and has not been revoked."};
     }
   }
+}
+
+function IssuerBlock({issuer}: {issuer: NonNullable<RecordVerifyStoredResult["issuer"]>}) {
+  const {kindLabels, warning, note} = issuerDisplay(issuer);
+  return (
+    <div className="space-y-2" data-testid="record-issuer">
+      <div>
+        <p className="mb-1 text-caption text-ink-faint">Issued by</p>
+        <AddressChip address={issuer.account} chain="roax" />
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-caption text-ink-faint">Registered as</span>
+        {kindLabels === null && <StatusBadge tone="neutral" label="Unknown" />}
+        {kindLabels !== null && kindLabels.length === 0 && <StatusBadge tone="neutral" label="Not registered" />}
+        {kindLabels?.map((label) => (
+          <StatusBadge key={label} tone="info" label={label} />
+        ))}
+      </div>
+      {warning && (
+        <Banner tone="warn" title="Check who issued this record">
+          {warning}
+        </Banner>
+      )}
+      {note && <p className="text-caption text-ink-muted">{note}</p>}
+    </div>
+  );
 }
 
 /**
@@ -174,6 +232,7 @@ export function VerifyRecordsPanel() {
                   <MonoValue value={session.result.issuerClone} />
                 </div>
               )}
+              {session.result?.issuer && <IssuerBlock issuer={session.result.issuer} />}
               {session.result?.disclosedKeyPaths && session.result.disclosedKeyPaths.length > 0 && (
                 <div className="border-t border-border pt-4">
                   <h4 className="mb-2 text-caption font-medium uppercase tracking-wide text-ink-faint">What was disclosed</h4>
