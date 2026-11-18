@@ -51,7 +51,7 @@ tags:
       WP4.21 - the owner's side of the provider network: appointment requests, invites for listed businesses that have not joined, APNs push devices, notification settings and owner data erasure. Wallet-authenticated with the same `DocumentBearer` session as `mobile-documents` (`POST /api/mobile/v1/auth/challenge` then `.../auth/session`); no new typed-data struct.
   - name: business-public
     description: |-
-      WP4.21 - the pages a business reaches from a DogTag email: see and answer an appointment request, and stop all Dog Tag emails. Unauthenticated; the 32-byte random token in the URL is the credential and is stored only as a hash.
+      WP4.21 - the pages reached from a link in a Dog Tag email: a business sees and answers an appointment request, and the holder of an address stops the Dog Tag app's emails to it. Unauthenticated; the unguessable 32 byte token in the URL is the credential and is stored only as a hash.
   - name: mobile-documents
     description: |-
       WP4.20 - the DogTag mobile document flow: wallet-signed authentication, submitting a document for DogTag verification, uploading the file, tracking status and pulling the issued record. The ONLY non-public (signature- or bearer-authenticated) and mutating routes in this spec. Normative typed-data structs: `DocumentSubmissionBlock`, `DocumentAccessBlock`; vectors: `specs/mobile-document-vectors.json`.
@@ -618,12 +618,19 @@ paths:
         WP4.21. The owner asks one provider (`ProviderRow.id`) for a service on given days. DogTag
         emails the business once with the owner's first name, the dog's name, the service, the days
         and time of day, a reply link and a stop link (see the `business-public` routes); the owner's
-        email address and phone are never in that email. A provider with no contact email on file
-        gets `queued_for_staff` instead and the DogTag staff follow up.
+        email address and phone are never in that email.
+
+        A provider whose `acceptsRequests` is false (no contact email on file, or the business
+        opted out) is refused with `provider_not_accepting`. Otherwise the request is recorded as
+        `sent`: the email is on its way. It is `queued_for_staff` instead, and the DogTag staff
+        follow up, when DogTag does not email the business after all: the business has already
+        received 3 request emails in the last 24 hours (known at once, so the response already
+        says `queued_for_staff`), or the mail server keeps refusing the message (the status changes
+        later).
 
         Limits (all enforced server-side): 5 requests per wallet per 24 hours, 1 open request per
-        wallet and provider, 3 request emails per business per 24 hours. A provider whose
-        `acceptsRequests` is false is refused with `provider_not_accepting`.
+        wallet and provider (open means `sent` or `queued_for_staff`), 3 request emails per business
+        per 24 hours.
       security:
         - DocumentBearer: []
       requestBody:
@@ -890,6 +897,12 @@ paths:
         no update is sent to it until the link is followed (`emailVerified` stays false meanwhile).
         Updates go only to a confirmed address with `email: true`, and every email carries an
         unsubscribe link.
+
+        Naming the address that is already on file and still unconfirmed emails the same link
+        again. At most 3 confirmation emails go to one address, and at most 5 are sent for one
+        wallet, in 24 hours; beyond that the call is refused with 429 `rate_limited` and
+        `Retry-After`, and nothing changes. An address that has opted out of the Dog Tag app's
+        emails (`stopBusinessEmails`) is stored unverified and is not emailed.
       security:
         - DocumentBearer: []
       requestBody:
@@ -965,7 +978,7 @@ paths:
       description: |-
         WP4.21. The link in the request email. An HTML page showing the owner's first name, the
         dog's name, the service, days and time of day, with buttons to accept, decline or write back.
-        The token is 32 random bytes (base64url), stored only as a hash, so it is the credential; it
+        The token is an unguessable 32 byte value (base64url), stored only as a hash, so it is the credential; it
         stops working when the request is cancelled or 14 days after it was sent. `Accept: application/json`
         returns the same content as `BusinessRequestView`.
       security: []
@@ -981,7 +994,7 @@ paths:
             application/json:
               schema: {$ref: '#/components/schemas/BusinessRequestView'}
         "404":
-          description: "`token_not_found` - unknown token (an unknown and an expired token are indistinguishable)."
+          description: "`token_not_found` - no request for this token: a mistyped link, or a request whose owner erased their data (the two are indistinguishable)."
           content:
             application/json:
               schema: {$ref: '#/components/schemas/Error'}
@@ -1003,6 +1016,11 @@ paths:
         `reply` carries a message to the owner and can be sent again. The owner is told through the
         app (push or email according to their notification settings); the business never sees the
         owner's contact details.
+
+        The page's own buttons post this form from a browser (`application/x-www-form-urlencoded`
+        with `Accept: text/html`). That post is answered with `303` back to the page (post,
+        redirect, get), and the page then shows the request's state. Every other client gets the
+        JSON answers below.
       security: []
       parameters:
         - $ref: '#/components/parameters/BusinessToken'
@@ -1020,7 +1038,10 @@ paths:
           content:
             application/json:
               schema: {$ref: '#/components/schemas/BusinessRequestAnswerResult'}
-            text/html:
+        "303":
+          description: "A browser form post. The answer is recorded when it is valid and the request is still open; `Location` is the same `/r/{token}` URL (with `?error=message` when a reply had no message), and that page shows the request's state."
+          headers:
+            Location:
               schema: {type: string}
         "400":
           description: "`invalid_request` - unknown `action`, or `reply` without a `message`."
@@ -1051,11 +1072,13 @@ paths:
     get:
       operationId: getBusinessEmailPreferencesPage
       tags: [business-public]
-      summary: The stop-all-emails page for a business address
+      summary: The stop page of an email address
       description: |-
-        WP4.21. The "stop" link in every email DogTag sends to a business. An HTML page that
-        explains and offers one button, "Stop all Dog Tag emails to this address". The token is
-        32 random bytes (base64url), stored only as a hash.
+        WP4.21. The "stop" link in every email the Dog Tag app sends to a business, and in the
+        confirmation email for an owner's notification address. An HTML page that says what Dog Tag
+        sends to the address and offers one button, "Stop these emails". Nothing changes on GET
+        (mail scanners follow links). The token is an unguessable 32 byte value (base64url), stored
+        only as a hash; there is one per address, so every email to an address carries the same link.
       security: []
       parameters:
         - $ref: '#/components/parameters/BusinessToken'
@@ -1078,11 +1101,18 @@ paths:
     post:
       operationId: stopBusinessEmails
       tags: [business-public]
-      summary: Stop all Dog Tag emails to this business address
+      summary: Stop the Dog Tag app's emails to this address
       description: |-
-        WP4.21. Adds the address to the suppression list (stored by hash). From then on DogTag sends
-        it nothing and every provider using that address reports `acceptsRequests: false`.
-        Idempotent.
+        WP4.21. Adds the address to the suppression list (stored by hash). From then on the Dog Tag
+        app sends it nothing: no appointment request, no invitation, no confirmation and no update,
+        and every provider using that address reports `acceptsRequests: false`. Emails about a
+        DogTag business account (sign-in links, application status) are not part of this and
+        continue. Idempotent.
+
+        Two kinds of caller. The page's button is a browser form post (`Accept: text/html`) and is
+        answered with `303` back to the page. A mail client's one-click unsubscribe (RFC 8058: a POST
+        with the form body `List-Unsubscribe=One-Click` and no cookies) and every other client get
+        the JSON answer below.
       security: []
       parameters:
         - $ref: '#/components/parameters/BusinessToken'
@@ -1093,7 +1123,10 @@ paths:
           content:
             application/json:
               schema: {$ref: '#/components/schemas/EmailPreferencesResult'}
-            text/html:
+        "303":
+          description: "A browser form post. The address is suppressed; `Location` is the same `/email-preferences/{token}` URL, whose page now says so."
+          headers:
+            Location:
               schema: {type: string}
         "404":
           description: "`token_not_found`."
@@ -1179,7 +1212,7 @@ components:
       name: token
       in: path
       required: true
-      description: A 32-byte random token, base64url without padding (43 characters). Stored server-side only as a hash.
+      description: An unguessable 32 byte token, base64url without padding (43 characters). Stored server-side only as a hash.
       schema: {type: string, pattern: '^[A-Za-z0-9_-]{43}$'}
       example: Zk3b0d9yQ1xWm8nT5vR2cL7hJ4aGpE6sUfXiOwNtBqM
 
@@ -2014,8 +2047,9 @@ components:
     ProviderRequestStatus:
       type: string
       description: |-
-        `queued_for_staff` (no contact email, or the send failed), `sent`, `accepted`, `declined`,
-        `replied` (the business wrote back), `expired` (14 days without an answer), `cancelled`.
+        `sent` (DogTag has emailed the business, or is doing so now), `queued_for_staff` (DogTag did
+        not email the business and its staff follow up), `accepted`, `declined`, `replied` (the
+        business wrote back), `expired` (14 days without an answer), `cancelled`.
       enum: [queued_for_staff, sent, accepted, declined, replied, expired, cancelled]
       examples: [sent]
 
@@ -2032,6 +2066,7 @@ components:
 
     CreateProviderRequest:
       type: object
+      description: The single-line fields (`service`, `dogName`, `owner.name`, `owner.phone`) must not contain control characters or line breaks; a body that does is refused with 400 `invalid_request`.
       required: [providerId, service, days, timeOfDay, dogName, owner]
       properties:
         providerId: {$ref: '#/components/schemas/ProviderId'}
@@ -2039,6 +2074,7 @@ components:
           type: string
           minLength: 1
           maxLength: 80
+          pattern: '^[^\u0000-\u001F\u007F-\u009F\u2028\u2029]*$'
           description: A short label of the service asked for, such as `Grooming` or `Boarding`. Free text; it is only shown to the business.
         days:
           type: array
@@ -2048,16 +2084,32 @@ components:
           description: The weekdays that work for the owner.
           items: {$ref: '#/components/schemas/Weekday'}
         timeOfDay: {$ref: '#/components/schemas/TimeOfDay'}
-        dogName: {type: string, minLength: 1, maxLength: 60}
+        dogName:
+          type: string
+          minLength: 1
+          maxLength: 60
+          pattern: '^[^\u0000-\u001F\u007F-\u009F\u2028\u2029]*$'
         owner:
           type: object
           description: How DogTag may reach the owner. Never forwarded to the business.
           required: [name, email]
           properties:
-            name: {type: string, minLength: 1, maxLength: 80, description: "Full name; only the first name is shown to the business."}
+            name:
+              type: string
+              minLength: 1
+              maxLength: 80
+              pattern: '^[^\u0000-\u001F\u007F-\u009F\u2028\u2029]*$'
+              description: "Full name; only the first name is shown to the business."
             email: {type: string, format: email}
-            phone: {type: string, maxLength: 32}
-        note: {type: string, maxLength: 500}
+            phone:
+              type: string
+              maxLength: 32
+              pattern: '^[^\u0000-\u001F\u007F-\u009F\u2028\u2029]*$'
+        note:
+          type: string
+          maxLength: 500
+          pattern: '^[^\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F\u2028\u2029]*$'
+          description: Free text for the business. May contain line breaks and tabs, no other control characters.
       examples:
         - providerId: "entity:0xcbAaaB4f334AED79a1fB1CC4BfE96D7f04b060db"
           service: Grooming
@@ -2225,7 +2277,7 @@ components:
         emailAddress:
           type: string
           format: email
-          description: Omit to keep the current address. A new address is stored unverified and a confirmation link is emailed to it.
+          description: Omit to keep the current address. A new address is stored unverified and a confirmation link is emailed to it. Naming the current, still unconfirmed address again emails the link again.
       examples:
         - {push: true, email: true, emailAddress: "alex@example.com"}
 
@@ -2281,7 +2333,11 @@ components:
       required: [action]
       properties:
         action: {type: string, enum: [accept, decline, reply]}
-        message: {type: string, maxLength: 1000, description: Required when `action` is `reply`; optional otherwise.}
+        message:
+          type: string
+          maxLength: 1000
+          pattern: '^[^\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F\u2028\u2029]*$'
+          description: Required when `action` is `reply`; optional otherwise. May contain line breaks and tabs, no other control characters.
       if:
         properties:
           action: {const: reply}
