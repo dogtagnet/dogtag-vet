@@ -583,3 +583,94 @@ You need the phone with the DogTag app, a PDF or photo of a real vaccination rec
     Proof of success: the phone shows each reason; a rejected submission cannot be reopened.
 
 A confirmation that stays pending: check the operator wallet really is whitelisted on DogTag's clone and that the transaction was sent to the clone, not the factory.
+
+## Part 21 - [You + Claude + phone] Provider network: kinds on chain, listings, appointment requests and notifications (WP4.21)
+
+Written 2026-11-18 and revised 2026-11-23 for the WP4.21 release: the mains of dogtag-protocol, dogtag-vet and dogtag-admin after the merge of feature/wp4.21-provider-network.
+Runs on the workstation deployment after Part 20, in this order: the builds first, the registry upgrade second.
+The workstation side is in the playbook (WORKSTATION-AGENT.md): Steps 13 and 14 for section A, Step 15 for section B and Step 16 for section F.
+You need the admin wallet that owns the EntityRegistry proxy (in MetaMask), a second wallet for a test business, the phone with build 18, one mailbox you can read for a test business and one for a test owner.
+The owner side of steps 15 to 21 is driven by a walkthrough script that acts as the phone with a throwaway wallet, until the v2 app exists; push to a real device is checked with the v2 app in Part 22.
+Claude runs the script from the dogtag-admin repository: `pnpm walkthrough new-wallet` once, then `pnpm walkthrough <ask|requests|cancel|invite|settings|erase> --base https://admin.dogtag.roax.net --entity <DogTag entity account>` (docs/DEPLOY.md, "Walking through the owner API without the app").
+`admin.dogtag.roax.net` stands for the admin host as deployed: on Kenneth's workstation it is `dogtag-admin.roax.net`, and the vet host is `dogtag-vet.roax.net`.
+
+### A. The builds, before the registry is touched
+
+1. **[Workstation agent]** Upgrade the admin web and worker and the vet build to this release (playbook Steps 13 and 14).
+   Proof of success: `/healthz` answers ok on both; the admin worker log says "providers read model rebuilt"; `GET https://admin.dogtag.roax.net/v1/entities` lists the four existing entities with `kind` as one string and `platformBaseUrl` as a string.
+2. **[You]** Open the vet portal's sign-in page with the browser's network tab open.
+   Proof of success: no request leaves for a MetaMask analytics host.
+3. **[Phone]** With build 18, open the directory and a vet record.
+   Proof of success: every existing entity shows, and the record still reads "Issued by Vet".
+4. **[Admin]** Open an entity page.
+   Proof of success: the Kinds panel says "This registry is version 1", shows the one kind the chain holds and cannot be edited.
+
+### B. The registry upgrade
+
+5. **[You + Admin]** Follow `docs/DEPLOY-wp4.21.md` of dogtag-protocol (playbook Step 15): on Contract operations deploy the version 2 implementation, then send `upgradeToAndCall` with the admin wallet (two transactions).
+   Proof of success: `cast call <proxy> "version()(uint256)"` prints 2; `cast call <proxy> "kindsOf(address)(uint256)" <account>` prints 2, 2, 2 and 4 for Vet01, The best vet, Dog Tag Manual Verifier and DogTag; the EntityRegistry card's badge shows the version just deployed (the N of the button "Deploy vN as new implementation") without a reload.
+6. **[Workstation agent]** Restart the admin worker, or wait an hour.
+   Proof of success: the newest "kinds reconcile finished" line of the worker log has `skipped` null and `failed` 0 (before the upgrade it says `registry_version_1`).
+
+### C. Kinds, and a business without issuing rights
+
+7. **[Admin]** On a test entity's Kinds panel tick one more kind and send `setEntityKinds`.
+   Proof of success: the panel, the database and `/v1/providers` show both kinds.
+8. **[You]** With the second wallet apply as a groomer that also boards; **[Admin]** approve it with issuing off.
+   Proof of success: one `registerEntity` transaction with both kinds; the entity is Active with no clone; `/v1/providers?q=<name>` lists it; its `/status` page reads "None (registered and listed only)".
+9. **[Vet portal]** In Verify, records mode, present a vet record from the phone.
+   Proof of success: the result names the issuer with its kinds, and there is no warning for a vet.
+
+### D. Issuing rights
+
+10. **[You + Admin]** Have a new test vet apply, approve it with issuing on, and run every step of the approval screen with the admin wallet: `registerEntity`, `deployVet`, `initializeDelegation`, `grantRole`, `addOperator`, an optional top-up, then "Mark issuing rights granted".
+    Proof of success: each step turns Done without a reload; `/v1/entities` carries the clone address; the applicant's `/status` offers the operator request form.
+11. **[Admin]** On the groomer of step 8 press "Grant issuing rights" and run the same steps.
+    Proof of success: its `/status` changes from "None (registered and listed only)" to the clone and the operator.
+
+### E. Listings
+
+12. **[Admin]** Under Listings create a business with a contact email you can read and publish it; then import a small CSV.
+    Proof of success: `/v1/providers?member=false` lists it, and no response anywhere carries its email; the import preview flags a duplicate and an invalid row.
+13. **[Admin]** Link one listing to the groomer's entity.
+    Proof of success: the listing leaves `/v1/providers` and the entity stays.
+
+### F. Mail settings
+
+14. **[You + Claude]** Put the postal line, the sender and the reply mailbox in the workstation's settings (docs/DEPLOY.md, "Provider network: owner requests and notifications") and redeploy (playbook Step 16).
+    The push keys can go in at the same time (a key pair per environment: `APNS_PRODUCTION_*` and `APNS_SANDBOX_*`, with `APNS_TEAM_ID` and `APNS_BUNDLE_ID`); they are exercised in Part 22.
+    Proof of success: the worker log shows outbox cycles and no skipped line for mail; with push keys set it names the configured environments and shows no error line; `https://admin.dogtag.roax.net/r/x` shows a styled page "This link does not work".
+
+### G. Appointment requests
+
+15. **[Claude]** With the walkthrough, ask the listing of step 12 for an appointment, with a test owner's name, email and phone.
+    Proof of success: within about 15 seconds the business mailbox receives "Dog Tag: appointment request for <dog>" with the owner's first name, the dog, the service, the days and the time of day; it holds no surname, email, phone or note; From and Reply-To are the configured values; the footer gives the reason, a stop link and the postal line.
+16. **[You]** Open the email's button in a phone browser, write back, then accept.
+    Proof of success: the page reads well at phone width with no sign-in and shows the owner's note; the walkthrough's request list shows `replied` with your message, then `accepted`.
+17. **[Claude]** Ask the same listing from four fresh wallets on one day; **[Admin]** open Appointment requests.
+    Proof of success: the fourth request is `queued_for_staff` and is listed under Needs staff with the owner's contact details; "Send to the business" delivers the email; "Record the business's answer" shows in the walkthrough's request list.
+18. **[You]** On a second listing's request email press "Stop these emails from Dog Tag".
+    Proof of success: the page says what stops and what does not; after the button the listing reads `acceptsRequests: false` in `/v1/providers` and a new request answers 422 `provider_not_accepting`.
+
+### H. Invites
+
+19. **[Claude]** Ask Dog Tag to invite a listing with no account, from two wallets.
+    Proof of success: one email reaches the business and says 2 dog owners asked; the listing page shows Demand: 2 and the time of the last invite email.
+
+### I. Email updates to an owner
+
+20. **[Claude]** Set the test owner's address in the notification settings; **[You]** open the confirmation email.
+    Proof of success: opening the link changes nothing and pressing the button confirms, and the page then says "Dog Tag will email updates to" the masked address; after the business answers a request, an update email arrives naming the business and the dog; its link turns email updates off.
+
+### J. Erase
+
+21. **[Claude]** Erase the walkthrough wallet's data.
+    Proof of success: the request list answers 401; the business's old reply link shows "This link does not work"; the listing's demand count is unchanged.
+
+### K. After everything
+
+22. **[Phone]** With build 18, open the directory again.
+    Proof of success: it still decodes with the new rows, a groomer with no platform and no clone among them.
+
+No email arrives: read the worker log for a skipped line (the postal line or the mail server is missing), then the request's page under Appointment requests, "Delivery of the business email".
+A request that stays "Awaiting the business" with no delivery line: tell Claude, with the request id.

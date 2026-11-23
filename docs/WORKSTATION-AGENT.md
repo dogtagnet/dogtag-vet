@@ -1,4 +1,4 @@
-# DogTag workstation playbook for the deployment agent (FINAL revision 4, 2026-11-07, adds Step 14 (upgrading a running deployment) and the WP4.20 verifier-entity decisions of 2026-11-07; revision 3, 2026-11-06, adds the DogTag verifier entity of WP4.20; revision 2, 2026-09-25, adds the operator wallet funding of WP4.19; revision 1 of 2026-09-22: verified against the release tips protocol 3011e89, vet 2af957e, admin ff65729, ios 0b7bd19 by the WP4.17 phase C evaluation)
+# DogTag workstation playbook for the deployment agent (FINAL revision 5, 2026-11-23, adds the WP4.21 provider network release: what Step 14 adds for it, Step 15 (the EntityRegistry upgrade to version 2) and Step 16 (its mail and push settings); revision 4, 2026-11-07, adds Step 14 (upgrading a running deployment) and the WP4.20 verifier-entity decisions of 2026-11-07; revision 3, 2026-11-06, adds the DogTag verifier entity of WP4.20; revision 2, 2026-09-25, adds the operator wallet funding of WP4.19; revision 1 of 2026-09-22: verified against the release tips protocol 3011e89, vet 2af957e, admin ff65729, ios 0b7bd19 by the WP4.17 phase C evaluation)
 
 ## For Kenneth (human summary)
 
@@ -8,6 +8,7 @@ It asks you only for values that exist nowhere else: hostnames, wallet addresses
 It never writes a secret into a committed file; secrets go into Kubernetes Secrets, Foundry keystores or git-ignored local files, each named in the step.
 The whole run takes about two hours plus the time you spend answering; the acceptance run at the end needs you and the phone.
 Everything here targets the ROAX testnet (chain id 135) with the PLASMA native token and the RUSD development stablecoin, behind Cloudflare Tunnel at `admin.dogtag.roax.net` and `vet.dogtag.roax.net`.
+A deployment that already runs moves to a new release with Step 13 (backups), Step 14 (upgrade) and the release steps after it; the WP4.21 provider network release needs Step 15 and Step 16.
 
 ## For the agent: rules
 
@@ -35,6 +36,9 @@ Everything here targets the ROAX testnet (chain id 135) with the PLASMA native t
 | RUSD address | `values-vet.yaml` key `env.TOKEN_RUSD_ROAX_ADDRESS` | step 4 |
 | Phone anchor (registry address, RPC, explorer, chain id) | `dogtag-ios/Config/Environment.xcconfig` on the Mac (git-ignored) | step 11, Kenneth on the Mac |
 | App Store Connect API key | `~/.appstoreconnect/private_keys/AuthKey_<KEYID>.p8` on the Mac; key id and issuer id as shell variables | Kenneth on the Mac |
+| Postal line of emails to businesses, the sender and the reply mailbox of outbox emails (WP4.21) | `values-admin.yaml` keys `config.businessMailPostalAddress`, `config.outboxMailFrom` and `config.outboxMailReplyTo` (git-ignored copy) | ASK KENNETH (step 16) |
+| APNs team id, bundle id and the key id of each environment (WP4.21; not secrets) | `values-admin.yaml` keys `config.apnsTeamId`, `config.apnsBundleId`, `config.apnsProductionKeyId` and `config.apnsSandboxKeyId` (git-ignored copy) | ASK KENNETH (step 16) |
+| APNs private keys, one `.p8` file per environment (WP4.21) | Secret `dogtag-admin-secrets`, keys `APNS_PRODUCTION_PRIVATE_KEY` and `APNS_SANDBOX_PRIVATE_KEY` | Kenneth runs the command of step 16 in his own terminal; the agent never asks for, reads or prints a `.p8` file |
 
 ## Step 0: preconditions
 
@@ -233,6 +237,9 @@ docker build -f Dockerfile -t dogtag-admin-web:<NEW TAG> . && docker build -f Do
 for i in dogtag-admin-web dogtag-admin-worker; do docker save $i:<NEW TAG> | sudo k3s ctr images import -; done
 ```
 Edit `~/dogtag/values-admin.yaml`: `image.tag` and `workerImage.tag` to `<NEW TAG>`, and add any config keys the release introduces (WP4.20 adds `config.dogTagEntityAccount` and `config.dogTagIssuerDomain`, filled in Step 10b; `config.mobileUploadMaxBytes`, `config.mobileSessionTtlSeconds`, `config.mobileAuthNonceTtlSeconds` and `config.rateLimitMobileMax` keep the chart defaults unless Kenneth says otherwise).
+WP4.21 (the provider network) adds `config.businessMailPostalAddress`, `config.outboxMailFrom`, `config.outboxMailReplyTo` and the four `config.apns*` keys, all optional and filled in Step 16; `config.rateLimitOwnerMax`, `config.rateLimitOwnerWindowMs`, `config.rateLimitBusinessMax`, `config.rateLimitBusinessWindowMs` and `config.outboxPollIntervalMs` keep the chart defaults unless Kenneth says otherwise.
+The dogtag-vet build of WP4.21 adds no values key.
+For WP4.21 the order matters: upgrade dogtag-admin and dogtag-vet with this step FIRST and the registry with Step 15 second, because the admin worker must already run the new build when the registry emits its first `EntityKindsSet`.
 ```
 helm upgrade dogtag-admin ~/dogtag/dogtag-admin/helm/dogtag-admin -n dogtag -f ~/dogtag/values-admin.yaml
 kubectl rollout status -n dogtag deploy/dogtag-admin-web && kubectl rollout status -n dogtag deploy/dogtag-admin-worker
@@ -240,7 +247,100 @@ kubectl rollout status -n dogtag deploy/dogtag-admin-web && kubectl rollout stat
 The worker Deployment uses `Recreate`, so the indexer pauses for a few seconds during the upgrade; that is expected.
 The same sequence applies to dogtag-vet with its own images, values file and release name when its tip moves; checkout the matching dogtag-protocol tip too so the three repos stay on one release.
 VERIFY: `curl -s https://<ADMIN HOST>/api/public/health` returns status ok; `curl -s -o /dev/null -w '%{http_code}\n' "https://<ADMIN HOST>/api/mobile/v1/documents/submissions?wallet=0x0000000000000000000000000000000000000001"` prints 503 before Step 10b item 3 has set the two values and 401 after it; `kubectl get pods -n dogtag` shows the new image tag on the admin web and worker pods (`kubectl get pods -n dogtag -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.spec.containers[0].image}{"\n"}{end}'`).
+VERIFY (WP4.21 release): `curl -s -o /dev/null -w '%{http_code}\n' https://<ADMIN HOST>/v1/providers` prints 200 (404 means the old admin build still serves); `kubectl logs -n dogtag deploy/dogtag-admin-worker --tail=300 | grep -c 'providers read model rebuilt'` prints at least 1; `curl -s "https://<ADMIN HOST>/v1/entities?limit=200" | jq -c '.entities[] | {name, kind, kinds, platformBaseUrl}'` shows every entity that was listed before the upgrade, each with `kind` as one string, `kinds` as a list and `platformBaseUrl` as a string; `kubectl logs -n dogtag deploy/dogtag-admin-worker --tail=300 | grep 'kinds reconcile finished' | tail -1` carries `"skipped":"registry_version_1"` while the registry is not upgraded.
+
+## Step 15: upgrade the EntityRegistry to version 2 (WP4.21; CHAIN; Kenneth in the browser, agent verifies)
+
+Version 2 lets one entity hold several kinds (vet, groomer, boarding, daycare and the others) and adds `version()`.
+It is additive, keeps every address and needs no migration.
+The full procedure, the reasons and the rollback are in `~/dogtag/dogtag-protocol/docs/DEPLOY-wp4.21.md`; this step is its form for the workstation.
+Do Step 13 and Step 14 for the WP4.21 tips of dogtag-protocol, dogtag-admin and dogtag-vet first, and pass the WP4.21 VERIFY of Step 14.
+```
+export RPC=https://devrpc.roax.net
+export PROXY=<EntityRegistry proxy address from ~/dogtag/DEPLOYMENT-RECORD.md>
+cast implementation $PROXY --rpc-url $RPC
+cast call $PROXY "owner()(address)" --rpc-url $RPC
+cast call $PROXY "entityCount()(uint256)" --rpc-url $RPC
+cast call $PROXY "version()(uint256)" --rpc-url $RPC
+```
+VERIFY: the owner is the ADMIN address and `version()` reverts (version 1 has no such function); record the implementation address as OLD IMPL (the rollback target) and the entity count.
+If `version()` prints 2 the registry is already upgraded: go straight to the VERIFY of item 3.
+
+1. Put the version 2 source in the portal's contract catalogue.
+   The dogtag-admin checkout of this release already vendors it (`protocol/contracts/flattened/EntityRegistry.sol`), so the `make` and `sync-to.sh` commands of the runbook's section 4 item 1 are not run here.
+```
+kubectl port-forward -n dogtag svc/mongo 27017:27017 &
+cd ~/dogtag/dogtag-admin && MONGO_URI=mongodb://127.0.0.1:27017/dogtag-admin pnpm seed:contracts
+kill %1
+```
+VERIFY: the first output line is `[seed] writing to 127.0.0.1:27017/dogtag-admin`, and the line for EntityRegistry is either `[seed] created ContractVersion EntityRegistry@<N>` or, on a repeated run, `[seed] ContractVersion EntityRegistry@<N> already matches the vendored source, skipping`.
+2. Kenneth, signed in at `https://<ADMIN HOST>/admin/contracts` with the ADMIN wallet connected, opens EntityRegistry in the editor ("Open in editor" on its card), presses **Compile**, then **Save as new version**.
+   A seeded version cannot be deployed directly, by design.
+   Back on the EntityRegistry card he presses **Upgrade** (it opens the upgrade panel), picks the version just saved (the highest), presses **Deploy v<N> as new implementation** and confirms in the wallet.
+   ASK KENNETH for that <N> and for the new implementation address; record them as REGISTRY VERSION and NEW IMPL.
+```
+cast code <NEW IMPL> --rpc-url $RPC | wc -c
+cast call <NEW IMPL> "version()(uint256)" --rpc-url $RPC
+```
+VERIFY: the first prints a number in the thousands (an address without code prints 3) and the second prints 2.
+Nothing live has changed yet; if either differs, STOP.
+3. Kenneth presses **Upgrade proxy to new implementation** and confirms in the wallet.
+   The portal sends `upgradeToAndCall(<NEW IMPL>, 0x)`, and only the registry owner can.
+```
+cast implementation $PROXY --rpc-url $RPC
+cast call $PROXY "version()(uint256)" --rpc-url $RPC
+cast call $PROXY "owner()(address)" --rpc-url $RPC
+cast call $PROXY "entityCount()(uint256)" --rpc-url $RPC
+for a in $(curl -s "https://<ADMIN HOST>/v1/entities?limit=200" | jq -r '.entities[].account'); do echo "$a $(cast call $PROXY 'kindsOf(address)(uint256)' $a --rpc-url $RPC)"; done
+```
+VERIFY: the implementation is NEW IMPL, the version is 2, the owner and the entity count are what they were, and every entity prints the mask of its one old kind: 2 for a vet, 4 for government (the DogTag entity), 8 for a groomer (`1 << bit` of `specs/entity-kinds.json`).
+On Kenneth's workstation the registry also holds the stray entity of Step 10b, which the portal does not list; the runbook's section 2 names all four accounts and their expected values.
+4. Run the kinds reconcile now instead of within the hour:
+```
+kubectl rollout restart -n dogtag deploy/dogtag-admin-worker && kubectl rollout status -n dogtag deploy/dogtag-admin-worker
+kubectl logs -n dogtag deploy/dogtag-admin-worker --tail=300 | grep 'kinds reconcile finished' | tail -1
+```
+VERIFY: the line carries `"skipped":null` and `"failed":0`; the EntityRegistry card on `/admin/contracts` shows the badge `v<REGISTRY VERSION>`; an entity page's Kinds panel no longer says "This registry is version 1" and can be edited.
+Rollback: the runbook's section 7 (upgrade the proxy back to OLD IMPL from the same panel).
+
+## Step 16: mail and push settings of the provider network (WP4.21)
+
+The stack runs without them, but without the postal line DogTag emails no business: an appointment request waits in the staff queue (`/admin/requests`) and an invite only counts demand.
+What each setting does, and what happens while it is unset, is in `~/dogtag/dogtag-admin/docs/DEPLOY.md`, "Provider network: owner requests and notifications (WP4.21B)".
+
+ASK KENNETH: the postal line for the footer of every email to a business; the sender of these emails in the form `Dog Tag <address>`, with an address the SMTP account of Step 6 may send as; a mailbox someone reads, for replies (a business will press reply).
+Edit `~/dogtag/values-admin.yaml` (git-ignored), under `config:`: `businessMailPostalAddress: "<POSTAL LINE>"`, `outboxMailFrom: "<SENDER>"`, `outboxMailReplyTo: "<REPLY MAILBOX>"`.
+```
+helm upgrade dogtag-admin ~/dogtag/dogtag-admin/helm/dogtag-admin -n dogtag -f ~/dogtag/values-admin.yaml
+kubectl rollout status -n dogtag deploy/dogtag-admin-web && kubectl rollout status -n dogtag deploy/dogtag-admin-worker
+```
+A changed `config` value rolls both Deployments by itself: the pods carry a checksum of the ConfigMap.
+VERIFY: `kubectl exec -n dogtag deploy/dogtag-admin-worker -- printenv BUSINESS_MAIL_POSTAL_ADDRESS OUTBOX_MAIL_FROM OUTBOX_MAIL_REPLY_TO` prints the three values; `curl -s -o /dev/null -w '%{http_code}\n' https://<ADMIN HOST>/r/x` prints 404, and in a browser that address is a styled page that reads "This link does not work"; after the first appointment request of MANUAL-E2E Part 21 the worker log has no line "outbox: message skipped".
+
+Push to phones needs the APNs keys from the Apple developer account (DEPLOY.md, "Creating the APNs keys").
+The v2 app is what exercises them, so this half of the step may be done later.
+ASK KENNETH: the key id of the Production key and of the Sandbox key (a key Apple issued for both environments is entered for both).
+Never ask for the contents of a `.p8` file.
+Edit `~/dogtag/values-admin.yaml` under `config:`: `apnsTeamId: "<APPLE TEAM ID>"`, `apnsBundleId: "<APP BUNDLE ID>"`, `apnsProductionKeyId: "<PRODUCTION KEY ID>"`, `apnsSandboxKeyId: "<SANDBOX KEY ID>"` (the team id and the bundle id are shown as comments in `~/dogtag/dogtag-admin/deploy/k3s/values-admin.example.yaml`).
+Kenneth runs the next command himself, in his own terminal, with the paths of his two `.p8` files.
+It adds the two keys to the existing Secret and leaves every other key as it is; the agent does not run it and does not read the files.
+```
+kubectl create secret generic apns-keys --dry-run=client -o json \
+  --from-file=APNS_PRODUCTION_PRIVATE_KEY=<PATH OF THE PRODUCTION .p8> --from-file=APNS_SANDBOX_PRIVATE_KEY=<PATH OF THE SANDBOX .p8> \
+  | jq '{data: .data}' | kubectl patch secret dogtag-admin-secrets -n dogtag --type merge --patch-file /dev/stdin
+```
+Then the agent runs:
+```
+helm upgrade dogtag-admin ~/dogtag/dogtag-admin/helm/dogtag-admin -n dogtag -f ~/dogtag/values-admin.yaml
+kubectl rollout restart -n dogtag deploy/dogtag-admin-web deploy/dogtag-admin-worker
+kubectl rollout status -n dogtag deploy/dogtag-admin-web && kubectl rollout status -n dogtag deploy/dogtag-admin-worker
+```
+The restart is needed because a change of the Secret alone does not roll the pods: the Secret is not part of the chart.
+VERIFY: `kubectl get secret dogtag-admin-secrets -n dogtag -o json | jq -r '.data | keys[]'` lists `APNS_PRODUCTION_PRIVATE_KEY` and `APNS_SANDBOX_PRIVATE_KEY` next to every key that was there before (names only; never print a value); `kubectl logs -n dogtag deploy/dogtag-admin-worker --tail=300 | grep -i apns` shows "APNs push is configured for these environments" with production and sandbox, and no line "APNs is configured but not usable".
+
+Acceptance of this release is MANUAL-E2E Part 21 with Kenneth.
+Claude on the Mac plays the phone with `pnpm walkthrough` against `https://<ADMIN HOST>`, and the agent supplies the worker log lines and the `cast` reads the Part asks for.
 
 ## Final checklist the agent prints
 
-Tools installed; repos at the release tips; keystores present; contracts deployed and recorded (addresses, blocks, RUSD); images loaded; Mongo, Secrets, tunnel, both apps Running; health and sign-in pages 200 over the public hostnames; addresses imported; discovery set published; clinic onboarded and funded; release upgrades applied (step 14) when a tip moved; DogTag verifier entity onboarded (step 10b); phone build values handed over; acceptance Parts 11 to 18 PASS; backups taken.
+Tools installed; repos at the release tips; keystores present; contracts deployed and recorded (addresses, blocks, RUSD); images loaded; Mongo, Secrets, tunnel, both apps Running; health and sign-in pages 200 over the public hostnames; addresses imported; discovery set published; clinic onboarded and funded; release upgrades applied (step 14) when a tip moved; DogTag verifier entity onboarded (step 10b); phone build values handed over; acceptance Parts 11 to 18 PASS; backups taken. For the WP4.21 release: both apps upgraded before the registry, registry at version 2 (step 15), mail settings applied (step 16), acceptance Part 21 PASS.
